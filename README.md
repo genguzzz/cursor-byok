@@ -1,3 +1,4 @@
+支持在 Cursor 内部设置 rule
 修复kimi无法使用的问题
 修复StrReplace的问题
 修复上下文压缩的问题
