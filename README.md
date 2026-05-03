@@ -10,7 +10,7 @@
 
 [正式版路线图](https://github.com/leookun/cursor-byok/discussions/32)
 
-注：正式版发布后的不久，本代码库将会全面开源，并迎来更多有趣的工具，local-first是我们的终极目标
+注：正式版发布后的不久，本代码库将会全面开源，并迎来更多有趣的工具，local-first是我们的终极目标，欢迎 Star 关注
 
 ## 后续
 
