@@ -6,6 +6,8 @@
 
 这个项目的目标，是让模型选择权重新回到用户手里。
 
+常见问题和使用教程 ：https://docs.leokun.cn 或者 https://dcne38qm5vlg.feishu.cn/wiki/JeP7wdGnziBXuikNaF5czWbrn8c
+
 ## 路线图
 
 [正式版路线图](https://github.com/leookun/cursor-byok/discussions/32)
