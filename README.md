@@ -1,5 +1,3 @@
-# cursor助手
-
 ## 为什么做这个项目
 
 公司喜欢把 Agent 服务与模型绑定在一起，让用户只能在指定模型、指定订阅和指定计费方式下使用工具。
@@ -8,15 +6,11 @@
 
 这个项目的目标，是让模型选择权重新回到用户手里。
 
-常见问题和使用教程 ：https://docs.leokun.cn 或者 https://dcne38qm5vlg.feishu.cn/wiki/JeP7wdGnziBXuikNaF5czWbrn8c
-
-下载地址：https://github.com/leookun/cursor-byok/releases
-
 ## 路线图
 
 [正式版路线图](https://github.com/leookun/cursor-byok/discussions/32)
 
-注：正式版发布后的不久，本代码库将会全面开源，并迎来更多有趣的工具，local-first是我们的终极目标，欢迎 Star 关注
+注：正式版发布后的不久，本代码库将会全面开源，并迎来更多有趣的工具，local-first是我们的终极目标
 
 ## 后续
 
