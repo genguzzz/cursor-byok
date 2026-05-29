@@ -9,6 +9,8 @@
 ## 路线图
 
 [正式版路线图](https://github.com/leookun/cursor-byok/discussions/32)
+[详细使用教程](https://dcne38qm5vlg.feishu.cn/wiki/JeP7wdGnziBXuikNaF5czWbrn8c)
+
 
 注：正式版发布后的不久，本代码库将会全面开源，并迎来更多有趣的工具，local-first是我们的终极目标
 
