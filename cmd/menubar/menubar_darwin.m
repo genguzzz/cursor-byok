@@ -11,10 +11,12 @@
 - (void)quitAction:(id)sender  { menuCallback(3); }
 @end
 
+// 全局持有，防止 ARC 释放后 target 变 nil 导致菜单项全灰
 static NSStatusItem   *g_statusItem    = nil;
 static NSMenuItem     *g_startItem     = nil;
 static NSMenuItem     *g_stopItem      = nil;
 static NSMenuItem     *g_statusDisplay = nil;
+static MenuHandler    *g_handler       = nil;
 
 void setupMenubar() {
     [NSApplication sharedApplication];
@@ -32,19 +34,19 @@ void setupMenubar() {
         [g_statusItem.button setTitle:@"C"];
     }
 
-    MenuHandler *handler = [[MenuHandler alloc] init];
+    g_handler = [[MenuHandler alloc] init];
     NSMenu *menu = [[NSMenu alloc] init];
 
     g_startItem = [menu addItemWithTitle:@"开启拦截"
                                   action:@selector(startAction:)
                            keyEquivalent:@""];
-    [g_startItem setTarget:handler];
+    [g_startItem setTarget:g_handler];
 
     g_stopItem = [menu addItemWithTitle:@"关闭拦截"
                                  action:@selector(stopAction:)
                           keyEquivalent:@""];
     [g_stopItem setEnabled:NO];
-    [g_stopItem setTarget:handler];
+    [g_stopItem setTarget:g_handler];
 
     [menu addItem:[NSMenuItem separatorItem]];
 
@@ -58,7 +60,7 @@ void setupMenubar() {
     NSMenuItem *quitItem = [menu addItemWithTitle:@"退出"
                                            action:@selector(quitAction:)
                                     keyEquivalent:@"q"];
-    [quitItem setTarget:handler];
+    [quitItem setTarget:g_handler];
 
     [g_statusItem setMenu:menu];
 }
