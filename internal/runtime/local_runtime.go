@@ -53,6 +53,8 @@ type ModelAdapterConfig struct {
 	TooltipData string `json:"tooltipData"`
 	// ModelID 表示当前声明中的 ModelID。
 	ModelID string `json:"modelID"`
+	// ProviderModelID 表示发往 provider 的真实模型标识，为空时回退到 ModelID。
+	ProviderModelID string `json:"providerModelID,omitempty"`
 	// ReasoningEffort 表示当前声明中的 ReasoningEffort。
 	ReasoningEffort string `json:"reasoningEffort"`
 	// OpenAIEndpoint 表示 OpenAI 兼容适配器使用的 API 端点。

@@ -10,13 +10,18 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
 	"unicode/utf16"
 
+	"github.com/google/uuid"
+
 	"cursor/gen/agentv1"
 	runtimecore "cursor/internal/backend/agent/core"
+	"cursor/internal/cursor"
 	"cursor/internal/netproxy"
 )
 
@@ -45,7 +50,22 @@ type anthropicTool struct {
 const (
 	anthropicThinkOpenTag            = "<think>"
 	anthropicThinkCloseTag           = "</think>"
-	anthropicBillingHeaderSystemText = "x-anthropic-billing-header: cc_version=2.1.179.61a; cc_entrypoint=cli; cch=37703;"
+	anthropicBillingHeaderSystemText = "x-anthropic-billing-header: cc_version=2.1.154; cc_entrypoint=cli; cch=37703;"
+)
+
+// anthropicClaudeCodeSessionID 是进程级稳定会话标识，与 tclaude/claude-code 的
+// X-Claude-Code-Session-Id 头以及 metadata.user_id 中的 session_id 保持一致。
+var anthropicClaudeCodeSessionID = uuid.NewString()
+
+const (
+	// anthropicBetaHeader 与 tclaude daemon 期望的 anthropic-beta 头完全对齐。
+	anthropicBetaHeader = "claude-code-20250219,context-1m-2025-08-07,interleaved-thinking-2025-05-14,redact-thinking-2026-02-12,context-management-2025-06-27,prompt-caching-scope-2026-01-05,mid-conversation-system-2026-04-07,effort-2025-11-24"
+	// anthropicStainlessPackageVersion 与 claude-code SDK 的 X-Stainless-Package-Version 对齐。
+	anthropicStainlessPackageVersion = "0.94.0"
+	// anthropicStainlessRuntimeVersion 与 claude-code SDK 的 X-Stainless-Runtime-Version 对齐。
+	anthropicStainlessRuntimeVersion = "v24.3.0"
+	// anthropicStainlessTimeout 与 claude-code SDK 的 X-Stainless-Timeout 对齐（秒）。
+	anthropicStainlessTimeout = "600"
 )
 
 type anthropicContentPartKind string
@@ -145,6 +165,101 @@ func (parser *anthropicThinkTagParser) Flush() []anthropicContentPart {
 func NewAnthropicAdapter() *AnthropicAdapter {
 	return &AnthropicAdapter{
 		client: netproxy.NewHTTPClient(0),
+	}
+}
+
+// anthropicAdapterClientForRequest 根据 req.Proxy 返回对应的 HTTP client；
+// 若 Proxy 为空则回退到 adapter 内置 client。
+func anthropicAdapterClientForRequest(adapter *AnthropicAdapter, req StreamRequest) *http.Client {
+	proxyURL := strings.TrimSpace(req.Proxy)
+	if proxyURL == "" {
+		return adapter.client
+	}
+	parsed, err := url.Parse(proxyURL)
+	if err != nil {
+		return adapter.client
+	}
+	return &http.Client{
+		Transport: &http.Transport{
+			Proxy:       http.ProxyURL(parsed),
+			DialContext: adapter.client.Transport.(*http.Transport).DialContext,
+		},
+		Timeout: adapter.client.Timeout,
+	}
+}
+
+// applyAnthropicTclaudeHeaders 设置与 tclaude daemon 期望对齐的 HTTP 请求头。
+// 这些头在 ApplyCustomHeaders 之前设置，用户仍可通过 customHeadersJSON 覆盖。
+func applyAnthropicTclaudeHeaders(httpReq *http.Request) {
+	if httpReq == nil {
+		return
+	}
+	httpReq.Header.Set("Accept", "application/json")
+	// tclaude daemon 仅使用 Authorization: Bearer 鉴权，不期望 x-api-key 头。
+	// ApplyAnthropicCompatibleAuthHeaders 会同时设置 x-api-key 和 Authorization，
+	// 此处移除 x-api-key 以与参考请求对齐。
+	httpReq.Header.Del("X-Api-Key")
+	httpReq.Header.Set("X-Claude-Code-Session-Id", anthropicClaudeCodeSessionID)
+	httpReq.Header.Set("X-Stainless-Arch", runtime.GOARCH)
+	httpReq.Header.Set("X-Stainless-Lang", "js")
+	httpReq.Header.Set("X-Stainless-OS", anthropicStainlessOS())
+	httpReq.Header.Set("X-Stainless-Package-Version", anthropicStainlessPackageVersion)
+	httpReq.Header.Set("X-Stainless-Retry-Count", "0")
+	httpReq.Header.Set("X-Stainless-Runtime", "node")
+	httpReq.Header.Set("X-Stainless-Runtime-Version", anthropicStainlessRuntimeVersion)
+	httpReq.Header.Set("X-Stainless-Timeout", anthropicStainlessTimeout)
+	httpReq.Header.Set("anthropic-beta", anthropicBetaHeader)
+	httpReq.Header.Set("anthropic-dangerous-direct-browser-access", "true")
+	httpReq.Header.Set("x-app", "cli")
+}
+
+// anthropicStainlessOS 将 runtime.GOOS 映射为 claude-code SDK 的 X-Stainless-OS 值。
+func anthropicStainlessOS() string {
+	switch runtime.GOOS {
+	case "darwin":
+		return "MacOS"
+	case "windows":
+		return "Windows"
+	case "linux":
+		return "Linux"
+	default:
+		return runtime.GOOS
+	}
+}
+
+// buildAnthropicMetadataUserID 构造与 tclaude/claude-code 对齐的 metadata.user_id JSON 字符串。
+// device_id 取自本机机器标识（machineid），session_id 与 X-Claude-Code-Session-Id 头保持一致。
+func buildAnthropicMetadataUserID() string {
+	deviceID, err := cursor.GetDeviceID()
+	if err != nil || strings.TrimSpace(deviceID) == "" {
+		deviceID = "unknown"
+	}
+	payload := map[string]any{
+		"device_id":    deviceID,
+		"account_uuid": "",
+		"session_id":   anthropicClaudeCodeSessionID,
+	}
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		return `{"device_id":"unknown","account_uuid":"","session_id":"` + anthropicClaudeCodeSessionID + `"}`
+	}
+	return string(encoded)
+}
+
+// applyAnthropicTclaudeBody 设置与 tclaude daemon 期望对齐的请求体字段。
+// 包括 metadata.user_id（JSON 字符串）和 context_management。
+func applyAnthropicTclaudeBody(body map[string]any) {
+	if len(body) == 0 {
+		return
+	}
+	body["metadata"] = map[string]any{
+		"user_id": buildAnthropicMetadataUserID(),
+	}
+	body["context_management"] = map[string]any{
+		"edits": []map[string]any{{
+			"type": "clear_thinking_20251015",
+			"keep": "all",
+		}},
 	}
 }
 
@@ -285,6 +400,7 @@ func (adapter *AnthropicAdapter) Stream(ctx context.Context, req StreamRequest, 
 	// 非 disabled 时按 AnthropicThinkingEffort 写 adaptive 配置。与 openai.go 的
 	// applyOpenAIThinkingDisable 对称——后者也是无条件在两条路径之后调用。
 	applyAnthropicThinkingConfig(body, req)
+	applyAnthropicTclaudeBody(body)
 	if err := ApplyAnthropicExtraParams(body, req.AnthropicExtraParamsEnabled, req.AnthropicExtraParamsJSON); err != nil {
 		finishedAt = time.Now().UTC()
 		recordLLMSummaryArtifact(req, buildLLMSummaryPayload(req, "anthropic", modelID, startedAt, time.Time{}, finishedAt, "", 0, 0, 0, 0, err))
@@ -311,13 +427,14 @@ func (adapter *AnthropicAdapter) Stream(ctx context.Context, req StreamRequest, 
 		httpReq.Header.Set("anthropic-version", "2023-06-01")
 		httpReq.Header.Set("content-type", "application/json")
 		httpReq.Header.Set("User-Agent", AnthropicClaudeCodeUserAgent)
+		applyAnthropicTclaudeHeaders(httpReq)
 		if err := ApplyCustomHeaders(httpReq, req.CustomHeadersEnabled, req.CustomHeadersJSON); err != nil {
 			return nil, err
 		}
 		return httpReq, nil
 	}
 
-	resp, err := doProviderRequestWithRetry(streamCtx, adapter.client, "anthropic", req.RequestID, req.ModelCallID, buildHTTPRequest)
+	resp, err := doProviderRequestWithRetry(streamCtx, anthropicAdapterClientForRequest(adapter, req), "anthropic", req.RequestID, req.ModelCallID, buildHTTPRequest)
 	if err != nil {
 		if idleErr := streamIdle.Err(); idleErr != nil {
 			err = idleErr
@@ -1435,8 +1552,7 @@ func buildAnthropicThinkingConfig(req StreamRequest) map[string]any {
 		return nil
 	}
 	return map[string]any{
-		"type":    "adaptive",
-		"display": "summarized",
+		"type": "adaptive",
 	}
 }
 
@@ -1445,7 +1561,7 @@ func buildAnthropicThinkingConfig(req StreamRequest) map[string]any {
 // 时清理与之冲突的字段，确保两条构造路径行为一致：
 //   - disabled: 强制 thinking:{type:"disabled"}，删除 output_config / 残留 thinking adaptive 配置，
 //     记录 thinking_disabled_provider_param=thinking.type knob
-//   - adaptive: 按 AnthropicThinkingEffort 写 thinking:{type:adaptive,display:summarized} + output_config
+//   - adaptive: 按 AnthropicThinkingEffort 写 thinking:{type:adaptive} + output_config
 //
 // 在 override 路径下，上层若已在 override body 里塞了 thinking/output_config，disabled 时会被正确覆盖。
 func applyAnthropicThinkingConfig(body map[string]any, req StreamRequest) {
@@ -1457,8 +1573,7 @@ func applyAnthropicThinkingConfig(body map[string]any, req StreamRequest) {
 			return
 		}
 		body["thinking"] = map[string]any{
-			"type":    "adaptive",
-			"display": "summarized",
+			"type": "adaptive",
 		}
 		body["output_config"] = buildAnthropicOutputConfig(req)
 		return

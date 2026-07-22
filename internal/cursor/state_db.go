@@ -3,6 +3,7 @@ package cursor
 import (
 	"context"
 	"database/sql"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -11,6 +12,7 @@ import (
 	"sort"
 	"strings"
 
+	"cursor/internal/appdata"
 	"cursor/internal/logger"
 
 	_ "modernc.org/sqlite"
@@ -30,6 +32,174 @@ const (
 var cursorStateDisabledStatsigGates = []string{
 	"decompose_always_local_ext_host",
 	"cursor_extensions_isolation_v2",
+}
+
+// cursorAuthBackupKeys 是启动注入前需要备份的 cursorAuth/* 键列表。
+var cursorAuthBackupKeys = []string{
+	"cursorAuth/accessToken",
+	"cursorAuth/cachedEmail",
+	"cursorAuth/cachedSignUpType",
+	"cursorAuth/refreshToken",
+	"cursorAuth/stripeMembershipType",
+	"cursorAuth/stripeSubscriptionStatus",
+}
+
+// cursorAuthBackupPath 返回备份文件路径。
+func cursorAuthBackupPath() string {
+	return filepath.Join(appdata.RootDir(), "cursor_auth_backup.json")
+}
+
+// cursorAuthBackupFile 对应备份文件的 JSON 结构。
+type cursorAuthBackupFile struct {
+	Keys             map[string]string `json:"keys"`
+	StatsigBootstrap string             `json:"statsig_bootstrap,omitempty"`
+}
+
+// BackupCursorAuthState 读取当前 state.vscdb 中的 cursorAuth/* 和 statsigBootstrap 值，
+// 保存到备份文件。在 InjectCursorUserInfo 之前调用，以便后续恢复。
+// 如果备份文件已存在则跳过（避免覆盖已有备份）。
+func BackupCursorAuthState() error {
+	backupPath := cursorAuthBackupPath()
+	if _, err := os.Stat(backupPath); err == nil {
+		logger.Infof("cursor auth backup already exists, skip path=%s", backupPath)
+		return nil
+	}
+
+	stateDBPath, err := resolveCursorStateDBPath()
+	if err != nil {
+		return err
+	}
+
+	db, err := sql.Open("sqlite", stateDBPath)
+	if err != nil {
+		return fmt.Errorf("打开 state.vscdb 失败: %w", err)
+	}
+	defer db.Close()
+
+	backup := cursorAuthBackupFile{
+		Keys: make(map[string]string),
+	}
+
+	for _, key := range cursorAuthBackupKeys {
+		var raw []byte
+		err := db.QueryRow("SELECT value FROM ItemTable WHERE key = ?", key).Scan(&raw)
+		if err == sql.ErrNoRows {
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("读取 %s 失败: %w", key, err)
+		}
+		backup.Keys[key] = base64.StdEncoding.EncodeToString(raw)
+	}
+
+	var statsigRaw []byte
+	err = db.QueryRow("SELECT value FROM ItemTable WHERE key = ?", cursorStateStatsigBootstrapKey).Scan(&statsigRaw)
+	if err == nil {
+		backup.StatsigBootstrap = base64.StdEncoding.EncodeToString(statsigRaw)
+	}
+
+	data, err := json.MarshalIndent(backup, "", "  ")
+	if err != nil {
+		return fmt.Errorf("序列化备份失败: %w", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(backupPath), 0o755); err != nil {
+		return fmt.Errorf("创建备份目录失败: %w", err)
+	}
+	if err := os.WriteFile(backupPath, data, 0o600); err != nil {
+		return fmt.Errorf("写入备份文件失败: %w", err)
+	}
+	logger.Infof("cursor auth backed up path=%s keys=%d", backupPath, len(backup.Keys))
+	return nil
+}
+
+// RestoreCursorAuthState 从备份文件恢复 cursorAuth/* 和 statsigBootstrap 值到 state.vscdb。
+// 恢复后删除备份文件。如果备份文件不存在则返回 nil（无需恢复）。
+func RestoreCursorAuthState() error {
+	backupPath := cursorAuthBackupPath()
+	data, err := os.ReadFile(backupPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			logger.Infof("cursor auth backup not found, nothing to restore")
+			return nil
+		}
+		return fmt.Errorf("读取备份文件失败: %w", err)
+	}
+
+	var backup cursorAuthBackupFile
+	if err := json.Unmarshal(data, &backup); err != nil {
+		return fmt.Errorf("解析备份文件失败: %w", err)
+	}
+
+	stateDBPath, err := resolveCursorStateDBPath()
+	if err != nil {
+		return err
+	}
+
+	db, err := sql.Open("sqlite", stateDBPath)
+	if err != nil {
+		return fmt.Errorf("打开 state.vscdb 失败: %w", err)
+	}
+	defer db.Close()
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
+
+	ctx := context.Background()
+	if _, err := db.ExecContext(ctx, fmt.Sprintf("PRAGMA busy_timeout = %d", cursorStateSQLiteBusyTimeoutMS)); err != nil {
+		return err
+	}
+
+	tx, err := db.BeginTx(ctx, &sql.TxOptions{})
+	if err != nil {
+		return err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+
+	// 恢复 cursorAuth/* 键：备份中有的写入，备份中没有的删除
+	for _, key := range cursorAuthBackupKeys {
+		if encoded, ok := backup.Keys[key]; ok {
+			raw, err := base64.StdEncoding.DecodeString(encoded)
+			if err != nil {
+				return fmt.Errorf("解码 %s 失败: %w", key, err)
+			}
+			if _, err := tx.ExecContext(ctx, "INSERT OR REPLACE INTO ItemTable(key, value) VALUES(?, ?)", key, raw); err != nil {
+				return fmt.Errorf("恢复 %s 失败: %w", key, err)
+			}
+		} else {
+			if _, err := tx.ExecContext(ctx, "DELETE FROM ItemTable WHERE key = ?", key); err != nil {
+				return fmt.Errorf("删除 %s 失败: %w", key, err)
+			}
+		}
+	}
+
+	// 恢复 statsigBootstrap
+	if backup.StatsigBootstrap != "" {
+		raw, err := base64.StdEncoding.DecodeString(backup.StatsigBootstrap)
+		if err != nil {
+			return fmt.Errorf("解码 statsigBootstrap 失败: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, "INSERT OR REPLACE INTO ItemTable(key, value) VALUES(?, ?)", cursorStateStatsigBootstrapKey, raw); err != nil {
+			return fmt.Errorf("恢复 statsigBootstrap 失败: %w", err)
+		}
+	} else {
+		if _, err := tx.ExecContext(ctx, "DELETE FROM ItemTable WHERE key = ?", cursorStateStatsigBootstrapKey); err != nil {
+			return fmt.Errorf("删除 statsigBootstrap 失败: %w", err)
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("提交恢复事务失败: %w", err)
+	}
+	committed = true
+
+	// 删除备份文件
+	_ = os.Remove(backupPath)
+	logger.Infof("cursor auth restored from backup and backup file removed")
+	return nil
 }
 
 // InjectCursorUserInfo synchronizes the Cursor user-level auth cache used by the

@@ -47,16 +47,25 @@ func resolveModelAdapterChannel(adapters []ModelAdapterConfig, requestedModel st
 		logger.Infof("resolved model adapter channel proxy=%s model=%s", matched.Proxy, matched.ModelID)
 	}
 
+	resolvedBaseURL := resolveTclaudeDaemonBaseURL(strings.TrimSpace(matched.BaseURL))
+
+	// providerModel 优先使用 ProviderModelID（发往 daemon 的真实模型名），
+	// 为空时回退到 ModelID（与 Cursor 匹配的模型名）。
+	providerModel := strings.TrimSpace(matched.ProviderModelID)
+	if providerModel == "" {
+		providerModel = strings.TrimSpace(matched.ModelID)
+	}
+
 	resolved := &legacyruntime.ResolvedChannel{
 		ID:                          strings.TrimSpace(matched.ID),
 		Name:                        strings.TrimSpace(matched.DisplayName),
 		GroupName:                   "local",
 		Code:                        strings.TrimSpace(matched.ID),
 		Provider:                    strings.TrimSpace(matched.Type),
-		BaseURL:                     strings.TrimSpace(matched.BaseURL),
+		BaseURL:                     resolvedBaseURL,
 		APIKey:                      strings.TrimSpace(matched.APIKey),
 		Proxy:                       strings.TrimSpace(matched.Proxy),
-		Model:                       strings.TrimSpace(matched.ModelID),
+		Model:                       providerModel,
 		OpenAIEndpoint:              strings.TrimSpace(matched.OpenAIEndpoint),
 		OpenAIExtraParamsEnabled:    matched.OpenAIExtraParamsEnabled,
 		OpenAIExtraParamsJSON:       strings.TrimSpace(matched.OpenAIExtraParamsJSON),

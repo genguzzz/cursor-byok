@@ -30,6 +30,7 @@ type ModelAdapterConfig struct {
 	Proxy                       string `json:"proxy,omitempty" yaml:"proxy,omitempty"`
 	TooltipData                 string `json:"tooltipData" yaml:"tooltipData"`
 	ModelID                     string `json:"modelID" yaml:"modelID"`
+	ProviderModelID             string `json:"providerModelID,omitempty" yaml:"providerModelID,omitempty"`
 	ReasoningEffort             string `json:"reasoningEffort" yaml:"reasoningEffort"`
 	OpenAIEndpoint              string `json:"openAIEndpoint" yaml:"openAIEndpoint"`
 	OpenAIExtraParamsEnabled    bool   `json:"openAIExtraParamsEnabled" yaml:"openAIExtraParamsEnabled"`
@@ -115,6 +116,7 @@ func NormalizeModelAdapterConfigs(input []ModelAdapterConfig) ([]ModelAdapterCon
 			Proxy:                strings.TrimSpace(item.Proxy),
 			TooltipData:          strings.TrimSpace(item.TooltipData),
 			ModelID:              strings.TrimSpace(item.ModelID),
+			ProviderModelID:      strings.TrimSpace(item.ProviderModelID),
 			ReasoningEffort:      normalizeReasoningEffort(item.ReasoningEffort),
 			OpenAIEndpoint:       modelchannel.NormalizeOpenAIEndpoint(item.Type, item.OpenAIEndpoint),
 			ContextWindowTokens:  normalizeMaxCompletionTokens(item.ContextWindowTokens),

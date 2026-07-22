@@ -28,7 +28,7 @@ func TestApplyAnthropicThinkingConfig(t *testing.T) {
 			name:           "adaptive_writes_adaptive_and_output_config",
 			body:           map[string]any{"model": "m"},
 			adaptiveEffort: "high",
-			wantThinking:   map[string]any{"type": "adaptive", "display": "summarized"},
+			wantThinking:   map[string]any{"type": "adaptive"},
 			wantOutputCfg:  true,
 		},
 		{
@@ -39,7 +39,7 @@ func TestApplyAnthropicThinkingConfig(t *testing.T) {
 		},
 		{
 			name:           "disabled_overrides_existing_adaptive_thinking",
-			body:           map[string]any{"thinking": map[string]any{"type": "adaptive", "display": "summarized"}, "output_config": map[string]any{"effort": "high"}},
+			body:           map[string]any{"thinking": map[string]any{"type": "adaptive"}, "output_config": map[string]any{"effort": "high"}},
 			thinkingEffort: "disabled",
 			wantThinking:   map[string]any{"type": "disabled"},
 			wantOutputCfg:  false,
@@ -99,7 +99,7 @@ func TestApplyAnthropicThinkingConfigOverridePath(t *testing.T) {
 	overrideBody := map[string]any{
 		"model":         "claude-x",
 		"messages":      []any{map[string]any{"role": "user", "content": "hi"}},
-		"thinking":      map[string]any{"type": "adaptive", "display": "summarized"},
+		"thinking":      map[string]any{"type": "adaptive"},
 		"output_config": map[string]any{"effort": "high"},
 		"stream":        true,
 	}

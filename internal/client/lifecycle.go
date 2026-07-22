@@ -85,6 +85,9 @@ func (s *ProxyService) StartProxy() (ProxyState, error) {
 	}
 
 	// 启动时注入账号信息
+	if err := cursor.BackupCursorAuthState(); err != nil {
+		logger.Errorf("backupCursorAuthState failed: %v", err)
+	}
 	if err := cursor.InjectCursorUserInfo(localruntime.InjectAccountEmail, localruntime.InjectAuthToken); err != nil {
 		logger.Errorf("injectCursorUserInfo failed: %v", err)
 		// 不阻断启动，仅记录日志
@@ -252,6 +255,9 @@ func (s *ProxyService) ShutdownForQuit() {
 		}
 	}
 	if err := s.ClearCursorSettings(); err != nil {
+		finalErr = errors.Join(finalErr, err)
+	}
+	if err := cursor.RestoreCursorAuthState(); err != nil {
 		finalErr = errors.Join(finalErr, err)
 	}
 	if s.backendHost != nil {
