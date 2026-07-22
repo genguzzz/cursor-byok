@@ -11,7 +11,6 @@
 - (void)quitAction:(id)sender  { menuCallback(3); }
 @end
 
-// 全局持有，防止 ARC 释放后 target 变 nil 导致菜单项全灰
 static NSStatusItem   *g_statusItem    = nil;
 static NSMenuItem     *g_startItem     = nil;
 static NSMenuItem     *g_stopItem      = nil;
@@ -84,9 +83,11 @@ void stopEventLoop() {
 }
 
 void updateMenubarStatus(const char *status, int running) {
+    // 必须在 dispatch_async 之前拷贝字符串，
+    // 否则 Go 的 defer C.free 会在 block 执行前释放 status 指针。
+    NSString *title = [[NSString alloc] initWithUTF8String:status];
     dispatch_async(dispatch_get_main_queue(), ^{
         if (g_statusDisplay) {
-            NSString *title = [NSString stringWithUTF8String:status];
             [g_statusDisplay setTitle:title];
         }
         if (g_startItem) { [g_startItem setEnabled:!running]; }
