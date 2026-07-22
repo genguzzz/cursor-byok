@@ -82,6 +82,8 @@ type StreamRequest struct {
 	BaseURL string
 	// APIKey 表示 provider 鉴权凭据。
 	APIKey string
+	// Proxy 表示该请求使用的独立出站代理地址。
+	Proxy string
 	// ProviderModelID 表示 provider 侧真实模型标识。
 	ProviderModelID string
 	// ResolvedChannelID 表示本次请求实际命中的 adapter 渠道 ID。

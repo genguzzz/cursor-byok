@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"cursor/internal/logger"
 	legacyruntime "cursor/internal/runtime"
 )
 
@@ -51,6 +52,10 @@ func (router *Router) Stream(ctx context.Context, req StreamRequest, sink func(M
 	resolved.Provider = strings.TrimSpace(channel.Provider)
 	resolved.BaseURL = strings.TrimSpace(channel.BaseURL)
 	resolved.APIKey = strings.TrimSpace(channel.APIKey)
+	resolved.Proxy = strings.TrimSpace(channel.Proxy)
+	if strings.TrimSpace(channel.Proxy) != "" {
+		logger.Infof("router resolved model channel with proxy=%s base_url=%s model=%s", channel.Proxy, channel.BaseURL, channel.Model)
+	}
 	resolved.ProviderModelID = strings.TrimSpace(channel.Model)
 	resolved.ResolvedChannelID = strings.TrimSpace(channel.ID)
 	resolved.ResolvedChannelName = strings.TrimSpace(channel.Name)

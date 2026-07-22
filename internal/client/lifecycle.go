@@ -12,8 +12,6 @@ import (
 	"cursor/internal/mitm"
 	"cursor/internal/netproxy"
 	localruntime "cursor/internal/runtime"
-
-	"github.com/wailsapp/wails/v3/pkg/application"
 )
 
 // ProxyState 定义了当前模块中的 ProxyState 类型。
@@ -235,15 +233,11 @@ func (s *ProxyService) setLastError(err error) {
 
 // emitState 用于处理与 emitState 相关的逻辑。
 func (s *ProxyService) emitState() {
-	app := application.Get()
-	if app == nil {
-		return
-	}
 	state := s.GetState()
 	if state.Running {
 		state.LastError = ""
 	}
-	app.Event.Emit("proxy:state", state)
+	emitStateEvent("proxy:state", state)
 }
 
 // ShutdownForQuit 用于处理与 ShutdownForQuit 相关的逻辑。
@@ -277,4 +271,21 @@ func (s *ProxyService) setCursorSettingsApplied(applied bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.cursorSettingsApplied = applied
+}
+
+// ShutdownForQuitPreserveSettings stops proxy and backend without clearing Cursor proxy settings.
+func (s *ProxyService) ShutdownForQuitPreserveSettings() {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if s.proxy != nil {
+		if err := s.proxy.Stop(ctx); err != nil && !errors.Is(err, context.Canceled) {
+			s.setLastError(err)
+		}
+	}
+	if s.backendHost != nil {
+		if err := s.backendHost.Stop(ctx); err != nil && !errors.Is(err, context.Canceled) {
+			s.setLastError(err)
+		}
+	}
 }

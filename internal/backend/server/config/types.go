@@ -27,6 +27,7 @@ type ModelAdapterConfig struct {
 	Type                        string `json:"type" yaml:"type"`
 	BaseURL                     string `json:"baseURL" yaml:"baseURL"`
 	APIKey                      string `json:"apiKey" yaml:"apiKey"`
+	Proxy                       string `json:"proxy,omitempty" yaml:"proxy,omitempty"`
 	TooltipData                 string `json:"tooltipData" yaml:"tooltipData"`
 	ModelID                     string `json:"modelID" yaml:"modelID"`
 	ReasoningEffort             string `json:"reasoningEffort" yaml:"reasoningEffort"`
@@ -111,6 +112,7 @@ func NormalizeModelAdapterConfigs(input []ModelAdapterConfig) ([]ModelAdapterCon
 			Type:                 nextType,
 			BaseURL:              baseURL,
 			APIKey:               strings.TrimSpace(item.APIKey),
+			Proxy:                strings.TrimSpace(item.Proxy),
 			TooltipData:          strings.TrimSpace(item.TooltipData),
 			ModelID:              strings.TrimSpace(item.ModelID),
 			ReasoningEffort:      normalizeReasoningEffort(item.ReasoningEffort),

@@ -1,12 +1,8 @@
 package client
 
 import (
-	"context"
-
 	"cursor/internal/appdata"
 	serverconfig "cursor/internal/backend/server/config"
-
-	"github.com/wailsapp/wails/v3/pkg/application"
 )
 
 // UserConfig 定义了当前模块中的 UserConfig 类型。
@@ -17,11 +13,7 @@ func (s *ProxyService) LoadUserConfig() (UserConfig, error) {
 	if s == nil {
 		return serverconfig.DefaultConfig(), nil
 	}
-	app := application.Get()
-	ctx := context.Background()
-	if app != nil {
-		ctx = app.Context()
-	}
+	ctx := getAppContext()
 	if s.backendHost != nil {
 		return s.backendHost.LoadConfig(ctx)
 	}
@@ -36,11 +28,7 @@ func (s *ProxyService) SaveUserConfig(cfg UserConfig) error {
 	if s == nil {
 		return nil
 	}
-	app := application.Get()
-	ctx := context.Background()
-	if app != nil {
-		ctx = app.Context()
-	}
+	ctx := getAppContext()
 	var (
 		normalized UserConfig
 		err        error
@@ -60,11 +48,7 @@ func (s *ProxyService) SaveUserConfig(cfg UserConfig) error {
 }
 
 func (s *ProxyService) emitUserConfigChanged(cfg UserConfig) {
-	app := application.Get()
-	if app == nil {
-		return
-	}
-	app.Event.Emit("user-config:changed", cfg)
+	emitStateEvent("user-config:changed", cfg)
 }
 
 // resolveUserConfigPath 用于处理与 resolveUserConfigPath 相关的逻辑。

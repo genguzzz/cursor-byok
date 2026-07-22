@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 
+	"cursor/internal/logger"
 	"cursor/internal/modelchannel"
 	legacyruntime "cursor/internal/runtime"
 )
@@ -42,6 +43,10 @@ func resolveModelAdapterChannel(adapters []ModelAdapterConfig, requestedModel st
 	}
 	matched := adapters[matchIndex]
 
+	if strings.TrimSpace(matched.Proxy) != "" {
+		logger.Infof("resolved model adapter channel proxy=%s model=%s", matched.Proxy, matched.ModelID)
+	}
+
 	resolved := &legacyruntime.ResolvedChannel{
 		ID:                          strings.TrimSpace(matched.ID),
 		Name:                        strings.TrimSpace(matched.DisplayName),
@@ -50,6 +55,7 @@ func resolveModelAdapterChannel(adapters []ModelAdapterConfig, requestedModel st
 		Provider:                    strings.TrimSpace(matched.Type),
 		BaseURL:                     strings.TrimSpace(matched.BaseURL),
 		APIKey:                      strings.TrimSpace(matched.APIKey),
+		Proxy:                       strings.TrimSpace(matched.Proxy),
 		Model:                       strings.TrimSpace(matched.ModelID),
 		OpenAIEndpoint:              strings.TrimSpace(matched.OpenAIEndpoint),
 		OpenAIExtraParamsEnabled:    matched.OpenAIExtraParamsEnabled,

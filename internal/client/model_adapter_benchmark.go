@@ -21,8 +21,6 @@ import (
 	modeladapter "cursor/internal/backend/agent/model"
 	serverconfig "cursor/internal/backend/server/config"
 	"cursor/internal/modelchannel"
-
-	"github.com/wailsapp/wails/v3/pkg/application"
 )
 
 const (
@@ -724,11 +722,7 @@ func snapshotModelAdapterTestResultsLocked(items map[string]ModelAdapterTestResu
 }
 
 func (s *ProxyService) emitModelAdapterTestResults(results []ModelAdapterTestResult) {
-	app := application.Get()
-	if app == nil {
-		return
-	}
-	app.Event.Emit(modelAdapterTestUpdatedEvent, ModelAdapterTestResultsPayload{
+	emitStateEvent(modelAdapterTestUpdatedEvent, ModelAdapterTestResultsPayload{
 		Results: results,
 	})
 }

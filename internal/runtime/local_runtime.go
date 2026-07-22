@@ -47,6 +47,8 @@ type ModelAdapterConfig struct {
 	BaseURL string `json:"baseURL"`
 	// APIKey 表示当前声明中的 APIKey。
 	APIKey string `json:"apiKey"`
+	// Proxy 表示该模型适配器的独立出站代理地址。
+	Proxy string `json:"proxy,omitempty"`
 	// TooltipData 表示当前声明中的 TooltipData。
 	TooltipData string `json:"tooltipData"`
 	// ModelID 表示当前声明中的 ModelID。
@@ -111,6 +113,7 @@ func NormalizeModelAdapterConfigs(input []ModelAdapterConfig) ([]ModelAdapterCon
 			Type:                 normalizeModelAdapterType(item.Type),
 			BaseURL:              baseURL,
 			APIKey:               strings.TrimSpace(item.APIKey),
+			Proxy:                strings.TrimSpace(item.Proxy),
 			TooltipData:          strings.TrimSpace(item.TooltipData),
 			ModelID:              strings.TrimSpace(item.ModelID),
 			ReasoningEffort:      normalizeReasoningEffort(item.ReasoningEffort),
@@ -280,6 +283,8 @@ type ResolvedChannel struct {
 	BaseURL string
 	// APIKey 表示当前声明中的 APIKey。
 	APIKey string
+	// Proxy 表示该渠道的独立出站代理地址。
+	Proxy string
 	// Model 表示当前声明中的 Model。
 	Model string
 	// TimeoutMS 表示当前声明中的 TimeoutMS。
@@ -418,6 +423,7 @@ func (s *FixedChannelService) SelectChannelForModel(ctx context.Context, modelID
 			Provider:                    strings.TrimSpace(adapter.Type),
 			BaseURL:                     strings.TrimSpace(adapter.BaseURL),
 			APIKey:                      strings.TrimSpace(adapter.APIKey),
+			Proxy:                       strings.TrimSpace(adapter.Proxy),
 			Model:                       strings.TrimSpace(adapter.ModelID),
 			TimeoutMS:                   configurableChannelTimeoutMS,
 			ContextWindowTokens:         configurableChannelContextWindowTokens,

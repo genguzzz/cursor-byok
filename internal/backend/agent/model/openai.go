@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -176,6 +177,26 @@ func (parser *openAIThinkTagParser) Flush() []openAIContentPart {
 func NewOpenAIAdapter() *OpenAIAdapter {
 	return &OpenAIAdapter{
 		client: netproxy.NewHTTPClient(0),
+	}
+}
+
+// adapterClientForRequest 根据 req.Proxy 返回对应的 HTTP client；
+// 若 Proxy 为空则回退到 adapter 内置 client。
+func adapterClientForRequest(adapter *OpenAIAdapter, req StreamRequest) *http.Client {
+	proxyURL := strings.TrimSpace(req.Proxy)
+	if proxyURL == "" {
+		return adapter.client
+	}
+	parsed, err := url.Parse(proxyURL)
+	if err != nil {
+		return adapter.client
+	}
+	return &http.Client{
+		Transport: &http.Transport{
+			Proxy:       http.ProxyURL(parsed),
+			DialContext: adapter.client.Transport.(*http.Transport).DialContext,
+		},
+		Timeout: adapter.client.Timeout,
 	}
 }
 
@@ -386,6 +407,9 @@ func OpenAIEndpointFromBaseURL(baseURL string) string {
 
 func ProviderURLHasEndpoint(baseURL string, endpoints ...string) bool {
 	base := strings.TrimRight(strings.TrimSpace(strings.ToLower(baseURL)), "/")
+	if idx := strings.Index(base, "?"); idx >= 0 {
+		base = strings.TrimRight(strings.TrimSpace(base[:idx]), "/")
+	}
 	if base == "" {
 		return false
 	}
@@ -513,7 +537,7 @@ func (adapter *OpenAIAdapter) streamChatCompletions(ctx context.Context, req Str
 		return httpReq, nil
 	}
 
-	resp, err := doProviderRequestWithRetry(streamCtx, adapter.client, "openai", req.RequestID, req.ModelCallID, buildHTTPRequest)
+	resp, err := doProviderRequestWithRetry(streamCtx, adapterClientForRequest(adapter, req), "openai", req.RequestID, req.ModelCallID, buildHTTPRequest)
 	if err != nil {
 		if idleErr := streamIdle.Err(); idleErr != nil {
 			err = idleErr
@@ -992,7 +1016,7 @@ func (adapter *OpenAIAdapter) streamResponses(ctx context.Context, req StreamReq
 		return httpReq, nil
 	}
 
-	resp, err := doProviderRequestWithRetry(streamCtx, adapter.client, "openai", req.RequestID, req.ModelCallID, buildHTTPRequest)
+	resp, err := doProviderRequestWithRetry(streamCtx, adapterClientForRequest(adapter, req), "openai", req.RequestID, req.ModelCallID, buildHTTPRequest)
 	if err != nil {
 		if idleErr := streamIdle.Err(); idleErr != nil {
 			err = idleErr

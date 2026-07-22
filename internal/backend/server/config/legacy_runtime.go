@@ -21,6 +21,7 @@ func (store *Store) LegacyRuntimeSnapshot(ctx context.Context) (legacyruntime.Ru
 			Type:                        item.Type,
 			BaseURL:                     item.BaseURL,
 			APIKey:                      item.APIKey,
+			Proxy:                       item.Proxy,
 			TooltipData:                 item.TooltipData,
 			ModelID:                     item.ModelID,
 			ReasoningEffort:             item.ReasoningEffort,
