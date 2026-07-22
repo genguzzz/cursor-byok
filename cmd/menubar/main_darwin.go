@@ -12,6 +12,7 @@ extern void setupMenubar();
 extern void runEventLoop();
 extern void stopEventLoop();
 extern void updateMenubarStatus(const char *status, int running);
+extern void setProxyMenuItemEnabled(int enabled);
 */
 import "C"
 
@@ -21,18 +22,23 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"syscall"
 	"unsafe"
 
+	"cursor/internal/appdata"
 	"cursor/internal/logger"
 )
+
+const proxyAddr = "http://127.0.0.1:9090"
 
 var (
 	actionChan     = make(chan int, 4)
 	serviceMu      sync.Mutex
 	cliCmd         *exec.Cmd
 	serviceRunning bool
+	proxyEnabled   bool
 )
 
 //export menuCallback
@@ -61,14 +67,45 @@ func findCLIBinary() string {
 	return ""
 }
 
+func configPath() string {
+	return filepath.Join(appdata.RootDir(), "config.yaml")
+}
+
+// readProxyEnabled 从 config.yaml 读取 proxy 是否启用
+func readProxyEnabled() bool {
+	data, err := os.ReadFile(configPath())
+	if err != nil {
+		return false
+	}
+	return strings.Contains(string(data), "proxy: "+proxyAddr)
+}
+
+// writeProxyConfig 切换 config.yaml 中所有 model adapter 的 proxy 字段
+func writeProxyConfig(enable bool) error {
+	path := configPath()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	content := string(data)
+	if enable {
+		content = strings.ReplaceAll(content, `proxy: ""`, "proxy: "+proxyAddr)
+	} else {
+		content = strings.ReplaceAll(content, "proxy: "+proxyAddr, `proxy: ""`)
+	}
+	return os.WriteFile(path, []byte(content), 0o644)
+}
+
 func main() {
 	runtime.LockOSThread()
 	defer runtime.UnlockOSThread()
 
 	logger.Init()
 
-	// 菜单栏程序忽略 SIGINT（Ctrl+C），只能通过菜单"退出"关闭
-	// 防止 CLI 子进程的信号传播到菜单栏程序导致意外退出
+	// 读取初始代理状态
+	proxyEnabled = readProxyEnabled()
+	C.setProxyMenuItemEnabled(boolToInt(proxyEnabled))
+
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
@@ -76,7 +113,6 @@ func main() {
 			if sig == syscall.SIGTERM {
 				quitApp()
 			}
-			// SIGINT 被忽略，防止终端 Ctrl+C 杀掉菜单栏程序
 		}
 	}()
 
@@ -94,7 +130,37 @@ func handleActions() {
 			stopInterception()
 		case 3:
 			quitApp()
+		case 4:
+			toggleProxy()
 		}
+	}
+}
+
+func toggleProxy() {
+	proxyEnabled = !proxyEnabled
+	logger.Infof("toggle proxy → %v", proxyEnabled)
+
+	if err := writeProxyConfig(proxyEnabled); err != nil {
+		logger.Errorf("write proxy config failed: %v", err)
+		proxyEnabled = !proxyEnabled // 回滚
+		return
+	}
+
+	C.setProxyMenuItemEnabled(boolToInt(proxyEnabled))
+
+	// 如果 CLI 正在运行，重启以应用新的代理设置
+	serviceMu.Lock()
+	running := serviceRunning
+	cmd := cliCmd
+	serviceMu.Unlock()
+
+	if running && cmd != nil && cmd.Process != nil {
+		logger.Infof("restarting CLI to apply proxy change")
+		_ = cmd.Process.Signal(syscall.SIGTERM)
+		_ = cmd.Wait()
+		// 等待端口释放
+		// 直接重新启动
+		startInterception()
 	}
 }
 
@@ -115,7 +181,6 @@ func startInterception() {
 		return
 	}
 
-	// 打开日志文件作为子进程的 stdout/stderr
 	logPath := filepath.Join(os.Getenv("HOME"), ".cursor-local-assistant-v2", "logs", "cli-subprocess.log")
 	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 	if err != nil {
@@ -127,8 +192,7 @@ func startInterception() {
 	cmd := exec.Command(cliPath)
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile
-	cmd.Stdin = nil // 不继承终端 stdin
-	// 独立进程组，防止终端信号传播到子进程
+	cmd.Stdin = nil
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 
 	if err := cmd.Start(); err != nil {
@@ -146,7 +210,6 @@ func startInterception() {
 
 	updateStatus("状态: 运行中", true)
 
-	// 监控子进程退出
 	go func() {
 		_ = cmd.Wait()
 		logger.Infof("CLI subprocess exited pid=%d", cmd.Process.Pid)
@@ -172,7 +235,6 @@ func stopInterception() {
 	updateStatus("状态: 关闭中...", true)
 
 	if cmd != nil && cmd.Process != nil {
-		// 发 SIGTERM 让 CLI 优雅退出（ShutdownForQuit 恢复账号）
 		_ = cmd.Process.Signal(syscall.SIGTERM)
 		_ = cmd.Wait()
 	}
@@ -200,9 +262,12 @@ func quitApp() {
 func updateStatus(status string, running bool) {
 	cstr := C.CString(status)
 	defer C.free(unsafe.Pointer(cstr))
-	runVal := C.int(0)
-	if running {
-		runVal = 1
+	C.updateMenubarStatus(cstr, boolToInt(running))
+}
+
+func boolToInt(b bool) C.int {
+	if b {
+		return 1
 	}
-	C.updateMenubarStatus(cstr, runVal)
+	return 0
 }

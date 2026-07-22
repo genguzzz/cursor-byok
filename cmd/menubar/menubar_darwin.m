@@ -6,15 +6,17 @@
 @end
 
 @implementation MenuHandler
-- (void)startAction:(id)sender { menuCallback(1); }
-- (void)stopAction:(id)sender  { menuCallback(2); }
-- (void)quitAction:(id)sender  { menuCallback(3); }
+- (void)startAction:(id)sender      { menuCallback(1); }
+- (void)stopAction:(id)sender       { menuCallback(2); }
+- (void)quitAction:(id)sender       { menuCallback(3); }
+- (void)toggleProxyAction:(id)sender { menuCallback(4); }
 @end
 
 static NSStatusItem   *g_statusItem    = nil;
 static NSMenuItem     *g_startItem     = nil;
 static NSMenuItem     *g_stopItem      = nil;
 static NSMenuItem     *g_statusDisplay = nil;
+static NSMenuItem     *g_proxyItem     = nil;
 static MenuHandler    *g_handler       = nil;
 
 void setupMenubar() {
@@ -46,6 +48,13 @@ void setupMenubar() {
                           keyEquivalent:@""];
     [g_stopItem setEnabled:NO];
     [g_stopItem setTarget:g_handler];
+
+    [menu addItem:[NSMenuItem separatorItem]];
+
+    g_proxyItem = [menu addItemWithTitle:@"使用代理 (9090)"
+                                  action:@selector(toggleProxyAction:)
+                           keyEquivalent:@""];
+    [g_proxyItem setTarget:g_handler];
 
     [menu addItem:[NSMenuItem separatorItem]];
 
@@ -83,8 +92,6 @@ void stopEventLoop() {
 }
 
 void updateMenubarStatus(const char *status, int running) {
-    // 必须在 dispatch_async 之前拷贝字符串，
-    // 否则 Go 的 defer C.free 会在 block 执行前释放 status 指针。
     NSString *title = [[NSString alloc] initWithUTF8String:status];
     dispatch_async(dispatch_get_main_queue(), ^{
         if (g_statusDisplay) {
@@ -92,5 +99,13 @@ void updateMenubarStatus(const char *status, int running) {
         }
         if (g_startItem) { [g_startItem setEnabled:!running]; }
         if (g_stopItem)  { [g_stopItem  setEnabled:running]; }
+    });
+}
+
+void setProxyMenuItemEnabled(int enabled) {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        if (g_proxyItem) {
+            [g_proxyItem setState:(enabled ? NSControlStateValueOn : NSControlStateValueOff)];
+        }
     });
 }
