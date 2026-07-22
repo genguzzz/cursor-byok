@@ -18,6 +18,7 @@ import "C"
 import (
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"runtime"
 	"sync"
@@ -42,9 +43,7 @@ func menuCallback(action C.int) {
 	}
 }
 
-// findCLIBinary 查找 CLI 二进制文件路径
 func findCLIBinary() string {
-	// 1. 与当前二进制同目录
 	exePath, err := os.Executable()
 	if err == nil {
 		p := filepath.Join(filepath.Dir(exePath), "cursor-local-assistant")
@@ -52,14 +51,6 @@ func findCLIBinary() string {
 			return p
 		}
 	}
-	// 2. .app bundle 内
-	if exePath, err := os.Executable(); err == nil {
-		p := filepath.Join(filepath.Dir(exePath), "cursor-local-assistant")
-		if _, err := os.Stat(p); err == nil {
-			return p
-		}
-	}
-	// 3. 项目根目录（开发模式）
 	cwd, err := os.Getwd()
 	if err == nil {
 		p := filepath.Join(cwd, "cursor-local-assistant")
@@ -75,6 +66,19 @@ func main() {
 	defer runtime.UnlockOSThread()
 
 	logger.Init()
+
+	// 菜单栏程序忽略 SIGINT（Ctrl+C），只能通过菜单"退出"关闭
+	// 防止 CLI 子进程的信号传播到菜单栏程序导致意外退出
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+	go func() {
+		for sig := range sigChan {
+			if sig == syscall.SIGTERM {
+				quitApp()
+			}
+			// SIGINT 被忽略，防止终端 Ctrl+C 杀掉菜单栏程序
+		}
+	}()
 
 	C.setupMenubar()
 	go handleActions()
@@ -111,14 +115,29 @@ func startInterception() {
 		return
 	}
 
+	// 打开日志文件作为子进程的 stdout/stderr
+	logPath := filepath.Join(os.Getenv("HOME"), ".cursor-local-assistant-v2", "logs", "cli-subprocess.log")
+	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	if err != nil {
+		logFile = os.Stderr
+	} else {
+		defer logFile.Close()
+	}
+
 	cmd := exec.Command(cliPath)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+	cmd.Stdout = logFile
+	cmd.Stderr = logFile
+	cmd.Stdin = nil // 不继承终端 stdin
+	// 独立进程组，防止终端信号传播到子进程
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+
 	if err := cmd.Start(); err != nil {
 		logger.Errorf("start CLI failed: %v", err)
 		updateStatus("状态: 启动失败", false)
 		return
 	}
+
+	logger.Infof("CLI subprocess started pid=%d path=%s", cmd.Process.Pid, cliPath)
 
 	serviceMu.Lock()
 	cliCmd = cmd
@@ -127,9 +146,10 @@ func startInterception() {
 
 	updateStatus("状态: 运行中", true)
 
-	// 等待子进程退出（异常退出时自动更新状态）
+	// 监控子进程退出
 	go func() {
 		_ = cmd.Wait()
+		logger.Infof("CLI subprocess exited pid=%d", cmd.Process.Pid)
 		serviceMu.Lock()
 		if cliCmd == cmd {
 			serviceRunning = false
@@ -151,8 +171,8 @@ func stopInterception() {
 
 	updateStatus("状态: 关闭中...", true)
 
-	// 发 SIGTERM 让 CLI 优雅退出（ShutdownForQuit 恢复账号）
 	if cmd != nil && cmd.Process != nil {
+		// 发 SIGTERM 让 CLI 优雅退出（ShutdownForQuit 恢复账号）
 		_ = cmd.Process.Signal(syscall.SIGTERM)
 		_ = cmd.Wait()
 	}

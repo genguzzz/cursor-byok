@@ -15,6 +15,7 @@ PROJECT_ROOT="$(cd "$(dirname "$0")" && pwd)"
 APP_NAME="cursor-menubar"
 CLI_NAME="cursor-local-assistant"
 LOG_FILE="$HOME/.cursor-local-assistant-v2/logs/app.log"
+CLI_LOG_FILE="$HOME/.cursor-local-assistant-v2/logs/cli-subprocess.log"
 INSTALL_PATH="/Applications/CursorLocalAssistant.app"
 
 RED='\033[0;31m'
@@ -72,7 +73,7 @@ cmd_debug() {
     info "启动菜单栏程序（前台模式，Ctrl+C 退出）..."
     echo ""
     if [ -f "$LOG_FILE" ]; then
-        ( tail -f "$LOG_FILE" 2>/dev/null ) &
+        ( tail -f "$LOG_FILE" "$CLI_LOG_FILE" 2>/dev/null ) &
         TAIL_PID=$!
         trap "kill $TAIL_PID 2>/dev/null; true" EXIT INT TERM
         warn "日志文件 tail PID=$TAIL_PID"
@@ -89,7 +90,7 @@ cmd_debug_cli() {
     info "启动 CLI（前台模式，Ctrl+C 退出）..."
     echo ""
     if [ -f "$LOG_FILE" ]; then
-        ( tail -f "$LOG_FILE" 2>/dev/null ) &
+        ( tail -f "$LOG_FILE" "$CLI_LOG_FILE" 2>/dev/null ) &
         TAIL_PID=$!
         trap "kill $TAIL_PID 2>/dev/null; true" EXIT INT TERM
     fi
