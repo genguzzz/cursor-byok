@@ -32,12 +32,10 @@ fail()  { echo -e "${RED}    ✗ $1${NC}"; }
 kill_existing() {
     info "清理已有进程..."
     local killed=0
-    # 杀菜单栏进程
     if pgrep -f "$APP_NAME" >/dev/null 2>&1; then
         pkill -f "$APP_NAME" 2>/dev/null || true
         killed=1
     fi
-    # 杀 CLI 进程（但不要杀掉 grep 自己）
     if pgrep -f "$CLI_NAME" | grep -v $$ >/dev/null 2>&1; then
         pkill -f "$CLI_NAME" 2>/dev/null || true
         killed=1
@@ -50,12 +48,13 @@ kill_existing() {
     fi
 }
 
-# ── 编译菜单栏程序 ────────────────────────────────────────────────────────
-build_menubar() {
-    info "编译菜单栏程序..."
+# ── 编译全部 ────────────────────────────────────────────────────────────────
+build_all() {
+    info "编译菜单栏程序 + CLI..."
     cd "$PROJECT_ROOT"
     go build -tags cli -o "$APP_NAME" ./cmd/menubar 2>&1
-    ok "编译完成: $APP_NAME"
+    go build -tags cli -o "$CLI_NAME" ./cmd/cli 2>&1
+    ok "编译完成: $APP_NAME + $CLI_NAME"
 }
 
 # ── 编译 CLI ───────────────────────────────────────────────────────────────
@@ -69,17 +68,15 @@ build_cli() {
 # ── 调试运行菜单栏程序 ─────────────────────────────────────────────────────
 cmd_debug() {
     kill_existing
-    build_menubar
+    build_all
     info "启动菜单栏程序（前台模式，Ctrl+C 退出）..."
     echo ""
-    # 后台 tail 日志文件，退出时自动清理
     if [ -f "$LOG_FILE" ]; then
         ( tail -f "$LOG_FILE" 2>/dev/null ) &
         TAIL_PID=$!
         trap "kill $TAIL_PID 2>/dev/null; true" EXIT INT TERM
         warn "日志文件 tail PID=$TAIL_PID"
     fi
-    # 前台运行，stderr/stdout 直接输出到终端
     "$PROJECT_ROOT/$APP_NAME" 2>&1
     echo ""
     info "菜单栏程序已退出"
@@ -104,15 +101,17 @@ cmd_debug_cli() {
 # ── 安装到 /Applications ───────────────────────────────────────────────────
 cmd_install() {
     kill_existing
-    build_menubar
+    build_all
     info "安装到 $INSTALL_PATH ..."
     rm -rf "$INSTALL_PATH"
     mkdir -p "$INSTALL_PATH/Contents/MacOS"
     mkdir -p "$INSTALL_PATH/Contents/Resources"
-    # 拷贝二进制
+    # 拷贝两个二进制：菜单栏程序 + CLI
     cp "$PROJECT_ROOT/$APP_NAME" "$INSTALL_PATH/Contents/MacOS/"
+    cp "$PROJECT_ROOT/$CLI_NAME" "$INSTALL_PATH/Contents/MacOS/"
     chmod +x "$INSTALL_PATH/Contents/MacOS/$APP_NAME"
-    # 生成 Info.plist（LSUIElement=true 使其成为菜单栏后台应用，无 Dock 图标）
+    chmod +x "$INSTALL_PATH/Contents/MacOS/$CLI_NAME"
+    # 生成 Info.plist
     cat > "$INSTALL_PATH/Contents/Info.plist" << 'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

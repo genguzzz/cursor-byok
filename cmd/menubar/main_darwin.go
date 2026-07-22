@@ -16,22 +16,21 @@ extern void updateMenubarStatus(const char *status, int running);
 import "C"
 
 import (
-	"fmt"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"runtime"
 	"sync"
+	"syscall"
 	"unsafe"
 
-	"cursor/internal/certs"
-	"cursor/internal/client"
 	"cursor/internal/logger"
-	"cursor/internal/netproxy"
 )
 
 var (
 	actionChan     = make(chan int, 4)
-	proxyService   *client.ProxyService
 	serviceMu      sync.Mutex
+	cliCmd         *exec.Cmd
 	serviceRunning bool
 )
 
@@ -43,20 +42,39 @@ func menuCallback(action C.int) {
 	}
 }
 
+// findCLIBinary 查找 CLI 二进制文件路径
+func findCLIBinary() string {
+	// 1. 与当前二进制同目录
+	exePath, err := os.Executable()
+	if err == nil {
+		p := filepath.Join(filepath.Dir(exePath), "cursor-local-assistant")
+		if _, err := os.Stat(p); err == nil {
+			return p
+		}
+	}
+	// 2. .app bundle 内
+	if exePath, err := os.Executable(); err == nil {
+		p := filepath.Join(filepath.Dir(exePath), "cursor-local-assistant")
+		if _, err := os.Stat(p); err == nil {
+			return p
+		}
+	}
+	// 3. 项目根目录（开发模式）
+	cwd, err := os.Getwd()
+	if err == nil {
+		p := filepath.Join(cwd, "cursor-local-assistant")
+		if _, err := os.Stat(p); err == nil {
+			return p
+		}
+	}
+	return ""
+}
+
 func main() {
 	runtime.LockOSThread()
 	defer runtime.UnlockOSThread()
 
 	logger.Init()
-	netproxy.InstallDefaultTransport()
-
-	certManager, err := certs.NewEmbeddedManager()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to create cert manager: %v\n", err)
-		os.Exit(1)
-	}
-	caCertPEM := certs.EmbeddedCACertPEM()
-	proxyService = client.NewProxyService(nil, certManager, caCertPEM)
 
 	C.setupMenubar()
 	go handleActions()
@@ -82,21 +100,44 @@ func startInterception() {
 		serviceMu.Unlock()
 		return
 	}
-	serviceRunning = true
 	serviceMu.Unlock()
 
 	updateStatus("状态: 启动中...", false)
 
-	_, err := proxyService.StartProxy()
-	if err != nil {
-		logger.Errorf("start proxy failed: %v", err)
-		serviceMu.Lock()
-		serviceRunning = false
-		serviceMu.Unlock()
+	cliPath := findCLIBinary()
+	if cliPath == "" {
+		logger.Errorf("CLI binary not found")
+		updateStatus("状态: 找不到CLI", false)
+		return
+	}
+
+	cmd := exec.Command(cliPath)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Start(); err != nil {
+		logger.Errorf("start CLI failed: %v", err)
 		updateStatus("状态: 启动失败", false)
 		return
 	}
+
+	serviceMu.Lock()
+	cliCmd = cmd
+	serviceRunning = true
+	serviceMu.Unlock()
+
 	updateStatus("状态: 运行中", true)
+
+	// 等待子进程退出（异常退出时自动更新状态）
+	go func() {
+		_ = cmd.Wait()
+		serviceMu.Lock()
+		if cliCmd == cmd {
+			serviceRunning = false
+			cliCmd = nil
+		}
+		serviceMu.Unlock()
+		updateStatus("状态: 已停止", false)
+	}()
 }
 
 func stopInterception() {
@@ -105,25 +146,33 @@ func stopInterception() {
 		serviceMu.Unlock()
 		return
 	}
+	cmd := cliCmd
 	serviceMu.Unlock()
 
 	updateStatus("状态: 关闭中...", true)
 
-	proxyService.ShutdownForQuit()
+	// 发 SIGTERM 让 CLI 优雅退出（ShutdownForQuit 恢复账号）
+	if cmd != nil && cmd.Process != nil {
+		_ = cmd.Process.Signal(syscall.SIGTERM)
+		_ = cmd.Wait()
+	}
 
 	serviceMu.Lock()
 	serviceRunning = false
+	cliCmd = nil
 	serviceMu.Unlock()
 	updateStatus("状态: 已停止", false)
 }
 
 func quitApp() {
 	serviceMu.Lock()
+	cmd := cliCmd
 	running := serviceRunning
 	serviceMu.Unlock()
 
-	if running {
-		proxyService.ShutdownForQuit()
+	if running && cmd != nil && cmd.Process != nil {
+		_ = cmd.Process.Signal(syscall.SIGTERM)
+		_ = cmd.Wait()
 	}
 	C.stopEventLoop()
 }
