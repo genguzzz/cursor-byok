@@ -1744,6 +1744,11 @@ func (service *Service) handleToolInvocation(stream *ActiveStream, invocation ru
 		return service.completePreDispatchToolError(stream, invocation, nil, false, false, fmt.Errorf("Model hallucination: attempted to invoke a nonexistent tool: %s", displayToolName))
 	}
 	if !isToolAllowedInMode(mode, subagentTypeName, trimmedToolName) {
+		log.Printf("forwarder: tool invocation rejected request_id=%s mode=%s subagent=%s tool=%q agent_ok=%v ask_ok=%v plan_ok=%v",
+			stream.RequestID, mode.String(), subagentTypeName, trimmedToolName,
+			isToolNameInMap(trimmedToolName, agentModeToolNames),
+			isToolNameInMap(trimmedToolName, askModeToolNames),
+			isToolNameInMap(trimmedToolName, planModeToolNames))
 		return service.completePreDispatchToolError(stream, invocation, nil, false, false, fmt.Errorf("tool invocation is not enabled in mode %s: %s", mode.String(), invocation.ToolName))
 	}
 	var err error

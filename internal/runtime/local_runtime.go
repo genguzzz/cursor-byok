@@ -125,7 +125,7 @@ func NormalizeModelAdapterConfigs(input []ModelAdapterConfig) ([]ModelAdapterCon
 			AnthropicMaxTokens:   normalizeMaxCompletionTokens(item.AnthropicMaxTokens),
 			ThinkingBudgetTokens: normalizeMaxCompletionTokens(item.ThinkingBudgetTokens),
 		}
-		if next.Type == "openai" {
+		if next.Type == "openai" || next.Type == "codebuddy" {
 			next.OpenAIExtraParamsEnabled = item.OpenAIExtraParamsEnabled
 			next.OpenAIExtraParamsJSON = strings.TrimSpace(item.OpenAIExtraParamsJSON)
 		} else if next.Type == "anthropic" {
@@ -139,18 +139,18 @@ func NormalizeModelAdapterConfigs(input []ModelAdapterConfig) ([]ModelAdapterCon
 		case next.DisplayName == "":
 			return nil, errors.New("模型适配器 displayName 不能为空")
 		case next.Type == "":
-			return nil, errors.New("模型适配器 type 仅支持 openai 或 anthropic")
+			return nil, errors.New("模型适配器 type 仅支持 openai、anthropic 或 codebuddy")
 		case next.APIKey == "":
 			return nil, errors.New("模型适配器 apiKey 不能为空")
 		case next.TooltipData == "":
 			return nil, errors.New("模型适配器 tooltipData 不能为空")
 		case next.ModelID == "":
 			return nil, errors.New("模型适配器 modelID 不能为空")
-		case next.Type == "openai" && next.ReasoningEffort == "":
+		case (next.Type == "openai" || next.Type == "codebuddy") && next.ReasoningEffort == "":
 			return nil, errors.New("模型适配器 reasoningEffort 仅支持 low、medium、high、xhigh、max")
-		case next.Type == "openai" && next.OpenAIEndpoint == "":
+		case (next.Type == "openai" || next.Type == "codebuddy") && next.OpenAIEndpoint == "":
 			return nil, errors.New("模型适配器 openAIEndpoint 仅支持 /v1/responses 或 /v1/chat/completions")
-		case next.Type == "openai" && next.OpenAIExtraParamsEnabled:
+		case (next.Type == "openai" || next.Type == "codebuddy") && next.OpenAIExtraParamsEnabled:
 			if err := validateJSONMap(next.OpenAIExtraParamsJSON, "openAIExtraParamsJSON"); err != nil {
 				return nil, err
 			}
@@ -264,6 +264,8 @@ func normalizeModelAdapterType(value string) string {
 		return "openai"
 	case "anthropic":
 		return "anthropic"
+	case "codebuddy":
+		return "codebuddy"
 	default:
 		return ""
 	}

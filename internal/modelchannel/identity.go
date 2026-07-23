@@ -44,12 +44,16 @@ func NormalizeBaseURL(raw string) (string, error) {
 // 支持三个预设值：/v1/responses、/v1/chat/completions、/custom（自定义路径）。
 // 选 /custom 时，用户需在接口地址栏填写完整请求 URL。
 func NormalizeOpenAIEndpoint(providerType string, endpoint string) string {
-	if strings.TrimSpace(strings.ToLower(providerType)) != "openai" {
+	typ := strings.TrimSpace(strings.ToLower(providerType))
+	if typ != "openai" && typ != "codebuddy" {
 		return ""
 	}
 	normalized := strings.TrimSpace(endpoint)
 	switch normalized {
 	case "":
+		if typ == "codebuddy" {
+			return OpenAIEndpointCustom
+		}
 		return OpenAIEndpointResponses
 	case OpenAIEndpointResponses, OpenAIEndpointChatCompletions, OpenAIEndpointCustom:
 		return normalized

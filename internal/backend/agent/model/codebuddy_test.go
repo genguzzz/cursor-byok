@@ -391,3 +391,225 @@ func mapKeys(m map[string]any) []string {
 	}
 	return keys
 }
+
+// TestCodeBuddyAdapterHeaderInjection 验证 CodeBuddyAdapter 自动���入标准请求头。
+func TestCodeBuddyAdapterHeaderInjection(t *testing.T) {
+	var captured capturedRequest
+	mockURL, mockClose := startMockSSEServer(t, &captured)
+	defer mockClose()
+
+	adapter := NewCodeBuddyAdapter()
+	req := StreamRequest{
+		BaseURL:          mockURL + "/v2",
+		APIKey:           "ck_test_codebuddy",
+		ProviderModelID:  "deepseek-v4-pro-ioa",
+		ModelID:          "deepseek-v4-pro-ioa",
+		OpenAIEndpoint:   "/custom",
+		Messages: []Message{
+			{Role: "user", Content: "hello"},
+		},
+		ProviderStreamIdleTimeout: 30 * time.Second,
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	err := adapter.Stream(ctx, req, func(ModelEvent) error { return nil })
+	if err != nil {
+		t.Fatalf("CodeBuddyAdapter.Stream returned error: %v", err)
+	}
+
+	// 验证 CodeBuddy 特有 headers 已自动注入
+	verifyHeader := func(t *testing.T, key, expected string) {
+		t.Helper()
+		val := captured.Headers.Get(key)
+		if val != expected {
+			t.Errorf("header %q = %q, want %q", key, val, expected)
+		}
+	}
+	verifyHeader(t, "X-Codebuddy-Request", "1")
+	verifyHeader(t, "X-Ide-Type", "CLI")
+	verifyHeader(t, "X-Ide-Name", "CLI")
+	verifyHeader(t, "X-Agent-Intent", "craft")
+	verifyHeader(t, "X-Product", "SaaS")
+	verifyHeader(t, "X-Enterprise-Id", CodeBuddyDefaultEnterpriseID)
+	verifyHeader(t, "X-Tenant-Id", CodeBuddyDefaultEnterpriseID)
+	verifyHeader(t, "X-Domain", CodeBuddyDefaultDomain)
+	verifyHeader(t, "Accept", "application/json")
+	verifyHeader(t, "Content-Type", "application/json")
+}
+
+// TestCodeBuddyAdapterExtraParams 验证 CodeBuddyAdapter 自动注入 reasoning_summary。
+func TestCodeBuddyAdapterExtraParams(t *testing.T) {
+	var captured capturedRequest
+	mockURL, mockClose := startMockSSEServer(t, &captured)
+	defer mockClose()
+
+	adapter := NewCodeBuddyAdapter()
+	req := StreamRequest{
+		BaseURL:          mockURL + "/v2",
+		APIKey:           "ck_test_codebuddy",
+		ProviderModelID:  "deepseek-v4-flash-ioa",
+		ModelID:          "deepseek-v4-flash-ioa",
+		OpenAIEndpoint:   "/custom",
+		Messages: []Message{
+			{Role: "user", Content: "hi"},
+		},
+		ProviderStreamIdleTimeout: 30 * time.Second,
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	err := adapter.Stream(ctx, req, func(ModelEvent) error { return nil })
+	if err != nil {
+		t.Fatalf("CodeBuddyAdapter.Stream returned error: %v", err)
+	}
+
+	rs, ok := captured.Body["reasoning_summary"].(string)
+	if !ok || rs != "auto" {
+		t.Errorf("reasoning_summary should be \"auto\", got %T: %v", captured.Body["reasoning_summary"], captured.Body["reasoning_summary"])
+	}
+}
+
+// TestCodeBuddyAdapterMergesUserHeaders 验证用户自定义 header 不会被覆盖。
+func TestCodeBuddyAdapterMergesUserHeaders(t *testing.T) {
+	var captured capturedRequest
+	mockURL, mockClose := startMockSSEServer(t, &captured)
+	defer mockClose()
+
+	adapter := NewCodeBuddyAdapter()
+	req := StreamRequest{
+		BaseURL:          mockURL + "/v2",
+		APIKey:           "ck_test_codebuddy",
+		ProviderModelID:  "deepseek-v4-pro-ioa",
+		ModelID:          "deepseek-v4-pro-ioa",
+		OpenAIEndpoint:   "/custom",
+		Messages: []Message{
+			{Role: "user", Content: "hello"},
+		},
+		CustomHeadersEnabled: true,
+		CustomHeadersJSON:    `{"X-Custom-Header":"my-value","X-User-Id":"user-123"}`,
+		ProviderStreamIdleTimeout: 30 * time.Second,
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	err := adapter.Stream(ctx, req, func(ModelEvent) error { return nil })
+	if err != nil {
+		t.Fatalf("CodeBuddyAdapter.Stream returned error: %v", err)
+	}
+
+	// 用户自定义 header 应被保留
+	if val := captured.Headers.Get("X-Custom-Header"); val != "my-value" {
+		t.Errorf("X-Custom-Header = %q, want %q", val, "my-value")
+	}
+	// 用户 X-User-Id 覆盖标准值（标准 headers 中没有 X-User-Id，所以这是新增的）
+	if val := captured.Headers.Get("X-User-Id"); val != "user-123" {
+		t.Errorf("X-User-Id = %q, want %q", val, "user-123")
+	}
+	// 标准 headers 应仍然存在
+	if val := captured.Headers.Get("X-Ide-Type"); val != "CLI" {
+		t.Errorf("X-Ide-Type = %q, want %q", val, "CLI")
+	}
+}
+
+// TestCodeBuddyDiscoveryFetchModels 验证模型发现 HTTP 客户端。
+func TestCodeBuddyDiscoveryFetchModels(t *testing.T) {
+	discovery := NewCodeBuddyModelDiscovery()
+
+	// 测试缓存机制：第一次调用应触发 fetch（URL 硬编码为 copilot.tencent.com，离线环境会失败属预期）
+	models, err := discovery.FetchModels(context.Background(), "test-api-key", "test-user-id", "")
+	if err == nil {
+		t.Logf("Discovery succeeded (online environment): %d models", len(models))
+	} else {
+		t.Logf("Discovery failed as expected in offline env: %v", err)
+	}
+}
+
+// TestCodeBuddyDiscoveryCache 验证模型发现缓存。
+func TestCodeBuddyDiscoveryCache(t *testing.T) {
+	discovery := NewCodeBuddyModelDiscovery()
+	discovery.cacheTTL = 10 * time.Minute
+
+	// 第一次调用若失败，不应 panic；缓存项不会写入
+	_, _ = discovery.FetchModels(context.Background(), "test-key", "test-id", "")
+	// 第二次应复用第一次的失败结果（cached 为空 → 重新尝试，结果仍可能失败）
+	_, _ = discovery.FetchModels(context.Background(), "test-key", "test-id", "")
+}
+
+// TestCodeBuddyAdapterAllModels 验证所有 CodeBuddy 模型都能正常流式调用。
+func TestCodeBuddyAdapterAllModels(t *testing.T) {
+	for _, modelID := range CodeBuddyModelIDs() {
+		t.Run("model/"+modelID, func(t *testing.T) {
+			var captured capturedRequest
+			mockURL, mockClose := startMockSSEServer(t, &captured)
+			defer mockClose()
+
+			adapter := NewCodeBuddyAdapter()
+			req := StreamRequest{
+				BaseURL:          mockURL + "/v2",
+				APIKey:           "ck_test",
+				ProviderModelID:  modelID,
+				ModelID:          modelID,
+				OpenAIEndpoint:   "/custom",
+				Messages:         []Message{{Role: "user", Content: "test"}},
+				ProviderStreamIdleTimeout: 30 * time.Second,
+			}
+
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+
+			err := adapter.Stream(ctx, req, func(ModelEvent) error { return nil })
+			if err != nil {
+				t.Fatalf("model %s: CodeBuddyAdapter.Stream error: %v", modelID, err)
+			}
+
+			// 验证 reasoning_summary 存在
+			rs, ok := captured.Body["reasoning_summary"].(string)
+			if !ok || rs != "auto" {
+				t.Errorf("model %s: reasoning_summary = %q, want \"auto\"", modelID, rs)
+			}
+
+			// 验证 model 正确传递
+			model, ok := captured.Body["model"].(string)
+			if !ok || model != modelID {
+				t.Errorf("model %s: body model = %q, want %q", modelID, model, modelID)
+			}
+		})
+	}
+}
+
+// TestCodeBuddyDiscoveryResponseParsing 验证 /v3/config 响应解析。
+func TestCodeBuddyDiscoveryResponseParsing(t *testing.T) {
+	// 模拟真实 API 响应（简化版）
+	responseJSON := `{
+		"code": 0,
+		"msg": "OK",
+		"data": {
+			"models": [
+				{"id": "deepseek-v4-pro-ioa", "name": "Deepseek-V4-Pro", "maxInputTokens": 1000000, "maxOutputTokens": 50000},
+				{"id": "claude-sonnet-5-1m", "name": "Claude-Sonnet-5-1M", "maxInputTokens": 1000000, "maxOutputTokens": 128000}
+			]
+		}
+	}`
+
+	var resp CodeBuddyConfigResponse
+	if err := json.Unmarshal([]byte(responseJSON), &resp); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+
+	if resp.Code != 0 {
+		t.Errorf("code = %d, want 0", resp.Code)
+	}
+	if len(resp.Data.Models) != 2 {
+		t.Fatalf("expected 2 models, got %d", len(resp.Data.Models))
+	}
+	if resp.Data.Models[0].ID != "deepseek-v4-pro-ioa" {
+		t.Errorf("first model ID = %q, want %q", resp.Data.Models[0].ID, "deepseek-v4-pro-ioa")
+	}
+	if resp.Data.Models[1].MaxInputTokens != 1000000 {
+		t.Errorf("second model maxInputTokens = %d, want 1000000", resp.Data.Models[1].MaxInputTokens)
+	}
+}

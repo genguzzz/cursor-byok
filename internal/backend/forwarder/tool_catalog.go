@@ -220,6 +220,11 @@ func isToolAllowedInMode(mode agentv1.AgentMode, subagentTypeName string, toolNa
 	return ok
 }
 
+func isToolNameInMap(toolName string, catalog map[string]struct{}) bool {
+	_, ok := catalog[strings.TrimSpace(toolName)]
+	return ok
+}
+
 func isChildConversationSubagentTypeName(subagentTypeName string) bool {
 	return strings.TrimSpace(subagentTypeName) != ""
 }

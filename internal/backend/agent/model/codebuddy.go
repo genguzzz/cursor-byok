@@ -7,16 +7,25 @@
 package modeladapter
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
+	"net/url"
+	"strings"
+	"time"
+
+	"cursor/internal/netproxy"
 )
 
 // CodeBuddy CLI 客户端常量 —— 与 v2.125.5 版本对齐。
 const (
-	CodeBuddyCLIVersion          = "2.125.5"
+	CodeBuddyCLIVersion          = "2.126.0"
 	CodeBuddyStainlessVersion    = "6.25.0"
 	CodeBuddyStainlessRuntime    = "node"
-	CodeBuddyUserAgent           = "CLI/2.125.5 CodeBuddy/2.125.5"
+	CodeBuddyNodeVersion         = "v23.11.1"
+	CodeBuddyUserAgent           = "CLI/2.126.0 CodeBuddy/2.126.0"
 	CodeBuddyAgentIntent         = "craft"
 	CodeBuddyDefaultEnterpriseID = "etahzsqej0n4"
 	CodeBuddyDefaultDomain       = "tencent.sso.copilot.tencent.com"
@@ -39,7 +48,6 @@ func CodeBuddyStandardHeaders() map[string]string {
 		"Accept":                       "application/json",
 		"Content-Type":                 "application/json",
 		"x-requested-with":             "XMLHttpRequest",
-		"x-codebuddy-request":          "1",
 		"User-Agent":                   CodeBuddyUserAgent,
 		"X-IDE-Type":                   "CLI",
 		"X-IDE-Name":                   "CLI",
@@ -55,7 +63,7 @@ func CodeBuddyStandardHeaders() map[string]string {
 		"x-stainless-os":               "MacOS",
 		"x-stainless-package-version":  CodeBuddyStainlessVersion,
 		"x-stainless-runtime":          CodeBuddyStainlessRuntime,
-		"x-stainless-runtime-version":  "v22.12.0",
+		"x-stainless-runtime-version":  CodeBuddyNodeVersion,
 		"x-stainless-retry-count":      "0",
 	}
 }
@@ -113,4 +121,196 @@ func CodeBuddyModelIDs() []string {
 		"deepseek-v4-flash",
 		"claude-sonnet-5-1m",
 	}
+}
+
+// CodeBuddyAdapter 封装 OpenAI 适配器，自动注入 CodeBuddy 特有的请求头和请求体参数。
+type CodeBuddyAdapter struct {
+	openai *OpenAIAdapter
+}
+
+// NewCodeBuddyAdapter 创建 CodeBuddy 适配器。
+func NewCodeBuddyAdapter() *CodeBuddyAdapter {
+	return &CodeBuddyAdapter{
+		openai: NewOpenAIAdapter(),
+	}
+}
+
+// Stream 实现 ModelAdapter 接口，自动注入 CodeBuddy 请求头后将请求委托给 OpenAIAdapter。
+func (a *CodeBuddyAdapter) Stream(ctx context.Context, req StreamRequest, sink func(ModelEvent) error) error {
+	// 自动合并 CodeBuddy 标准请求头与用户自定义请求头。
+	mergedHeaders := CodeBuddyStandardHeaders()
+	if req.CustomHeadersEnabled && strings.TrimSpace(req.CustomHeadersJSON) != "" {
+		var userHeaders map[string]string
+		if err := json.Unmarshal([]byte(req.CustomHeadersJSON), &userHeaders); err == nil {
+			for key, value := range userHeaders {
+				if strings.TrimSpace(key) != "" {
+					mergedHeaders[key] = value
+				}
+			}
+		}
+	}
+	if mergedBytes, err := json.Marshal(mergedHeaders); err == nil {
+		req.CustomHeadersJSON = string(mergedBytes)
+	}
+	req.CustomHeadersEnabled = true
+
+	// 自动合并 CodeBuddy 额外请求体参数。
+	if bytes, err := json.Marshal(CodeBuddyExtraParams()); err == nil {
+		extraJSON := string(bytes)
+		if req.OpenAIExtraParamsEnabled && strings.TrimSpace(req.OpenAIExtraParamsJSON) != "" {
+			var base map[string]any
+			if json.Unmarshal([]byte(req.OpenAIExtraParamsJSON), &base) == nil {
+				base["reasoning_summary"] = "auto"
+				if merged, err := json.Marshal(base); err == nil {
+					extraJSON = string(merged)
+				}
+			}
+		}
+		req.OpenAIExtraParamsJSON = extraJSON
+	}
+	req.OpenAIExtraParamsEnabled = true
+
+	return a.openai.Stream(ctx, req, sink)
+}
+
+// CodeBuddyModelInfo 表示从 /v3/config 返回的模型信息。
+type CodeBuddyModelInfo struct {
+	ID              string `json:"id"`
+	Name            string `json:"name"`
+	MaxInputTokens  int    `json:"maxInputTokens"`
+	MaxOutputTokens int    `json:"maxOutputTokens"`
+	SupportsReasoning bool `json:"supportsReasoning"`
+}
+
+// CodeBuddyConfigResponse 表示 /v3/config 的响应结构。
+type CodeBuddyConfigResponse struct {
+	Code int                    `json:"code"`
+	Msg  string                 `json:"msg"`
+	Data CodeBuddyConfigData    `json:"data"`
+}
+
+// CodeBuddyConfigData 包含 models 列表。
+type CodeBuddyConfigData struct {
+	Models []CodeBuddyModelInfo `json:"models"`
+}
+
+// CodeBuddyModelDiscovery 用于从 copilot.tencent.com/v3/config 获取可用模型列表。
+//
+// 代理解析策略（与 CodeBuddyAdapter/Stream 路径保持一致）：
+//   - proxyURL 非空（用户在 yaml 中显式配置了代理）→ 强制走 yaml 的代理，绕过 netproxy
+//   - proxyURL 为空 → 回退到 netproxy（env / macOS 系统代理 / Proxyman 助手）
+type CodeBuddyModelDiscovery struct {
+	timeout  time.Duration
+	cacheTTL time.Duration
+	cachedAt time.Time
+	cached   []CodeBuddyModelInfo
+}
+
+// NewCodeBuddyModelDiscovery 创建模型发现客户端。
+func NewCodeBuddyModelDiscovery() *CodeBuddyModelDiscovery {
+	return &CodeBuddyModelDiscovery{
+		timeout:  15 * time.Second,
+		cacheTTL: 5 * time.Minute,
+	}
+}
+
+// discoveryClientForProxy 复刻 adapterClientForRequest 的代理策略。
+// proxyURL 非空时返回仅使用 yaml 代理的 client，否则返回走 netproxy 解析的 client。
+func discoveryClientForProxy(proxyURL string, timeout time.Duration) *http.Client {
+	if client := netproxy.NewHTTPClient(timeout); client != nil {
+		proxyURL = strings.TrimSpace(proxyURL)
+		if proxyURL == "" {
+			return client
+		}
+		parsed, err := url.Parse(proxyURL)
+		if err != nil {
+			return client
+		}
+		baseTransport, _ := client.Transport.(*http.Transport)
+		transport := &http.Transport{
+			Proxy: http.ProxyURL(parsed),
+		}
+		if baseTransport != nil {
+			transport.DialContext = baseTransport.DialContext
+			transport.ForceAttemptHTTP2 = baseTransport.ForceAttemptHTTP2
+			transport.TLSHandshakeTimeout = baseTransport.TLSHandshakeTimeout
+			transport.ExpectContinueTimeout = baseTransport.ExpectContinueTimeout
+			transport.MaxIdleConns = baseTransport.MaxIdleConns
+			transport.IdleConnTimeout = baseTransport.IdleConnTimeout
+		}
+		return &http.Client{
+			Transport: transport,
+			Timeout:   timeout,
+		}
+	}
+	return &http.Client{Timeout: timeout}
+}
+
+// FetchModels 从 /v3/config 获取可用模型列表（带缓存）。
+//
+// proxyURL 与 yaml 中 ModelAdapterConfig.Proxy 对齐：非空时优先走 yaml 代理，
+// 留空时回退到 netproxy 解析（覆盖 macOS 系统代理 / Proxyman 助手等）。
+func (d *CodeBuddyModelDiscovery) FetchModels(ctx context.Context, apiKey string, xUserID string, proxyURL string) ([]CodeBuddyModelInfo, error) {
+	if time.Since(d.cachedAt) < d.cacheTTL && len(d.cached) > 0 {
+		return d.cached, nil
+	}
+
+	models, err := d.fetchFromAPI(ctx, apiKey, xUserID, proxyURL)
+	if err != nil {
+		if len(d.cached) > 0 {
+			return d.cached, nil
+		}
+		return nil, err
+	}
+
+	d.cached = models
+	d.cachedAt = time.Now()
+	return models, nil
+}
+
+func (d *CodeBuddyModelDiscovery) fetchFromAPI(ctx context.Context, apiKey string, xUserID string, proxyURL string) ([]CodeBuddyModelInfo, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://copilot.tencent.com/v3/config", nil)
+	if err != nil {
+		return nil, fmt.Errorf("codebuddy model discovery: create request: %w", err)
+	}
+
+	apiKey = strings.TrimSpace(apiKey)
+	if !strings.HasPrefix(apiKey, "Bearer ") {
+		apiKey = "Bearer " + apiKey
+	}
+	req.Header.Set("Authorization", apiKey)
+	req.Header.Set("Accept", "application/json, text/plain, */*")
+	req.Header.Set("User-Agent", CodeBuddyUserAgent)
+	req.Header.Set("X-User-Id", strings.TrimSpace(xUserID))
+	req.Header.Set("X-Enterprise-Id", CodeBuddyDefaultEnterpriseID)
+	req.Header.Set("X-Tenant-Id", CodeBuddyDefaultEnterpriseID)
+	req.Header.Set("X-Domain", CodeBuddyDefaultDomain)
+	req.Header.Set("X-Product", "SaaS")
+
+	client := discoveryClientForProxy(proxyURL, d.timeout)
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("codebuddy model discovery: http request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("codebuddy model discovery: read body: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("codebuddy model discovery: http status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var response CodeBuddyConfigResponse
+	if err := json.Unmarshal(body, &response); err != nil {
+		return nil, fmt.Errorf("codebuddy model discovery: parse response: %w", err)
+	}
+
+	if response.Code != 0 {
+		return nil, fmt.Errorf("codebuddy model discovery: api error code=%d msg=%s", response.Code, response.Msg)
+	}
+
+	return response.Data.Models, nil
 }

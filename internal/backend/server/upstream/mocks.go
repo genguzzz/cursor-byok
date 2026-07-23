@@ -806,7 +806,7 @@ func buildThinkingEffortVariantDisplayName(modelDisplayName string, effortValue 
 
 func thinkingEffortValuesForAdapter(adapterType string) []string {
 	values := []string{"disabled", "low", "medium", "high", "xhigh"}
-	if adapterType := strings.ToLower(strings.TrimSpace(adapterType)); adapterType == "openai" || adapterType == "anthropic" {
+	if adapterType := strings.ToLower(strings.TrimSpace(adapterType)); adapterType == "openai" || adapterType == "anthropic" || adapterType == "codebuddy" {
 		values = append(values, "max")
 	}
 	return values
@@ -832,6 +832,9 @@ func orderThinkingEffortValues(values []string, defaultValue string) []string {
 func defaultThinkingEffortForAdapter(adapter legacyruntime.ModelAdapterConfig) string {
 	if strings.EqualFold(strings.TrimSpace(adapter.Type), "anthropic") {
 		return normalizeAvailableModelThinkingEffort(adapter.AnthropicThinkingEffort, true, "xhigh")
+	}
+	if strings.EqualFold(strings.TrimSpace(adapter.Type), "codebuddy") {
+		return normalizeAvailableModelThinkingEffort(adapter.ReasoningEffort, true, "medium")
 	}
 	return normalizeAvailableModelThinkingEffort(adapter.ReasoningEffort, true, "medium")
 }

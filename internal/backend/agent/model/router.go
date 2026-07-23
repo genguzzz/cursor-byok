@@ -17,6 +17,8 @@ type Router struct {
 	openai ModelAdapter
 	// anthropic 负责 Anthropic 兼容流式请求。
 	anthropic ModelAdapter
+	// codebuddy 负责 CodeBuddy 兼容流式请求。
+	codebuddy ModelAdapter
 	// resolver 负责从本地配置中解析实际模型通道。
 	resolver ChannelResolver
 }
@@ -31,6 +33,7 @@ func NewRouter(resolver ChannelResolver) *Router {
 	return &Router{
 		openai:    NewOpenAIAdapter(),
 		anthropic: NewAnthropicAdapter(),
+		codebuddy: NewCodeBuddyAdapter(),
 		resolver:  resolver,
 	}
 }
@@ -105,7 +108,7 @@ func (router *Router) Stream(ctx context.Context, req StreamRequest, sink func(M
 		} else {
 			delete(resolved.RequestKnobs, "runtime_thinking_effort")
 		}
-		if resolved.Provider == "openai" {
+		if resolved.Provider == "openai" || resolved.Provider == "codebuddy" {
 			if strings.TrimSpace(resolved.ReasoningEffort) != "" {
 				resolved.RequestKnobs["reasoning_effort"] = strings.TrimSpace(resolved.ReasoningEffort)
 			} else {
@@ -134,6 +137,8 @@ func (router *Router) Stream(ctx context.Context, req StreamRequest, sink func(M
 		return router.anthropic.Stream(ctx, resolved, sink)
 	case "openai":
 		return router.openai.Stream(ctx, resolved, sink)
+	case "codebuddy":
+		return router.codebuddy.Stream(ctx, resolved, sink)
 	default:
 		return fmt.Errorf("unsupported provider %q", resolved.Provider)
 	}

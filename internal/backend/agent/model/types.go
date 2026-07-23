@@ -136,6 +136,8 @@ type StreamRequest struct {
 	RequestBodyOverride map[string]any
 	// ProviderStreamIdleTimeout 表示 provider 流式响应无有效内容时的空闲超时。
 	ProviderStreamIdleTimeout time.Duration
+	// GzipRequestBody 表示是否对 provider 请求体进行 gzip 压缩并设置 Content-Encoding: gzip。
+	GzipRequestBody bool
 }
 
 // LLMArtifactPaths 表示一次模型调用相关工件路径。

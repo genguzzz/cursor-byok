@@ -22,7 +22,6 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
-	"strings"
 	"sync"
 	"syscall"
 	"unsafe"
@@ -71,30 +70,22 @@ func configPath() string {
 	return filepath.Join(appdata.RootDir(), "config.yaml")
 }
 
-// readProxyEnabled 从 config.yaml 读取 proxy 是否启用
+// readProxyEnabled 从 config.yaml 读取 proxy 是否启用。
 func readProxyEnabled() bool {
-	data, err := os.ReadFile(configPath())
+	enabled, err := readProxyEnabledFromFile(configPath())
 	if err != nil {
+		logger.Errorf("read proxy config failed: %v", err)
 		return false
 	}
-	return strings.Contains(string(data), "proxy: "+proxyAddr)
+	return enabled
 }
 
-// writeProxyConfig 切换 config.yaml 中所有 model adapter 的 proxy 字段
+// writeProxyConfig 切换 config.yaml 中所有 model adapter 的 proxy 字段。
 func writeProxyConfig(enable bool) error {
-	path := configPath()
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return err
-	}
-	content := string(data)
-	if enable {
-		content = strings.ReplaceAll(content, `proxy: ""`, "proxy: "+proxyAddr)
-	} else {
-		content = strings.ReplaceAll(content, "proxy: "+proxyAddr, `proxy: ""`)
-	}
-	return os.WriteFile(path, []byte(content), 0o644)
+	return writeProxyConfigToFile(configPath(), enable)
 }
+
+
 
 func main() {
 	runtime.LockOSThread()
