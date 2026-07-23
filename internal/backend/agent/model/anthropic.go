@@ -188,29 +188,44 @@ func anthropicAdapterClientForRequest(adapter *AnthropicAdapter, req StreamReque
 	}
 }
 
+// setRawHeader 直接操作 http.Header map 写入指定大小写的 header，绕过 Go 的
+// textproto.CanonicalMIMEHeaderKey 自动首字母大写行为。用于与 tclaude/claude-code
+// CLI 的原始 header 大小写精确对齐。
+func setRawHeader(header http.Header, key, value string) {
+	if header == nil {
+		return
+	}
+	// 先删除 canonical 形式的同名 header，避免重复
+	header.Del(http.CanonicalHeaderKey(key))
+	header[key] = []string{value}
+}
+
 // applyAnthropicTclaudeHeaders 设置与 tclaude daemon 期望对齐的 HTTP 请求头。
+// 使用 setRawHeader 确保 header 名大小写与 claude-code CLI 精确匹配。
 // 这些头在 ApplyCustomHeaders 之前设置，用户仍可通过 customHeadersJSON 覆盖。
 func applyAnthropicTclaudeHeaders(httpReq *http.Request) {
 	if httpReq == nil {
 		return
 	}
-	httpReq.Header.Set("Accept", "application/json")
+	setRawHeader(httpReq.Header, "Accept", "application/json")
 	// tclaude daemon 仅使用 Authorization: Bearer 鉴权，不期望 x-api-key 头。
-	// ApplyAnthropicCompatibleAuthHeaders 会同时设置 x-api-key 和 Authorization，
-	// 此处移除 x-api-key 以与参考请求对齐。
 	httpReq.Header.Del("X-Api-Key")
-	httpReq.Header.Set("X-Claude-Code-Session-Id", anthropicClaudeCodeSessionID)
-	httpReq.Header.Set("X-Stainless-Arch", runtime.GOARCH)
-	httpReq.Header.Set("X-Stainless-Lang", "js")
-	httpReq.Header.Set("X-Stainless-OS", anthropicStainlessOS())
-	httpReq.Header.Set("X-Stainless-Package-Version", anthropicStainlessPackageVersion)
-	httpReq.Header.Set("X-Stainless-Retry-Count", "0")
-	httpReq.Header.Set("X-Stainless-Runtime", "node")
-	httpReq.Header.Set("X-Stainless-Runtime-Version", anthropicStainlessRuntimeVersion)
-	httpReq.Header.Set("X-Stainless-Timeout", anthropicStainlessTimeout)
-	httpReq.Header.Set("anthropic-beta", anthropicBetaHeader)
-	httpReq.Header.Set("anthropic-dangerous-direct-browser-access", "true")
-	httpReq.Header.Set("x-app", "cli")
+	httpReq.Header.Del("x-api-key")
+	setRawHeader(httpReq.Header, "X-Claude-Code-Session-Id", anthropicClaudeCodeSessionID)
+	setRawHeader(httpReq.Header, "X-Stainless-Arch", runtime.GOARCH)
+	setRawHeader(httpReq.Header, "X-Stainless-Lang", "js")
+	setRawHeader(httpReq.Header, "X-Stainless-OS", anthropicStainlessOS())
+	setRawHeader(httpReq.Header, "X-Stainless-Package-Version", anthropicStainlessPackageVersion)
+	setRawHeader(httpReq.Header, "X-Stainless-Retry-Count", "0")
+	setRawHeader(httpReq.Header, "X-Stainless-Runtime", "node")
+	setRawHeader(httpReq.Header, "X-Stainless-Runtime-Version", anthropicStainlessRuntimeVersion)
+	setRawHeader(httpReq.Header, "X-Stainless-Timeout", anthropicStainlessTimeout)
+	setRawHeader(httpReq.Header, "anthropic-beta", anthropicBetaHeader)
+	setRawHeader(httpReq.Header, "anthropic-dangerous-direct-browser-access", "true")
+	setRawHeader(httpReq.Header, "x-app", "cli")
+	// 与 claude-code CLI 对齐的 Accept-Encoding 和 Connection
+	setRawHeader(httpReq.Header, "Accept-Encoding", "gzip, deflate, br, zstd")
+	setRawHeader(httpReq.Header, "Connection", "keep-alive")
 }
 
 // anthropicStainlessOS 将 runtime.GOOS 映射为 claude-code SDK 的 X-Stainless-OS 值。
@@ -292,8 +307,9 @@ func ApplyAnthropicCompatibleAuthHeaders(httpReq *http.Request, apiKey string) {
 	if token == "" {
 		return
 	}
-	httpReq.Header.Set("x-api-key", token)
-	httpReq.Header.Set("Authorization", "Bearer "+token)
+	setRawHeader(httpReq.Header, "Authorization", "Bearer "+token)
+	// 不设置 x-api-key；tclaude daemon 仅使用 Authorization: Bearer。
+	// applyAnthropicTclaudeHeaders 会确保 x-api-key 被删除。
 }
 
 func anthropicCompatibleAuthToken(apiKey string) string {
@@ -424,9 +440,9 @@ func (adapter *AnthropicAdapter) Stream(ctx context.Context, req StreamRequest, 
 			return nil, err
 		}
 		ApplyAnthropicCompatibleAuthHeaders(httpReq, apiKey)
-		httpReq.Header.Set("anthropic-version", "2023-06-01")
-		httpReq.Header.Set("content-type", "application/json")
-		httpReq.Header.Set("User-Agent", AnthropicClaudeCodeUserAgent)
+		setRawHeader(httpReq.Header, "anthropic-version", "2023-06-01")
+		setRawHeader(httpReq.Header, "content-type", "application/json")
+		setRawHeader(httpReq.Header, "User-Agent", AnthropicClaudeCodeUserAgent)
 		applyAnthropicTclaudeHeaders(httpReq)
 		if err := ApplyCustomHeaders(httpReq, req.CustomHeadersEnabled, req.CustomHeadersJSON); err != nil {
 			return nil, err
