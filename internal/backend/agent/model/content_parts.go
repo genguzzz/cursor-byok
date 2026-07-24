@@ -67,6 +67,11 @@ func normalizeContentPartType(value string) string {
 }
 
 func openAIContentValue(message Message) (any, error) {
+	if strings.TrimSpace(message.Role) == "tool" {
+		if content, ok := openAIReadToolImageContent(message.Name, message.Content); ok {
+			return content, nil
+		}
+	}
 	if !hasImageContentParts(message.ContentParts) {
 		content := message.Content
 		if strings.TrimSpace(content) == "" && len(message.ContentParts) > 0 {

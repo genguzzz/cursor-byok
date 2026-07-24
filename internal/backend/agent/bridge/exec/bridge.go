@@ -4,6 +4,7 @@ package execbridge
 import (
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -15,6 +16,7 @@ import (
 
 	"cursor/gen/agentv1"
 	runtimecore "cursor/internal/backend/agent/core"
+	modeladapter "cursor/internal/backend/agent/model"
 )
 
 // ExecApplyResult 表示一次执行桥结果归一化后的最小产物。
@@ -1571,6 +1573,7 @@ const (
 	readReplayContentLimit     = 64 * replayKiB
 	readReplayLineLimit        = 0
 	readReplayBinaryLimit      = 32 * replayKiB
+	readReplayImageBinaryLimit = 384 * replayKiB // 对齐 CodeBuddy 压缩 JPEG 量级
 	shellReplayStreamLimit     = 16 * replayKiB
 	grepReplayContentLimit     = 32 * replayKiB
 	grepReplayMatchLimit       = 2 * replayKiB
@@ -1586,6 +1589,34 @@ const (
 	mcpResourcesReplayCount    = 200
 	mcpResourceDescriptionSize = replayKiB
 )
+
+func isReadImagePath(path string) bool {
+	switch strings.ToLower(filepath.Ext(strings.TrimSpace(path))) {
+	case ".jpg", ".jpeg", ".png", ".gif", ".webp":
+		return true
+	default:
+		return false
+	}
+}
+
+func isImageBinaryPayload(payload []byte) bool {
+	if len(payload) == 0 {
+		return false
+	}
+	if len(payload) >= 3 && payload[0] == 0xFF && payload[1] == 0xD8 && payload[2] == 0xFF {
+		return true
+	}
+	if len(payload) >= 8 && payload[0] == 0x89 && payload[1] == 0x50 && payload[2] == 0x4E && payload[3] == 0x47 {
+		return true
+	}
+	if len(payload) >= 6 && payload[0] == 0x47 && payload[1] == 0x49 && payload[2] == 0x46 {
+		return true
+	}
+	if len(payload) >= 12 && string(payload[0:4]) == "RIFF" && string(payload[8:12]) == "WEBP" {
+		return true
+	}
+	return false
+}
 
 func truncateReplayText(toolName string, text string, limit int) string {
 	if limit <= 0 || len(text) <= limit {
@@ -2318,10 +2349,18 @@ func convertReadResultToReadToolResult(result *agentv1.ReadResult) *agentv1.Read
 		if content != "" {
 			toolSuccess.Output = &agentv1.ReadToolSuccess_Content{Content: content}
 		} else if len(data) > 0 {
-			if len(data) > readReplayBinaryLimit {
+			path := item.Success.GetPath()
+			binaryLimit := readReplayBinaryLimit
+			if isReadImagePath(path) || isImageBinaryPayload(data) {
+				binaryLimit = readReplayImageBinaryLimit
+				if compressed, err := modeladapter.CompressReadImageForReplay(path, data, binaryLimit); err == nil && len(compressed) > 0 {
+					data = compressed
+				}
+			}
+			if len(data) > binaryLimit {
 				toolSuccess.ExceededLimit = true
 				toolSuccess.Output = &agentv1.ReadToolSuccess_Content{
-					Content: replayTruncationNotice("Read binary data", readReplayBinaryLimit, 0, len(data)),
+					Content: replayTruncationNotice("Read binary data", binaryLimit, 0, len(data)),
 				}
 			} else {
 				toolSuccess.Output = &agentv1.ReadToolSuccess_Data{Data: append([]byte(nil), data...)}

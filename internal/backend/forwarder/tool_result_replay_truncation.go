@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strings"
 	"unicode/utf8"
+
+	modeladapter "cursor/internal/backend/agent/model"
 )
 
 const (
@@ -25,6 +27,9 @@ const (
 func limitProjectedToolResultReplay(toolName string, content string, resultText string, fromStoredToolCall bool, historical bool) string {
 	if compacted, ok := compactProjectedGenerateImageResultReplay(toolName, content, resultText); ok {
 		return compacted
+	}
+	if strings.TrimSpace(toolName) == "Read" && modeladapter.ReadToolResultHasImageData(content) {
+		return strings.TrimSpace(content)
 	}
 	if historical {
 		if compacted, ok := compactHistoricalEditErrorReplay(toolName, content); ok {
