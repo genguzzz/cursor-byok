@@ -1536,26 +1536,7 @@ func completedAnthropicToolArgsJSON(accumulator *anthropicToolAccumulator) ([]by
 	if accumulator == nil {
 		return []byte("{}"), nil
 	}
-	trimmed := strings.TrimSpace(accumulator.Args.String())
-	if trimmed == "" {
-		return []byte("{}"), nil
-	}
-	var value map[string]any
-	if err := json.Unmarshal([]byte(trimmed), &value); err != nil {
-		toolName := strings.TrimSpace(accumulator.Name)
-		if toolName == "" {
-			toolName = "tool"
-		}
-		return nil, fmt.Errorf("anthropic returned incomplete or malformed tool input for %s: %w", toolName, err)
-	}
-	if value == nil {
-		toolName := strings.TrimSpace(accumulator.Name)
-		if toolName == "" {
-			toolName = "tool"
-		}
-		return nil, fmt.Errorf("anthropic returned non-object tool input for %s", toolName)
-	}
-	return []byte(trimmed), nil
+	return completedToolArgsJSON(accumulator.Name, accumulator.Args.String())
 }
 
 func buildAnthropicThinkingConfig(req StreamRequest) map[string]any {

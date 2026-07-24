@@ -23,6 +23,7 @@ const (
 	promptContextSourceCurrentUserRequest        = "current_user_request"
 	promptContextSourceSubagentContract          = "subagent_contract"
 	promptContextSourceSubagentEmptyStopRecovery = "subagent_empty_stop_recovery"
+	promptContextSourceEmptyStopRecovery         = "empty_stop_recovery"
 	promptContextSourceDebugModeReminder         = "debug_mode_reminder"
 )
 

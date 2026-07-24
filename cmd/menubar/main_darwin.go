@@ -11,7 +11,7 @@ package main
 extern void setupMenubar();
 extern void runEventLoop();
 extern void stopEventLoop();
-extern void updateMenubarStatus(const char *status, int running);
+extern void updateMenubarStatus(const char *status, int running, int busy);
 extern void setProxyMenuItemEnabled(int enabled);
 */
 import "C"
@@ -37,6 +37,7 @@ var (
 	serviceMu      sync.Mutex
 	cliCmd         *exec.Cmd
 	serviceRunning bool
+	serviceBusy    bool
 	proxyEnabled   bool
 )
 
@@ -85,8 +86,6 @@ func writeProxyConfig(enable bool) error {
 	return writeProxyConfigToFile(configPath(), enable)
 }
 
-
-
 func main() {
 	runtime.LockOSThread()
 	defer runtime.UnlockOSThread()
@@ -116,15 +115,30 @@ func handleActions() {
 	for action := range actionChan {
 		switch action {
 		case 1:
-			startInterception()
-		case 2:
-			stopInterception()
+			toggleLocalMode()
 		case 3:
 			quitApp()
 		case 4:
 			toggleProxy()
+		case 5:
+			restoreCursorAuth()
 		}
 	}
+}
+
+func toggleLocalMode() {
+	serviceMu.Lock()
+	running := serviceRunning
+	busy := serviceBusy
+	serviceMu.Unlock()
+	if busy {
+		return
+	}
+	if running {
+		stopInterception()
+		return
+	}
+	startInterception()
 }
 
 func toggleProxy() {
@@ -149,26 +163,50 @@ func toggleProxy() {
 		logger.Infof("restarting CLI to apply proxy change")
 		_ = cmd.Process.Signal(syscall.SIGTERM)
 		_ = cmd.Wait()
-		// 等待端口释放
-		// 直接重新启动
 		startInterception()
 	}
 }
 
+// restoreCursorAuth 在 CLI 异常退出后手动恢复 Cursor 原账号鉴权。
+// 正常「关闭本地模式」已由 CLI ShutdownForQuit 自动 RestoreCursorAuthState。
+func restoreCursorAuth() {
+	cliPath := findCLIBinary()
+	if cliPath == "" {
+		logger.Errorf("CLI binary not found, cannot restore auth")
+		updateStatus("状态: 找不到CLI", false, false)
+		return
+	}
+	updateStatus("状态: 恢复账号中...", false, true)
+	cmd := exec.Command(cliPath, "off")
+	cmd.Stdout = os.Stderr
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		logger.Errorf("restore cursor auth failed: %v", err)
+		updateStatus("状态: 恢复账号失败", false, false)
+		return
+	}
+	logger.Infof("cursor auth restored via CLI off")
+	updateStatus("状态: 已恢复账号", false, false)
+}
+
 func startInterception() {
 	serviceMu.Lock()
-	if serviceRunning {
+	if serviceRunning || serviceBusy {
 		serviceMu.Unlock()
 		return
 	}
+	serviceBusy = true
 	serviceMu.Unlock()
 
-	updateStatus("状态: 启动中...", false)
+	updateStatus("状态: 启动中...", false, true)
 
 	cliPath := findCLIBinary()
 	if cliPath == "" {
 		logger.Errorf("CLI binary not found")
-		updateStatus("状态: 找不到CLI", false)
+		serviceMu.Lock()
+		serviceBusy = false
+		serviceMu.Unlock()
+		updateStatus("状态: 找不到CLI", false, false)
 		return
 	}
 
@@ -188,7 +226,10 @@ func startInterception() {
 
 	if err := cmd.Start(); err != nil {
 		logger.Errorf("start CLI failed: %v", err)
-		updateStatus("状态: 启动失败", false)
+		serviceMu.Lock()
+		serviceBusy = false
+		serviceMu.Unlock()
+		updateStatus("状态: 启动失败", false, false)
 		return
 	}
 
@@ -197,9 +238,10 @@ func startInterception() {
 	serviceMu.Lock()
 	cliCmd = cmd
 	serviceRunning = true
+	serviceBusy = false
 	serviceMu.Unlock()
 
-	updateStatus("状态: 运行中", true)
+	updateStatus("状态: 运行中", true, false)
 
 	go func() {
 		_ = cmd.Wait()
@@ -208,22 +250,24 @@ func startInterception() {
 		if cliCmd == cmd {
 			serviceRunning = false
 			cliCmd = nil
+			serviceBusy = false
 		}
 		serviceMu.Unlock()
-		updateStatus("状态: 已停止", false)
+		updateStatus("状态: 已停止", false, false)
 	}()
 }
 
 func stopInterception() {
 	serviceMu.Lock()
-	if !serviceRunning {
+	if !serviceRunning || serviceBusy {
 		serviceMu.Unlock()
 		return
 	}
 	cmd := cliCmd
+	serviceBusy = true
 	serviceMu.Unlock()
 
-	updateStatus("状态: 关闭中...", true)
+	updateStatus("状态: 关闭中...", true, true)
 
 	if cmd != nil && cmd.Process != nil {
 		_ = cmd.Process.Signal(syscall.SIGTERM)
@@ -233,8 +277,9 @@ func stopInterception() {
 	serviceMu.Lock()
 	serviceRunning = false
 	cliCmd = nil
+	serviceBusy = false
 	serviceMu.Unlock()
-	updateStatus("状态: 已停止", false)
+	updateStatus("状态: 已停止", false, false)
 }
 
 func quitApp() {
@@ -250,10 +295,10 @@ func quitApp() {
 	C.stopEventLoop()
 }
 
-func updateStatus(status string, running bool) {
+func updateStatus(status string, running bool, busy bool) {
 	cstr := C.CString(status)
 	defer C.free(unsafe.Pointer(cstr))
-	C.updateMenubarStatus(cstr, boolToInt(running))
+	C.updateMenubarStatus(cstr, boolToInt(running), boolToInt(busy))
 }
 
 func boolToInt(b bool) C.int {

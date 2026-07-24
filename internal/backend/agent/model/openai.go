@@ -4,11 +4,9 @@ package modeladapter
 import (
 	"bufio"
 	"bytes"
-	"compress/gzip"
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -566,6 +564,11 @@ func (adapter *OpenAIAdapter) streamChatCompletions(ctx context.Context, req Str
 			Arguments string `json:"arguments"`
 		} `json:"function"`
 	}
+	// openAILegacyFunctionCall 对应旧版 OpenAI function_call 增量（name/arguments 在顶层）。
+	type openAILegacyFunctionCall struct {
+		Name      string `json:"name"`
+		Arguments string `json:"arguments"`
+	}
 	type openAIChunk struct {
 		Type      string `json:"type"`
 		RequestID string `json:"request_id"`
@@ -576,9 +579,10 @@ func (adapter *OpenAIAdapter) streamChatCompletions(ctx context.Context, req Str
 		} `json:"error,omitempty"`
 		Choices []struct {
 			Delta struct {
-				Content          string                `json:"content"`
-				ReasoningContent string                `json:"reasoning_content"`
-				ToolCalls        []openAIToolCallDelta `json:"tool_calls"`
+				Content          string                   `json:"content"`
+				ReasoningContent string                   `json:"reasoning_content"`
+				ToolCalls        []openAIToolCallDelta    `json:"tool_calls"`
+				FunctionCall     *openAILegacyFunctionCall `json:"function_call"`
 			} `json:"delta"`
 			FinishReason *string `json:"finish_reason"`
 		} `json:"choices"`
@@ -799,6 +803,20 @@ func (adapter *OpenAIAdapter) streamChatCompletions(ctx context.Context, req Str
 		if strings.TrimSpace(chunk.Type) == "error" || chunk.Error != nil {
 			return fail(errorFromChunk(chunk))
 		}
+		// Normalize legacy function_call into tool_calls for providers that still
+		// emit the older OpenAI shape (name/arguments at the top level).
+		if len(chunk.Choices) > 0 && chunk.Choices[0].Delta.FunctionCall != nil &&
+			len(chunk.Choices[0].Delta.ToolCalls) == 0 {
+			fc := chunk.Choices[0].Delta.FunctionCall
+			if strings.TrimSpace(fc.Name) != "" || fc.Arguments != "" {
+				chunk.Choices[0].Delta.ToolCalls = []openAIToolCallDelta{{
+					Function: struct {
+						Name      string `json:"name"`
+						Arguments string `json:"arguments"`
+					}{Name: fc.Name, Arguments: fc.Arguments},
+				}}
+			}
+		}
 		if len(chunk.Choices) == 0 {
 			if strings.TrimSpace(chunk.Model) != "" {
 				currentModel = strings.TrimSpace(chunk.Model)
@@ -873,17 +891,7 @@ func (adapter *OpenAIAdapter) streamChatCompletions(ctx context.Context, req Str
 				return fail(err)
 			}
 			for _, accumulator := range tools {
-				if err := sink(ModelEvent{
-					Kind:       ModelEventKindToolLikeCompleted,
-					OccurredAt: time.Now().UTC(),
-					Provider:   "openai",
-					Model:      currentModel,
-					ToolInvocation: &runtimecore.ToolInvocation{
-						CallID:   strings.TrimSpace(accumulator.CallID),
-						ToolName: strings.TrimSpace(accumulator.Name),
-						ArgsJSON: []byte(accumulator.Args.String()),
-					},
-				}); err != nil {
+				if err := emitCompletedOpenAITool(sink, currentModel, accumulator); err != nil {
 					return fail(err)
 				}
 				streamIdle.MarkEffectiveContent()
@@ -893,27 +901,22 @@ func (adapter *OpenAIAdapter) streamChatCompletions(ctx context.Context, req Str
 			turnFinishedPending = true
 		}
 	}
-	for _, accumulator := range tools {
-		if err := sink(ModelEvent{
-			Kind:       ModelEventKindToolLikeCompleted,
-			OccurredAt: time.Now().UTC(),
-			Provider:   "openai",
-			Model:      currentModel,
-			ToolInvocation: &runtimecore.ToolInvocation{
-				CallID:   strings.TrimSpace(accumulator.CallID),
-				ToolName: strings.TrimSpace(accumulator.Name),
-				ArgsJSON: []byte(accumulator.Args.String()),
-			},
-		}); err != nil {
-			return fail(err)
-		}
-		streamIdle.MarkEffectiveContent()
-	}
+	// 流正常结束或 [DONE] 后仍残留的完整 tool_call 才发出。
+	// 连接中断时常见 args 截断；绝不能在 scanner.Err 之前把非法 JSON 发出去污染 history。
+	pendingTools := tools
+	tools = nil
 	if err := scanner.Err(); err != nil {
 		if idleErr := streamIdle.Err(); idleErr != nil {
 			return fail(idleErr)
 		}
 		return fail(err)
+	}
+	for _, accumulator := range pendingTools {
+		if err := emitCompletedOpenAITool(sink, currentModel, accumulator); err != nil {
+			// 无 finish_reason 时跳过残缺 tool，避免整轮失败；非法参数不会写入 history。
+			continue
+		}
+		streamIdle.MarkEffectiveContent()
 	}
 	if err := flushTaggedContentTail(); err != nil {
 		return fail(err)
@@ -1271,6 +1274,10 @@ func (adapter *OpenAIAdapter) streamResponses(ctx context.Context, req StreamReq
 			completedTools[strings.TrimSpace(accumulator.CallID)] = struct{}{}
 		}
 		emittedToolInvocation = true
+		argsJSON, err := completedToolArgsJSON(accumulator.Name, accumulator.Args.String())
+		if err != nil {
+			return err
+		}
 		if err := sink(ModelEvent{
 			Kind:       ModelEventKindToolLikeCompleted,
 			OccurredAt: time.Now().UTC(),
@@ -1279,7 +1286,7 @@ func (adapter *OpenAIAdapter) streamResponses(ctx context.Context, req StreamReq
 			ToolInvocation: &runtimecore.ToolInvocation{
 				CallID:         strings.TrimSpace(accumulator.CallID),
 				ToolName:       strings.TrimSpace(accumulator.Name),
-				ArgsJSON:       []byte(accumulator.Args.String()),
+				ArgsJSON:       argsJSON,
 				ProviderItemID: strings.TrimSpace(accumulator.ProviderItemID),
 				ProviderCallID: strings.TrimSpace(accumulator.ProviderCallID),
 				ProviderStatus: strings.TrimSpace(accumulator.ProviderStatus),
@@ -1741,6 +1748,30 @@ func redactOpenAIImagePayloadFields(value any) bool {
 		}
 	}
 	return changed
+}
+
+func emitCompletedOpenAITool(sink func(ModelEvent) error, model string, accumulator *openAIToolAccumulator) error {
+	if accumulator == nil {
+		return nil
+	}
+	argsJSON, err := completedToolArgsJSON(accumulator.Name, accumulator.Args.String())
+	if err != nil {
+		return err
+	}
+	if err := sink(ModelEvent{
+		Kind:       ModelEventKindToolLikeCompleted,
+		OccurredAt: time.Now().UTC(),
+		Provider:   "openai",
+		Model:      model,
+		ToolInvocation: &runtimecore.ToolInvocation{
+			CallID:   strings.TrimSpace(accumulator.CallID),
+			ToolName: strings.TrimSpace(accumulator.Name),
+			ArgsJSON: argsJSON,
+		},
+	}); err != nil {
+		return err
+	}
+	return nil
 }
 
 func emitOpenAIToolProgress(

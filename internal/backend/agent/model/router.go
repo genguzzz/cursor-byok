@@ -161,6 +161,7 @@ func sanitizeProviderMessages(input []Message) []Message {
 	}
 	filtered = mergeAdjacentAssistantToolCallMessages(filtered)
 	filtered = trimDanglingAssistantToolCalls(filtered)
+	filtered = repairInvalidProviderToolCallArguments(filtered)
 	for len(filtered) > 0 && isAssistantPrefillMessage(filtered[len(filtered)-1]) {
 		filtered = filtered[:len(filtered)-1]
 	}
@@ -241,7 +242,8 @@ func mergeProviderAssistantToolCalls(messages *[]Message, message Message) bool 
 		return false
 	}
 	last := &(*messages)[len(*messages)-1]
-	if !canMergeProviderAssistantToolCalls(*last, message) {
+	if !canMergeProviderAssistantToolCalls(*last, message) &&
+		!canMergeProviderAssistantTextWithToolCalls(*last, message) {
 		return false
 	}
 	startIndex := len(last.ToolCalls)
@@ -269,6 +271,32 @@ func canMergeProviderAssistantToolCalls(last Message, current Message) bool {
 		return false
 	}
 	if strings.TrimSpace(current.Content) != "" || len(current.ContentParts) > 0 {
+		return false
+	}
+	return true
+}
+
+// canMergeProviderAssistantTextWithToolCalls 识别 history 里常见的拆分形态：
+// assistant(text) + assistant(tool_calls) —— OpenAI/Anthropic 都应合成一条 assistant 消息。
+// 不合并会让模型学到“只说下一步、不调工具也可以结束”，Hy3 等弱工具模型尤其容易复现。
+func canMergeProviderAssistantTextWithToolCalls(last Message, current Message) bool {
+	if strings.TrimSpace(last.Role) != "assistant" || strings.TrimSpace(current.Role) != "assistant" {
+		return false
+	}
+	if len(last.ToolCalls) > 0 || len(current.ToolCalls) == 0 {
+		return false
+	}
+	if strings.TrimSpace(last.ToolCallID) != "" || strings.TrimSpace(last.Name) != "" {
+		return false
+	}
+	if strings.TrimSpace(current.ToolCallID) != "" || strings.TrimSpace(current.Name) != "" {
+		return false
+	}
+	if strings.TrimSpace(current.Content) != "" || len(current.ContentParts) > 0 {
+		return false
+	}
+	if strings.TrimSpace(last.Content) == "" && len(last.ContentParts) == 0 &&
+		strings.TrimSpace(last.ReasoningContent) == "" {
 		return false
 	}
 	return true
@@ -402,6 +430,28 @@ func trimDanglingAssistantToolCalls(input []Message) []Message {
 		index = end - 1
 	}
 	return trimmed
+}
+
+// repairInvalidProviderToolCallArguments 把 history 里因流截断留下的非法 arguments
+// 规整成 "{}"，避免 CodeBuddy/OpenAI 以 400 invalid_parameter_value 拒收整轮请求。
+// tool_result 仍保留原错误文案，模型可以看到失败并重试。
+func repairInvalidProviderToolCallArguments(input []Message) []Message {
+	if len(input) == 0 {
+		return nil
+	}
+	repaired := make([]Message, 0, len(input))
+	for _, raw := range input {
+		message := cloneProviderMessage(raw)
+		if strings.TrimSpace(message.Role) == "assistant" && len(message.ToolCalls) > 0 {
+			for index := range message.ToolCalls {
+				if !isValidProviderToolArgumentsJSON(message.ToolCalls[index].Function.Arguments) {
+					message.ToolCalls[index].Function.Arguments = "{}"
+				}
+			}
+		}
+		repaired = append(repaired, message)
+	}
+	return repaired
 }
 
 func normalizeRuntimeThinkingEffort(raw string) string {

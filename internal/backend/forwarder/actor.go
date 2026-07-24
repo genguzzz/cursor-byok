@@ -733,6 +733,28 @@ func (service *Service) handleProviderDoneEvent(stream *ActiveStream, payload *s
 		service.setTurnPhase(stream, TurnPhaseFailed)
 		return service.failStream(stream, "unknown", payload.Err)
 	}
+
+	// CodeBuddy/DeepSeek 偶发在 tool_result 后续跑时只吐出空白 thinking 就 finish_reason=stop。
+	// UI 会显示 “think briefly” 然后整轮结束。这里在 flush 前拦截，避免把空 reasoning 写入历史。
+	if existingCompletion == nil && !hadToolInvocation {
+		handled, err := service.handleEmptyStopAfterToolResult(stream, conversationID, turnSeq, requestID, modelCallID, finishReason, accumulatedText)
+		if err != nil {
+			return service.failStreamIfNonTerminal(stream, "unknown", err)
+		}
+		if handled {
+			if err := service.recordTurnUsageSnapshot(stream, conversationID, turnSeq, requestID, modelCallID, "completed", usage, "", false); err != nil {
+				return service.failStreamIfNonTerminal(stream, "usage_persistence_error", err)
+			}
+			if err := service.updateConversationTokenState(stream, conversationID, usage, modelCallID, true); err != nil {
+				return service.failStreamIfNonTerminal(stream, "unknown", err)
+			}
+			if err := service.syncSummaryCarryForward(conversationID, requestID, modelCallID); err != nil {
+				return service.failStreamIfNonTerminal(stream, "unknown", err)
+			}
+			return nil
+		}
+	}
+
 	if err := service.flushAssistantText(stream, conversationID, turnSeq, requestID, accumulatedText, accumulatedReasoning, accumulatedReasoningSignature, accumulatedReasoningSignatureSource, accumulatedReasoningItemID, accumulatedReasoningStatus, accumulatedReasoningSummary, !hadToolInvocation); err != nil {
 		return service.failStreamIfNonTerminal(stream, "unknown", err)
 	}
@@ -768,16 +790,6 @@ func (service *Service) handleProviderDoneEvent(stream *ActiveStream, payload *s
 			return service.failStreamIfNonTerminal(stream, "unknown", err)
 		}
 		return nil
-	}
-
-	if existingCompletion == nil {
-		handled, err := service.handleSubagentEmptyStopAfterToolResult(stream, conversationID, turnSeq, requestID, modelCallID, finishReason, accumulatedText)
-		if err != nil {
-			return service.failStreamIfNonTerminal(stream, "unknown", err)
-		}
-		if handled {
-			return nil
-		}
 	}
 
 	if existingCompletion != nil {
@@ -829,9 +841,15 @@ func (service *Service) handleProviderDoneEvent(stream *ActiveStream, payload *s
 	return nil
 }
 
-const subagentEmptyStopErrorText = "subagent returned empty response after tool result"
+const (
+	subagentEmptyStopErrorText = "subagent returned empty response after tool result"
+	emptyStopErrorText         = "model returned empty response after tool result"
+)
 
-func (service *Service) handleSubagentEmptyStopAfterToolResult(stream *ActiveStream, conversationID string, turnSeq int64, requestID string, modelCallID string, finishReason string, accumulatedText string) (bool, error) {
+// handleEmptyStopAfterToolResult 拦截「tool_result 之后 finish_reason=stop 且无可见输出」的假完成。
+// CodeBuddy DeepSeek 上常见为只发一个空白 reasoning token（UI 显示 think briefly）然后 stop。
+// 对 root / subagent 都生效；同一 turn 只自动续跑一次，再次空 stop 则失败收口。
+func (service *Service) handleEmptyStopAfterToolResult(stream *ActiveStream, conversationID string, turnSeq int64, requestID string, modelCallID string, finishReason string, accumulatedText string) (bool, error) {
 	if stream == nil || strings.TrimSpace(finishReason) != "stop" || strings.TrimSpace(accumulatedText) != "" {
 		return false, nil
 	}
@@ -839,14 +857,23 @@ func (service *Service) handleSubagentEmptyStopAfterToolResult(stream *ActiveStr
 	if err != nil {
 		return true, err
 	}
-	if conversation == nil || !isChildConversationSubagentTypeName(conversation.SubagentTypeName) || !currentTurnHasToolResult(conversation, turnSeq) {
+	if conversation == nil || !currentTurnHasToolResult(conversation, turnSeq) {
 		return false, nil
 	}
-	if currentTurnHasPromptContextSource(conversation, turnSeq, promptContextSourceSubagentEmptyStopRecovery) {
-		service.setTurnPhase(stream, TurnPhaseFailed)
-		return true, service.failStream(stream, "empty_response", errors.New(subagentEmptyStopErrorText))
+	isSubagent := isChildConversationSubagentTypeName(conversation.SubagentTypeName)
+	source := promptContextSourceEmptyStopRecovery
+	recoveryText := emptyStopRecoveryText()
+	errorText := emptyStopErrorText
+	if isSubagent {
+		source = promptContextSourceSubagentEmptyStopRecovery
+		recoveryText = subagentEmptyStopRecoveryText()
+		errorText = subagentEmptyStopErrorText
 	}
-	context := newPromptContextReminder(promptContextSourceSubagentEmptyStopRecovery, subagentEmptyStopRecoveryText())
+	if currentTurnHasPromptContextSource(conversation, turnSeq, source) {
+		service.setTurnPhase(stream, TurnPhaseFailed)
+		return true, service.failStream(stream, "empty_response", errors.New(errorText))
+	}
+	context := newPromptContextReminder(source, recoveryText)
 	if _, err := service.appendConversationEntries(stream, conversationID, []HistoryEntry{
 		newPromptContextEntry(turnSeq, requestID, context),
 	}); err != nil {
@@ -862,6 +889,10 @@ func (service *Service) handleSubagentEmptyStopAfterToolResult(stream *ActiveStr
 		return true, err
 	}
 	return true, nil
+}
+
+func emptyStopRecoveryText() string {
+	return "A prior provider pass stopped after tool results without visible assistant output or tool calls. Continue from the latest tool result: call the next needed tool, or give the user a concrete answer. Do not stop after only thinking."
 }
 
 func subagentEmptyStopRecoveryText() string {

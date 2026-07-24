@@ -6,15 +6,14 @@
 @end
 
 @implementation MenuHandler
-- (void)startAction:(id)sender      { menuCallback(1); }
-- (void)stopAction:(id)sender       { menuCallback(2); }
+- (void)localModeAction:(id)sender  { menuCallback(1); }
 - (void)quitAction:(id)sender       { menuCallback(3); }
 - (void)toggleProxyAction:(id)sender { menuCallback(4); }
+- (void)restoreAuthAction:(id)sender { menuCallback(5); }
 @end
 
 static NSStatusItem   *g_statusItem    = nil;
-static NSMenuItem     *g_startItem     = nil;
-static NSMenuItem     *g_stopItem      = nil;
+static NSMenuItem     *g_localModeItem = nil;
 static NSMenuItem     *g_statusDisplay = nil;
 static NSMenuItem     *g_proxyItem     = nil;
 static MenuHandler    *g_handler       = nil;
@@ -38,20 +37,16 @@ void setupMenubar() {
     g_handler = [[MenuHandler alloc] init];
     NSMenu *menu = [[NSMenu alloc] init];
 
-    g_startItem = [menu addItemWithTitle:@"开启拦截"
-                                  action:@selector(startAction:)
-                           keyEquivalent:@""];
-    [g_startItem setTarget:g_handler];
-
-    g_stopItem = [menu addItemWithTitle:@"关闭拦截"
-                                 action:@selector(stopAction:)
-                          keyEquivalent:@""];
-    [g_stopItem setEnabled:NO];
-    [g_stopItem setTarget:g_handler];
+    // 单一开关：开启时勾选，关闭时取消勾选；启动/关闭过程中短暂置灰。
+    g_localModeItem = [menu addItemWithTitle:@"本地模式"
+                                      action:@selector(localModeAction:)
+                               keyEquivalent:@""];
+    [g_localModeItem setTarget:g_handler];
+    [g_localModeItem setState:NSControlStateValueOff];
 
     [menu addItem:[NSMenuItem separatorItem]];
 
-    g_proxyItem = [menu addItemWithTitle:@"使用代理 (9090)"
+    g_proxyItem = [menu addItemWithTitle:@"模型出站代理 (9090)"
                                   action:@selector(toggleProxyAction:)
                            keyEquivalent:@""];
     [g_proxyItem setTarget:g_handler];
@@ -62,6 +57,11 @@ void setupMenubar() {
                                       action:nil
                                keyEquivalent:@""];
     [g_statusDisplay setEnabled:NO];
+
+    NSMenuItem *restoreItem = [menu addItemWithTitle:@"恢复 Cursor 账号"
+                                              action:@selector(restoreAuthAction:)
+                                       keyEquivalent:@""];
+    [restoreItem setTarget:g_handler];
 
     [menu addItem:[NSMenuItem separatorItem]];
 
@@ -91,14 +91,17 @@ void stopEventLoop() {
     [NSApp postEvent:event atStart:NO];
 }
 
-void updateMenubarStatus(const char *status, int running) {
+void updateMenubarStatus(const char *status, int running, int busy) {
     NSString *title = [[NSString alloc] initWithUTF8String:status];
     dispatch_async(dispatch_get_main_queue(), ^{
         if (g_statusDisplay) {
             [g_statusDisplay setTitle:title];
         }
-        if (g_startItem) { [g_startItem setEnabled:!running]; }
-        if (g_stopItem)  { [g_stopItem  setEnabled:running]; }
+        if (g_localModeItem) {
+            [g_localModeItem setState:(running ? NSControlStateValueOn : NSControlStateValueOff)];
+            // 启停过程中置灰，避免连点；稳态始终可点以切换。
+            [g_localModeItem setEnabled:!busy];
+        }
     });
 }
 
