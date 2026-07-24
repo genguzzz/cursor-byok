@@ -1,6 +1,7 @@
 package forwarder
 
 import (
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -9,6 +10,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"cursor/gen/agentv1"
+	modeladapter "cursor/internal/backend/agent/model"
 )
 
 const (
@@ -83,9 +85,13 @@ func guardRequestContextForStorage(requestContext *agentv1.RequestContext) {
 }
 
 func guardCompiledConversationForProvider(compiled CompiledConversation) CompiledConversation {
+	compiled = promoteReadToolImagesInCompiled(compiled)
 	for index := range compiled.Messages {
 		message := &compiled.Messages[index]
 		if strings.TrimSpace(message.Role) == "system" {
+			continue
+		}
+		if shouldSkipPromptGuardMessageContent(*message) {
 			continue
 		}
 		if strings.TrimSpace(message.Content) != "" {
@@ -99,6 +105,71 @@ func guardCompiledConversationForProvider(compiled CompiledConversation) Compile
 		}
 	}
 	return compiled
+}
+
+// promoteReadToolImagesInCompiled 在 prompt guard 截断前，把完整 Read 图片 JSON 提升为 ContentParts，
+// 避免 head/tail 截断插进 base64 破坏 JSON，进而无法转成 image_url。
+func promoteReadToolImagesInCompiled(compiled CompiledConversation) CompiledConversation {
+	for index := range compiled.Messages {
+		message := &compiled.Messages[index]
+		if strings.TrimSpace(message.Role) != "tool" {
+			continue
+		}
+		if strings.TrimSpace(message.Name) != "Read" {
+			continue
+		}
+		if hasImageContentParts(message.ContentParts) {
+			message.Content = ""
+			continue
+		}
+		part, ok := modeladapter.ReadToolResultImageContentPart(message.Content)
+		if !ok {
+			if isCorruptedReadImageToolContent(message.Content) {
+				message.Content = `{"error":{"errorMessage":"read image payload was corrupted by text truncation; re-read a smaller/compressed image"}}`
+			}
+			continue
+		}
+		message.ContentParts = []modeladapter.ContentPart{part}
+		message.Content = ""
+	}
+	return compiled
+}
+
+func shouldSkipPromptGuardMessageContent(message modeladapter.Message) bool {
+	if strings.TrimSpace(message.Role) != "tool" {
+		return false
+	}
+	if hasImageContentParts(message.ContentParts) {
+		return true
+	}
+	return modeladapter.ReadToolResultHasImageData(message.Content)
+}
+
+func isCorruptedReadImageToolContent(content string) bool {
+	trimmed := strings.TrimSpace(content)
+	if trimmed == "" {
+		return false
+	}
+	if !strings.Contains(trimmed, `"data"`) {
+		return false
+	}
+	if strings.Contains(trimmed, "[truncated:") {
+		return true
+	}
+	if !strings.Contains(trimmed, "/9j/") && !strings.Contains(trimmed, "iVBOR") {
+		return false
+	}
+	var payload map[string]any
+	return json.Unmarshal([]byte(trimmed), &payload) != nil
+}
+
+func hasImageContentParts(parts []modeladapter.ContentPart) bool {
+	for _, part := range parts {
+		if strings.EqualFold(strings.TrimSpace(part.Type), "image") && part.Image != nil && len(part.Image.Data) > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 func guardSelectedContext(selectedContext *agentv1.SelectedContext) *agentv1.SelectedContext {

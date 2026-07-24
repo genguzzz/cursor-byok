@@ -12,6 +12,33 @@ func ReadToolResultHasImageData(content string) bool {
 	return ok
 }
 
+// ReadToolResultImageContentPart 把 Read 工具图片 JSON 提升为 ContentPart，供 compile/estimate 使用。
+func ReadToolResultImageContentPart(content string) (ContentPart, bool) {
+	dataURL, ok := readToolResultImageDataURL(content)
+	if !ok {
+		return ContentPart{}, false
+	}
+	mime, payload, ok := splitImageDataURL(dataURL)
+	if !ok {
+		return ContentPart{}, false
+	}
+	path := ""
+	var wrapper map[string]any
+	if err := json.Unmarshal([]byte(strings.TrimSpace(content)), &wrapper); err == nil {
+		if success, _ := wrapper["success"].(map[string]any); success != nil {
+			path, _ = success["path"].(string)
+		}
+	}
+	return ContentPart{
+		Type: contentPartTypeImage,
+		Image: &ImageContent{
+			MIMEType: mime,
+			Path:     path,
+			Data:     payload,
+		},
+	}, true
+}
+
 func openAIReadToolImageContent(toolName string, content string) (any, bool) {
 	if strings.TrimSpace(toolName) != "Read" {
 		return nil, false
@@ -31,6 +58,9 @@ func openAIReadToolImageContent(toolName string, content string) (any, bool) {
 func readToolResultImageDataURL(content string) (string, bool) {
 	trimmed := strings.TrimSpace(content)
 	if trimmed == "" {
+		return "", false
+	}
+	if strings.Contains(trimmed, "[truncated:") {
 		return "", false
 	}
 	var payload map[string]any
@@ -61,6 +91,28 @@ func readToolResultImageDataURL(content string) (string, bool) {
 	path, _ := success["path"].(string)
 	mime := normalizeImageMIMEType("", path, imageBytes)
 	return "data:" + mime + ";base64," + base64.StdEncoding.EncodeToString(imageBytes), true
+}
+
+func splitImageDataURL(dataURL string) (mime string, payload []byte, ok bool) {
+	trimmed := strings.TrimSpace(dataURL)
+	if !strings.HasPrefix(strings.ToLower(trimmed), "data:image/") {
+		return "", nil, false
+	}
+	comma := strings.Index(trimmed, ",")
+	if comma <= 5 {
+		return "", nil, false
+	}
+	meta := trimmed[len("data:"):comma]
+	raw := trimmed[comma+1:]
+	mime = strings.TrimSpace(strings.Split(meta, ";")[0])
+	if mime == "" {
+		mime = "image/jpeg"
+	}
+	decoded, err := base64.StdEncoding.DecodeString(strings.TrimSpace(raw))
+	if err != nil || len(decoded) == 0 {
+		return "", nil, false
+	}
+	return mime, decoded, true
 }
 
 func isImagePayload(payload []byte) bool {
