@@ -2,6 +2,8 @@ package modeladapter
 
 import (
 	"bufio"
+	"bytes"
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -83,6 +85,20 @@ func startRawTCPServer(t *testing.T, capture *rawCapturedRequest) (string, func(
 				return
 			}
 		}
+		for _, hl := range headerLines {
+			if strings.HasPrefix(strings.ToLower(hl), "content-encoding:") &&
+				strings.Contains(strings.ToLower(hl), "gzip") {
+				reader, err := gzip.NewReader(bytes.NewReader(bodyBytes))
+				if err == nil {
+					decoded, readErr := io.ReadAll(reader)
+					_ = reader.Close()
+					if readErr == nil {
+						bodyBytes = decoded
+					}
+				}
+				break
+			}
+		}
 		var bodyMap map[string]any
 		_ = json.Unmarshal(bodyBytes, &bodyMap)
 		capture.Body = bodyMap
@@ -116,6 +132,16 @@ func startMockSSEServer(t *testing.T, capture *capturedRequest) (string, func())
 	t.Helper()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		bodyBytes, _ := io.ReadAll(r.Body)
+		if strings.EqualFold(r.Header.Get("Content-Encoding"), "gzip") {
+			reader, err := gzip.NewReader(bytes.NewReader(bodyBytes))
+			if err == nil {
+				decoded, readErr := io.ReadAll(reader)
+				_ = reader.Close()
+				if readErr == nil {
+					bodyBytes = decoded
+				}
+			}
+		}
 		var bodyMap map[string]any
 		_ = json.Unmarshal(bodyBytes, &bodyMap)
 		capture.Headers = r.Header.Clone()

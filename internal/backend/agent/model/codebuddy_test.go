@@ -80,8 +80,9 @@ func TestCodeBuddyHeaderValues(t *testing.T) {
 	verifyHeader(t, "X-Stainless-Os", "MacOS")
 	verifyHeader(t, "X-Stainless-Package-Version", CodeBuddyStainlessVersion)
 	verifyHeader(t, "X-Stainless-Runtime", CodeBuddyStainlessRuntime)
-	verifyHeader(t, "X-Stainless-Runtime-Version", "v22.12.0")
+	verifyHeader(t, "X-Stainless-Runtime-Version", CodeBuddyNodeVersion)
 	verifyHeader(t, "X-Stainless-Retry-Count", "0")
+	verifyHeader(t, "X-Agent-Purpose", CodeBuddyAgentPurpose)
 	verifyHeader(t, "User-Agent", CodeBuddyUserAgent)
 	verifyHeader(t, "Accept", "application/json")
 	verifyHeader(t, "Content-Type", "application/json")
@@ -430,13 +431,23 @@ func TestCodeBuddyAdapterHeaderInjection(t *testing.T) {
 	verifyHeader(t, "X-Codebuddy-Request", "1")
 	verifyHeader(t, "X-Ide-Type", "CLI")
 	verifyHeader(t, "X-Ide-Name", "CLI")
+	verifyHeader(t, "X-Ide-Version", CodeBuddyCLIVersion)
 	verifyHeader(t, "X-Agent-Intent", "craft")
+	verifyHeader(t, "X-Agent-Purpose", CodeBuddyAgentPurpose)
 	verifyHeader(t, "X-Product", "SaaS")
 	verifyHeader(t, "X-Enterprise-Id", CodeBuddyDefaultEnterpriseID)
 	verifyHeader(t, "X-Tenant-Id", CodeBuddyDefaultEnterpriseID)
 	verifyHeader(t, "X-Domain", CodeBuddyDefaultDomain)
 	verifyHeader(t, "Accept", "application/json")
 	verifyHeader(t, "Content-Type", "application/json")
+	verifyHeader(t, "Content-Encoding", "gzip")
+	verifyHeader(t, "User-Agent", CodeBuddyUserAgent)
+	if captured.Headers.Get("X-Conversation-ID") == "" {
+		t.Error("X-Conversation-ID should be auto-injected")
+	}
+	if captured.Headers.Get("traceparent") == "" {
+		t.Error("traceparent should be auto-injected")
+	}
 }
 
 // TestCodeBuddyAdapterExtraParams 验证 CodeBuddyAdapter 自动注入 reasoning_summary。
@@ -469,6 +480,90 @@ func TestCodeBuddyAdapterExtraParams(t *testing.T) {
 	rs, ok := captured.Body["reasoning_summary"].(string)
 	if !ok || rs != "auto" {
 		t.Errorf("reasoning_summary should be \"auto\", got %T: %v", captured.Body["reasoning_summary"], captured.Body["reasoning_summary"])
+	}
+	if _, hasTemp := captured.Body["temperature"]; hasTemp {
+		t.Errorf("temperature should not be hardcoded by CodeBuddyAdapter, got %v", captured.Body["temperature"])
+	}
+	if _, hasVerbosity := captured.Body["verbosity"]; hasVerbosity {
+		t.Errorf("verbosity should be absent when ReasoningEffort empty, got %v", captured.Body["verbosity"])
+	}
+}
+
+func TestCodeBuddyAdapterVerbosityFollowsReasoningEffort(t *testing.T) {
+	cases := []struct {
+		effort string
+		want   string
+		absent bool
+	}{
+		{effort: "low", want: "low"},
+		{effort: "medium", want: "medium"},
+		{effort: "high", want: "high"},
+		{effort: "xhigh", want: "high"},
+		{effort: "max", want: "high"},
+		{effort: "disabled", absent: true},
+		{effort: "", absent: true},
+	}
+	for _, tc := range cases {
+		t.Run("effort/"+tc.effort, func(t *testing.T) {
+			var captured capturedRequest
+			mockURL, mockClose := startMockSSEServer(t, &captured)
+			defer mockClose()
+
+			adapter := NewCodeBuddyAdapter()
+			req := StreamRequest{
+				BaseURL:                   mockURL + "/v2",
+				APIKey:                    "ck_test",
+				ProviderModelID:           "deepseek-v4-flash-ioa",
+				ModelID:                   "deepseek-v4-flash-ioa",
+				OpenAIEndpoint:            "/custom",
+				ReasoningEffort:           tc.effort,
+				Messages:                  []Message{{Role: "user", Content: "hi"}},
+				ProviderStreamIdleTimeout: 30 * time.Second,
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			if err := adapter.Stream(ctx, req, func(ModelEvent) error { return nil }); err != nil {
+				t.Fatalf("Stream error: %v", err)
+			}
+			got, ok := captured.Body["verbosity"].(string)
+			if tc.absent {
+				if ok {
+					t.Fatalf("verbosity should be absent, got %q", got)
+				}
+				return
+			}
+			if !ok || got != tc.want {
+				t.Fatalf("verbosity = %v, want %q", captured.Body["verbosity"], tc.want)
+			}
+		})
+	}
+}
+
+// TestCodeBuddyAdapterExtractsUserIDFromJWT 验证未配置 X-User-Id 时从 JWT sub 补齐。
+func TestCodeBuddyAdapterExtractsUserIDFromJWT(t *testing.T) {
+	var captured capturedRequest
+	mockURL, mockClose := startMockSSEServer(t, &captured)
+	defer mockClose()
+
+	adapter := NewCodeBuddyAdapter()
+	req := StreamRequest{
+		BaseURL:                   mockURL + "/v2",
+		APIKey:                    codeBuddyTestJWT("2f6ed114-cbd8-4afd-b356-073fcc418391"),
+		ProviderModelID:           "deepseek-v4-pro-ioa",
+		ModelID:                   "deepseek-v4-pro-ioa",
+		OpenAIEndpoint:            "/custom",
+		Messages:                  []Message{{Role: "user", Content: "hi"}},
+		ProviderStreamIdleTimeout: 30 * time.Second,
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	if err := adapter.Stream(ctx, req, func(ModelEvent) error { return nil }); err != nil {
+		t.Fatalf("Stream error: %v", err)
+	}
+	if got := captured.Headers.Get("X-User-Id"); got != "2f6ed114-cbd8-4afd-b356-073fcc418391" {
+		t.Errorf("X-User-Id = %q, want JWT sub", got)
 	}
 }
 

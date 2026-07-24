@@ -1,6 +1,6 @@
 // codebuddy.go 提供 CodeBuddy CLI 兼容的请求头和请求体辅助函数。
 //
-// CodeBuddy CLI (v2.125.5) 通过 copilot.tencent.com 的 OpenAI 兼容端点
+// CodeBuddy CLI (v2.127.0) 通过 copilot.tencent.com 的 OpenAI 兼容端点
 // 使用 DeepSeek 等模型，请求需要携带特定的认证、追踪和兼容性头。
 // 本文件将这些头定义为一组可复用的常量与函数，供适配器内部使用，
 // 也可在 config.yaml 中通过 customHeadersJSON 引用。
@@ -8,6 +8,9 @@ package modeladapter
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -17,16 +20,19 @@ import (
 	"time"
 
 	"cursor/internal/netproxy"
+
+	"github.com/google/uuid"
 )
 
-// CodeBuddy CLI 客户端常量 —— 与 v2.125.5 版本对齐。
+// CodeBuddy CLI 客户端常量 —— 与 Proxyman flow 2000（CLI v2.127.0）对齐。
 const (
-	CodeBuddyCLIVersion          = "2.126.0"
+	CodeBuddyCLIVersion          = "2.127.0"
 	CodeBuddyStainlessVersion    = "6.25.0"
 	CodeBuddyStainlessRuntime    = "node"
 	CodeBuddyNodeVersion         = "v23.11.1"
-	CodeBuddyUserAgent           = "CLI/2.126.0 CodeBuddy/2.126.0"
+	CodeBuddyUserAgent           = "CLI/2.127.0 CodeBuddy/2.127.0"
 	CodeBuddyAgentIntent         = "craft"
+	CodeBuddyAgentPurpose        = "conversation"
 	CodeBuddyDefaultEnterpriseID = "etahzsqej0n4"
 	CodeBuddyDefaultDomain       = "tencent.sso.copilot.tencent.com"
 
@@ -34,49 +40,42 @@ const (
 	CodeBuddyAPIBaseV2 = "https://copilot.tencent.com/v2"
 )
 
-// CodeBuddyStandardHeaders 返回 CodeBuddy CLI 发出的所有标准请求头
-// （不含 Authorization 和 X-User-Id，这两个需要用户自行提供）。
-// 返回的 map 可以直接用 JSON 序列化后放入 customHeadersJSON 配置。
-//
-// 使用方式（config.yaml）：
-//
-//	customHeadersJSON: '{"Authorization":"Bearer <token>","X-User-Id":"<uuid>","Accept":"application/json",...}'
-//
-// 或结合 CodeBuddyHeadersJSON() 手动拼上 Auth 和 X-User-Id。
+// CodeBuddyStandardHeaders 返回 CodeBuddy CLI 发出的静态标准请求头
+// （不含 Authorization、X-User-Id 与按请求生成的 conversation/trace 头）。
 func CodeBuddyStandardHeaders() map[string]string {
 	return map[string]string{
-		"Accept":                       "application/json",
-		"Content-Type":                 "application/json",
-		"x-requested-with":             "XMLHttpRequest",
-		"User-Agent":                   CodeBuddyUserAgent,
-		"X-IDE-Type":                   "CLI",
-		"X-IDE-Name":                   "CLI",
-		"X-IDE-Version":                CodeBuddyCLIVersion,
-		"X-Product":                    "SaaS",
-		"X-Agent-Intent":               CodeBuddyAgentIntent,
-		"X-Private-Data":               "false",
-		"X-Enterprise-Id":              CodeBuddyDefaultEnterpriseID,
-		"X-Tenant-Id":                  CodeBuddyDefaultEnterpriseID,
-		"X-Domain":                     CodeBuddyDefaultDomain,
-		"x-stainless-arch":             "arm64",
-		"x-stainless-lang":             "js",
-		"x-stainless-os":               "MacOS",
-		"x-stainless-package-version":  CodeBuddyStainlessVersion,
-		"x-stainless-runtime":          CodeBuddyStainlessRuntime,
-		"x-stainless-runtime-version":  CodeBuddyNodeVersion,
-		"x-stainless-retry-count":      "0",
+		"Accept":                      "application/json",
+		"Content-Type":                "application/json",
+		"x-requested-with":            "XMLHttpRequest",
+		"x-codebuddy-request":         "1",
+		"User-Agent":                  CodeBuddyUserAgent,
+		"X-IDE-Type":                  "CLI",
+		"X-IDE-Name":                  "CLI",
+		"X-IDE-Version":               CodeBuddyCLIVersion,
+		"X-Product":                   "SaaS",
+		"X-Agent-Intent":              CodeBuddyAgentIntent,
+		"X-Agent-Purpose":             CodeBuddyAgentPurpose,
+		"X-Private-Data":              "false",
+		"X-Enterprise-Id":             CodeBuddyDefaultEnterpriseID,
+		"X-Tenant-Id":                 CodeBuddyDefaultEnterpriseID,
+		"X-Domain":                    CodeBuddyDefaultDomain,
+		"x-stainless-arch":            "arm64",
+		"x-stainless-lang":            "js",
+		"x-stainless-os":              "MacOS",
+		"x-stainless-package-version": CodeBuddyStainlessVersion,
+		"x-stainless-runtime":         CodeBuddyStainlessRuntime,
+		"x-stainless-runtime-version": CodeBuddyNodeVersion,
+		"x-stainless-retry-count":     "0",
 	}
 }
 
 // CodeBuddyHeadersJSON 返回 CodeBuddyStandardHeaders 的 JSON 字符串。
-// 注意：不含 Authorization 和 X-User-Id，需要调用方自行拼接在 config.yaml 的 customHeadersJSON 中。
 func CodeBuddyHeadersJSON() string {
 	payload, _ := json.Marshal(CodeBuddyStandardHeaders())
 	return string(payload)
 }
 
 // CodeBuddyFullHeaders 返回包含所有必需 header 的 map（含 X-User-Id，不含 Authorization）。
-// xUserID 是从 CodeBuddy CLI 登录后获取的持久用户标识（UUID 格式，如 2f6ed114-...）。
 func CodeBuddyFullHeaders(xUserID string) map[string]string {
 	headers := CodeBuddyStandardHeaders()
 	if xUserID != "" {
@@ -92,14 +91,15 @@ func CodeBuddyFullHeadersJSON(xUserID string) string {
 }
 
 // ApplyCodeBuddyHeaders 将 CodeBuddy CLI 标准请求头写入 http.Request。
-// 调用者需自行设置 Authorization 和 X-User-Id。
 func ApplyCodeBuddyHeaders(httpReq *http.Request) {
 	for key, value := range CodeBuddyStandardHeaders() {
 		httpReq.Header.Set(key, value)
 	}
 }
 
-// CodeBuddyExtraParams 返回 CodeBuddy 需要的额外请求体参数。
+// CodeBuddyExtraParams 返回 CodeBuddy 出站请求体中的稳定额外字段。
+// temperature / verbosity 不写死：verbosity 由本轮 ReasoningEffort（Cursor 思考强度）映射；
+// temperature 仅在用户 openAIExtraParams 或上游显式配置时下发。
 func CodeBuddyExtraParams() map[string]any {
 	return map[string]any{
 		"reasoning_summary": "auto",
@@ -110,6 +110,21 @@ func CodeBuddyExtraParams() map[string]any {
 func CodeBuddyExtraParamsJSON() string {
 	payload, _ := json.Marshal(CodeBuddyExtraParams())
 	return string(payload)
+}
+
+// codeBuddyVerbosityFromEffort 把 Cursor/渠道侧 reasoning effort 映射为 CodeBuddy verbosity。
+// 未识别或 disabled 时返回空，表示不下发该字段。
+func codeBuddyVerbosityFromEffort(effort string) string {
+	switch normalizeRuntimeThinkingEffort(effort) {
+	case "low":
+		return "low"
+	case "medium":
+		return "medium"
+	case "high", "xhigh", "max":
+		return "high"
+	default:
+		return ""
+	}
 }
 
 // CodeBuddyModelIDs 返回已知的 CodeBuddy 可用模型 ID 列表。
@@ -137,7 +152,6 @@ func NewCodeBuddyAdapter() *CodeBuddyAdapter {
 
 // Stream 实现 ModelAdapter 接口，自动注入 CodeBuddy 请求头后将请求委托给 OpenAIAdapter。
 func (a *CodeBuddyAdapter) Stream(ctx context.Context, req StreamRequest, sink func(ModelEvent) error) error {
-	// 自动合并 CodeBuddy 标准请求头与用户自定义请求头。
 	mergedHeaders := CodeBuddyStandardHeaders()
 	if req.CustomHeadersEnabled && strings.TrimSpace(req.CustomHeadersJSON) != "" {
 		var userHeaders map[string]string
@@ -149,44 +163,173 @@ func (a *CodeBuddyAdapter) Stream(ctx context.Context, req StreamRequest, sink f
 			}
 		}
 	}
+	applyCodeBuddyDynamicHeaders(mergedHeaders, req)
+	ensureCodeBuddyUserID(mergedHeaders, req.APIKey)
 	if mergedBytes, err := json.Marshal(mergedHeaders); err == nil {
 		req.CustomHeadersJSON = string(mergedBytes)
 	}
 	req.CustomHeadersEnabled = true
 
-	// 自动合并 CodeBuddy 额外请求体参数。
-	if bytes, err := json.Marshal(CodeBuddyExtraParams()); err == nil {
-		extraJSON := string(bytes)
-		if req.OpenAIExtraParamsEnabled && strings.TrimSpace(req.OpenAIExtraParamsJSON) != "" {
-			var base map[string]any
-			if json.Unmarshal([]byte(req.OpenAIExtraParamsJSON), &base) == nil {
-				base["reasoning_summary"] = "auto"
-				if merged, err := json.Marshal(base); err == nil {
-					extraJSON = string(merged)
-				}
-			}
-		}
-		req.OpenAIExtraParamsJSON = extraJSON
-	}
+	req.OpenAIExtraParamsJSON = mergeCodeBuddyExtraParamsJSON(req.OpenAIExtraParamsEnabled, req.OpenAIExtraParamsJSON, req.ReasoningEffort)
 	req.OpenAIExtraParamsEnabled = true
+	req.GzipRequestBody = true
 
 	return a.openai.Stream(ctx, req, sink)
 }
 
+func mergeCodeBuddyExtraParamsJSON(userEnabled bool, userJSON string, reasoningEffort string) string {
+	merged := CodeBuddyExtraParams()
+	if userEnabled && strings.TrimSpace(userJSON) != "" {
+		var user map[string]any
+		if json.Unmarshal([]byte(userJSON), &user) == nil {
+			for key, value := range user {
+				name := strings.TrimSpace(key)
+				if name == "" {
+					continue
+				}
+				merged[name] = value
+			}
+		}
+	}
+	if _, hasVerbosity := merged["verbosity"]; !hasVerbosity {
+		if verbosity := codeBuddyVerbosityFromEffort(reasoningEffort); verbosity != "" {
+			merged["verbosity"] = verbosity
+		}
+	}
+	payload, err := json.Marshal(merged)
+	if err != nil {
+		return CodeBuddyExtraParamsJSON()
+	}
+	return string(payload)
+}
+
+// applyCodeBuddyDynamicHeaders 注入 CLI 每次请求都会带的 conversation / request / tracing 头。
+// 已由用户 customHeaders 显式设置的 key 不覆盖。
+func applyCodeBuddyDynamicHeaders(headers map[string]string, req StreamRequest) {
+	if headers == nil {
+		return
+	}
+	conversationID := strings.TrimSpace(req.ConversationID)
+	if conversationID == "" {
+		conversationID = uuid.NewString()
+	}
+	conversationRequestID := codeBuddyCompactID(req.RequestID)
+	if conversationRequestID == "" {
+		conversationRequestID = codeBuddyRandomHex(16)
+	}
+	messageID := codeBuddyCompactID(req.ModelCallID)
+	if messageID == "" {
+		messageID = codeBuddyRandomHex(16)
+	}
+
+	setIfAbsent(headers, "X-Conversation-ID", conversationID)
+	setIfAbsent(headers, "X-Conversation-Request-ID", conversationRequestID)
+	setIfAbsent(headers, "X-Request-ID", messageID)
+	setIfAbsent(headers, "X-Conversation-Message-ID", messageID)
+
+	traceID := codeBuddyRandomHex(16)
+	spanID := codeBuddyRandomHex(8)
+	parentSpanID := codeBuddyRandomHex(8)
+	setIfAbsent(headers, "traceparent", fmt.Sprintf("00-%s-%s-01", traceID, spanID))
+	setIfAbsent(headers, "b3", fmt.Sprintf("%s-%s-1-%s", traceID, spanID, parentSpanID))
+	setIfAbsent(headers, "X-B3-TraceId", traceID)
+	setIfAbsent(headers, "X-B3-ParentSpanId", parentSpanID)
+	setIfAbsent(headers, "X-B3-SpanId", spanID)
+	setIfAbsent(headers, "X-B3-Sampled", "1")
+	setIfAbsent(headers, "X-Trace-ID", traceID)
+}
+
+func ensureCodeBuddyUserID(headers map[string]string, apiKey string) {
+	if headers == nil {
+		return
+	}
+	if headerValueCI(headers, "X-User-Id") != "" {
+		return
+	}
+	if userID := codeBuddyUserIDFromAPIKey(apiKey); userID != "" {
+		headers["X-User-Id"] = userID
+	}
+}
+
+func headerValueCI(headers map[string]string, want string) string {
+	for key, value := range headers {
+		if strings.EqualFold(key, want) {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
+}
+
+func setIfAbsent(headers map[string]string, key, value string) {
+	if headerValueCI(headers, key) != "" {
+		return
+	}
+	headers[key] = value
+}
+
+func codeBuddyCompactID(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return ""
+	}
+	return strings.ReplaceAll(trimmed, "-", "")
+}
+
+func codeBuddyRandomHex(byteLen int) string {
+	if byteLen <= 0 {
+		byteLen = 16
+	}
+	buf := make([]byte, byteLen)
+	if _, err := rand.Read(buf); err != nil {
+		// 退化路径：仍给出固定长度伪随机，避免请求缺头。
+		fallback := uuid.New()
+		return strings.ReplaceAll(fallback.String(), "-", "")[:byteLen*2]
+	}
+	return hex.EncodeToString(buf)
+}
+
+// codeBuddyUserIDFromAPIKey 从 JWT access token 的 sub 提取 X-User-Id（与 CLI 对齐）。
+func codeBuddyUserIDFromAPIKey(apiKey string) string {
+	token := strings.TrimSpace(apiKey)
+	token = strings.TrimPrefix(token, "Bearer ")
+	parts := strings.Split(token, ".")
+	if len(parts) < 2 {
+		return ""
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		padded := parts[1]
+		if m := len(padded) % 4; m != 0 {
+			padded += strings.Repeat("=", 4-m)
+		}
+		payload, err = base64.URLEncoding.DecodeString(padded)
+		if err != nil {
+			return ""
+		}
+	}
+	var claims struct {
+		Sub string `json:"sub"`
+	}
+	if err := json.Unmarshal(payload, &claims); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(claims.Sub)
+}
+
 // CodeBuddyModelInfo 表示从 /v3/config 返回的模型信息。
 type CodeBuddyModelInfo struct {
-	ID              string `json:"id"`
-	Name            string `json:"name"`
-	MaxInputTokens  int    `json:"maxInputTokens"`
-	MaxOutputTokens int    `json:"maxOutputTokens"`
-	SupportsReasoning bool `json:"supportsReasoning"`
+	ID                string `json:"id"`
+	Name              string `json:"name"`
+	MaxInputTokens    int    `json:"maxInputTokens"`
+	MaxOutputTokens   int    `json:"maxOutputTokens"`
+	SupportsReasoning bool   `json:"supportsReasoning"`
 }
 
 // CodeBuddyConfigResponse 表示 /v3/config 的响应结构。
 type CodeBuddyConfigResponse struct {
-	Code int                    `json:"code"`
-	Msg  string                 `json:"msg"`
-	Data CodeBuddyConfigData    `json:"data"`
+	Code int                 `json:"code"`
+	Msg  string              `json:"msg"`
+	Data CodeBuddyConfigData `json:"data"`
 }
 
 // CodeBuddyConfigData 包含 models 列表。
@@ -195,10 +338,6 @@ type CodeBuddyConfigData struct {
 }
 
 // CodeBuddyModelDiscovery 用于从 copilot.tencent.com/v3/config 获取可用模型列表。
-//
-// 代理解析策略（与 CodeBuddyAdapter/Stream 路径保持一致）：
-//   - proxyURL 非空（用户在 yaml 中显式配置了代理）→ 强制走 yaml 的代理，绕过 netproxy
-//   - proxyURL 为空 → 回退到 netproxy（env / macOS 系统代理 / Proxyman 助手）
 type CodeBuddyModelDiscovery struct {
 	timeout  time.Duration
 	cacheTTL time.Duration
@@ -214,8 +353,6 @@ func NewCodeBuddyModelDiscovery() *CodeBuddyModelDiscovery {
 	}
 }
 
-// discoveryClientForProxy 复刻 adapterClientForRequest 的代理策略。
-// proxyURL 非空时返回仅使用 yaml 代理的 client，否则返回走 netproxy 解析的 client。
 func discoveryClientForProxy(proxyURL string, timeout time.Duration) *http.Client {
 	if client := netproxy.NewHTTPClient(timeout); client != nil {
 		proxyURL = strings.TrimSpace(proxyURL)
@@ -247,9 +384,6 @@ func discoveryClientForProxy(proxyURL string, timeout time.Duration) *http.Clien
 }
 
 // FetchModels 从 /v3/config 获取可用模型列表（带缓存）。
-//
-// proxyURL 与 yaml 中 ModelAdapterConfig.Proxy 对齐：非空时优先走 yaml 代理，
-// 留空时回退到 netproxy 解析（覆盖 macOS 系统代理 / Proxyman 助手等）。
 func (d *CodeBuddyModelDiscovery) FetchModels(ctx context.Context, apiKey string, xUserID string, proxyURL string) ([]CodeBuddyModelInfo, error) {
 	if time.Since(d.cachedAt) < d.cacheTTL && len(d.cached) > 0 {
 		return d.cached, nil

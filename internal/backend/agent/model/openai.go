@@ -4,6 +4,7 @@ package modeladapter
 import (
 	"bufio"
 	"bytes"
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -184,20 +185,65 @@ func NewOpenAIAdapter() *OpenAIAdapter {
 // 若 Proxy 为空则回退到 adapter 内置 client。
 func adapterClientForRequest(adapter *OpenAIAdapter, req StreamRequest) *http.Client {
 	proxyURL := strings.TrimSpace(req.Proxy)
+	var client *http.Client
 	if proxyURL == "" {
-		return adapter.client
+		client = adapter.client
+	} else if parsed, err := url.Parse(proxyURL); err != nil {
+		client = adapter.client
+	} else {
+		transport := &http.Transport{
+			Proxy: http.ProxyURL(parsed),
+		}
+		if baseTransport, ok := adapter.client.Transport.(*http.Transport); ok && baseTransport != nil {
+			transport.DialContext = baseTransport.DialContext
+		}
+		client = &http.Client{
+			Transport: transport,
+			Timeout:   adapter.client.Timeout,
+		}
 	}
-	parsed, err := url.Parse(proxyURL)
-	if err != nil {
-		return adapter.client
+	if req.GzipRequestBody {
+		return clientWithDisableCompression(client)
+	}
+	return client
+}
+
+// clientWithDisableCompression 关闭 Go 自动 Accept-Encoding: gzip，
+// 与 CodeBuddy CLI 出站头对齐（CLI 不发 Accept-Encoding）。
+func clientWithDisableCompression(client *http.Client) *http.Client {
+	if client == nil {
+		return &http.Client{
+			Transport: &http.Transport{DisableCompression: true},
+		}
+	}
+	baseTransport, _ := client.Transport.(*http.Transport)
+	transport := &http.Transport{DisableCompression: true}
+	if baseTransport != nil {
+		*transport = *baseTransport
+		transport.DisableCompression = true
 	}
 	return &http.Client{
-		Transport: &http.Transport{
-			Proxy:       http.ProxyURL(parsed),
-			DialContext: adapter.client.Transport.(*http.Transport).DialContext,
-		},
-		Timeout: adapter.client.Timeout,
+		Transport:     transport,
+		Timeout:       client.Timeout,
+		CheckRedirect: client.CheckRedirect,
+		Jar:           client.Jar,
 	}
+}
+
+func encodeProviderRequestPayload(payload []byte, gzipBody bool) ([]byte, error) {
+	if !gzipBody {
+		return payload, nil
+	}
+	var buf bytes.Buffer
+	writer := gzip.NewWriter(&buf)
+	if _, err := writer.Write(payload); err != nil {
+		_ = writer.Close()
+		return nil, fmt.Errorf("gzip request body: %w", err)
+	}
+	if err := writer.Close(); err != nil {
+		return nil, fmt.Errorf("gzip request body: %w", err)
+	}
+	return buf.Bytes(), nil
 }
 
 func openAIModelSupportsPromptCacheKey(modelID string) bool {
@@ -519,6 +565,12 @@ func (adapter *OpenAIAdapter) streamChatCompletions(ctx context.Context, req Str
 		recordLLMSummaryArtifact(req, buildLLMSummaryPayload(req, "openai", modelID, startedAt, time.Time{}, finishedAt, "", 0, 0, 0, 0, err))
 		return err
 	}
+	payload, err = encodeProviderRequestPayload(payload, req.GzipRequestBody)
+	if err != nil {
+		finishedAt = time.Now().UTC()
+		recordLLMSummaryArtifact(req, buildLLMSummaryPayload(req, "openai", modelID, startedAt, time.Time{}, finishedAt, "", 0, 0, 0, 0, err))
+		return err
+	}
 
 	streamCtx, streamIdle := newProviderStreamIdleWatchdog(ctx, req.ProviderStreamIdleTimeout)
 	defer streamIdle.Stop()
@@ -531,6 +583,9 @@ func (adapter *OpenAIAdapter) streamChatCompletions(ctx context.Context, req Str
 		httpReq.Header.Set("Authorization", "Bearer "+apiKey)
 		httpReq.Header.Set("Content-Type", "application/json")
 		httpReq.Header.Set("User-Agent", ClaudeCodeUserAgent)
+		if req.GzipRequestBody {
+			httpReq.Header.Set("Content-Encoding", "gzip")
+		}
 		if err := ApplyCustomHeaders(httpReq, req.CustomHeadersEnabled, req.CustomHeadersJSON); err != nil {
 			return nil, err
 		}
@@ -1003,6 +1058,12 @@ func (adapter *OpenAIAdapter) streamResponses(ctx context.Context, req StreamReq
 		recordLLMSummaryArtifact(req, buildLLMSummaryPayload(req, "openai", modelID, startedAt, time.Time{}, finishedAt, "", 0, 0, 0, 0, err))
 		return err
 	}
+	payload, err = encodeProviderRequestPayload(payload, req.GzipRequestBody)
+	if err != nil {
+		finishedAt = time.Now().UTC()
+		recordLLMSummaryArtifact(req, buildLLMSummaryPayload(req, "openai", modelID, startedAt, time.Time{}, finishedAt, "", 0, 0, 0, 0, err))
+		return err
+	}
 
 	streamCtx, streamIdle := newProviderStreamIdleWatchdog(ctx, req.ProviderStreamIdleTimeout)
 	defer streamIdle.Stop()
@@ -1015,6 +1076,9 @@ func (adapter *OpenAIAdapter) streamResponses(ctx context.Context, req StreamReq
 		httpReq.Header.Set("Authorization", "Bearer "+apiKey)
 		httpReq.Header.Set("Content-Type", "application/json")
 		httpReq.Header.Set("User-Agent", ClaudeCodeUserAgent)
+		if req.GzipRequestBody {
+			httpReq.Header.Set("Content-Encoding", "gzip")
+		}
 		if err := ApplyCustomHeaders(httpReq, req.CustomHeadersEnabled, req.CustomHeadersJSON); err != nil {
 			return nil, err
 		}
