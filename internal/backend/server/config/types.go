@@ -50,6 +50,33 @@ type HomeMetricsConfig struct {
 	IncludeCacheWriteInHitRate bool `json:"includeCacheWriteInHitRate" yaml:"includeCacheWriteInHitRate"`
 }
 
+// TabRenamerConfig 控制是否在本地模式接管 Cursor 的 NameTab / NameAgent RPC，
+// 用一个轻量模型把会话首轮消息压缩成单行短标题。
+//
+// opt-in 特性：默认 disabled，避免在没看到该配置的用户机器上默默多打一次模型。
+// 当 disabled 时，Service.NameTab / NameAgent 会返回空 name + 200 OK，
+// Cursor 客户端自动降级到"用第一条消息"作为标题，不会再出现 404 退化。
+type TabRenamerConfig struct {
+	// Enabled 是否接管 NameTab / NameAgent。
+	Enabled bool `json:"enabled" yaml:"enabled"`
+	// ModelID 可选：指定一个模型 ID（用户配置在 modelAdapters 里的）。
+	// 为空时退到"上次 Agent 使用的模型"，再退到 default_fallback（任一可用 channel）。
+	ModelID string `json:"modelID,omitempty" yaml:"modelID,omitempty"`
+	// MaxInputChars 输入侧拼接消息时的最大字符数；超过会被截断到末尾 N 字符。
+	MaxInputChars int `json:"maxInputChars,omitempty" yaml:"maxInputChars,omitempty"`
+	// MaxOutputTokens 单次生成的 max_tokens 上限。
+	MaxOutputTokens int `json:"maxOutputTokens,omitempty" yaml:"maxOutputTokens,omitempty"`
+	// MaxNameChars 标题字符数上限，超过会被截断。
+	MaxNameChars int `json:"maxNameChars,omitempty" yaml:"maxNameChars,omitempty"`
+	// TimeoutSeconds 同步等待模型返回的超时（秒），0 表示使用默认 8 秒。
+	TimeoutSeconds int `json:"timeoutSeconds,omitempty" yaml:"timeoutSeconds,omitempty"`
+}
+
+// FeaturesConfig 收纳所有 opt-in / 灰度特性的配置。
+type FeaturesConfig struct {
+	TabRenamer TabRenamerConfig `json:"tabRenamer" yaml:"tabRenamer"`
+}
+
 type Config struct {
 	Log                       bool                 `json:"log" yaml:"log"`
 	ProviderStreamIdleTimeout int                  `json:"providerStreamIdleTimeout" yaml:"providerStreamIdleTimeout"`
@@ -58,6 +85,7 @@ type Config struct {
 	ModelAdapters             []ModelAdapterConfig `json:"modelAdapters" yaml:"modelAdapters"`
 	HomeMetrics               HomeMetricsConfig    `json:"homeMetrics" yaml:"homeMetrics"`
 	LastAgentModelHash        string               `json:"lastAgentModelHash" yaml:"lastAgentModelHash"`
+	Features                  FeaturesConfig       `json:"features" yaml:"features"`
 }
 
 func DefaultConfig() Config {
@@ -86,12 +114,34 @@ func NormalizeConfig(input Config) (Config, error) {
 	output.ProxyListenAddr = proxyListenAddr
 	output.HomeMetrics.IncludeCacheWriteInHitRate = input.HomeMetrics.IncludeCacheWriteInHitRate
 	output.LastAgentModelHash = strings.TrimSpace(input.LastAgentModelHash)
+	output.Features.TabRenamer = normalizeTabRenamerConfig(input.Features.TabRenamer)
 	adapters, err := NormalizeModelAdapterConfigs(input.ModelAdapters)
 	if err != nil {
 		return Config{}, err
 	}
 	output.ModelAdapters = adapters
 	return output, nil
+}
+
+func normalizeTabRenamerConfig(input TabRenamerConfig) TabRenamerConfig {
+	return TabRenamerConfig{
+		Enabled:         input.Enabled,
+		ModelID:         strings.TrimSpace(input.ModelID),
+		MaxInputChars:   normalizeNonNegative(input.MaxInputChars, 4000),
+		MaxOutputTokens: normalizeNonNegative(input.MaxOutputTokens, 64),
+		MaxNameChars:    normalizeNonNegative(input.MaxNameChars, 50),
+		TimeoutSeconds:  normalizeNonNegative(input.TimeoutSeconds, 8),
+	}
+}
+
+func normalizeNonNegative(value int, fallback int) int {
+	if value < 0 {
+		return 0
+	}
+	if value == 0 {
+		return fallback
+	}
+	return value
 }
 
 func NormalizeModelAdapterConfigs(input []ModelAdapterConfig) ([]ModelAdapterConfig, error) {

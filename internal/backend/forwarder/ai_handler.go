@@ -98,6 +98,14 @@ func newAIHandler(service *Service) http.Handler {
 		aiserverv1connect.AiServiceFetchRelevantKnowledgeForConversationProcedure,
 		connect.NewUnaryHandler(aiserverv1connect.AiServiceFetchRelevantKnowledgeForConversationProcedure, service.FetchRelevantKnowledgeForConversation),
 	)
+	mux.Handle(
+		aiserverv1connect.AiServiceNameTabProcedure,
+		connect.NewUnaryHandler(aiserverv1connect.AiServiceNameTabProcedure, service.NameTab),
+	)
+	mux.Handle(
+		aiserverv1connect.AiServiceNameAgentProcedure,
+		connect.NewUnaryHandler(aiserverv1connect.AiServiceNameAgentProcedure, service.NameAgent),
+	)
 	mux.Handle("/", http.NotFoundHandler())
 	return mux
 }

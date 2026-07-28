@@ -268,7 +268,13 @@ func (host *Host) rebuild(cfg serverconfig.Config) error {
 
 func (host *Host) rebuildLocked(cfg serverconfig.Config) error {
 	host.listenAddr = cfg.BackendListenAddr
-	agentModule := forwarder.NewModule(appdata.HistoryRootPath(), host.configs)
+	configLoader := func() serverconfig.Config {
+		if host == nil || host.configs == nil {
+			return cfg
+		}
+		return host.configs.Current()
+	}
+	agentModule := forwarder.NewModuleWithConfig(appdata.HistoryRootPath(), host.configs, configLoader)
 	legacyBidiAppendProcedure := "/aiserver.v1.BidiService/BidiAppend"
 	legacyRunSSEProcedure := "/agent.v1.AgentService/RunSSE"
 	routeDeps := upstream.Dependencies{

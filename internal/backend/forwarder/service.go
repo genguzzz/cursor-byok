@@ -21,6 +21,7 @@ import (
 	"cursor/gen/agentv1"
 	"cursor/gen/aiserverv1"
 	"cursor/internal/appdata"
+	serverconfig "cursor/internal/backend/server/config"
 	execbridge "cursor/internal/backend/agent/bridge/exec"
 	interactionbridge "cursor/internal/backend/agent/bridge/interaction"
 	runtimecore "cursor/internal/backend/agent/core"
@@ -247,22 +248,26 @@ func subagentModelOverrideSummaries(overrides map[string]runtimecore.SubagentMod
 }
 
 type Service struct {
-	store              *ConversationFileStore
-	usageStore         *UsageFileStore
-	codebaseIndexStore *CodebaseIndexStore
-	docsIndexStore     *DocsIndexStore
-	rules              *UserRuleStore
-	projector          *HistoryProjector
-	compiler           PromptCompiler
-	provider           ProviderGateway
-	resolver           modeladapter.ChannelResolver
-	modelMemory        agentModelMemory
-	broker             *StreamBroker
-	recorder           *artifactRecorder
-	debug              *debugRecorder
-	execBridge         execbridge.ExecBridge
-	interactionBridge  interactionbridge.InteractionBridge
-	appendSeq          *appendSequenceTracker
+	store                     *ConversationFileStore
+	usageStore                *UsageFileStore
+	codebaseIndexStore        *CodebaseIndexStore
+	docsIndexStore            *DocsIndexStore
+	rules                     *UserRuleStore
+	projector                 *HistoryProjector
+	compiler                  PromptCompiler
+	provider                  ProviderGateway
+	resolver                  modeladapter.ChannelResolver
+	modelMemory               agentModelMemory
+	broker                    *StreamBroker
+	recorder                  *artifactRecorder
+	debug                     *debugRecorder
+	execBridge                execbridge.ExecBridge
+	interactionBridge         interactionbridge.InteractionBridge
+	appendSeq                 *appendSequenceTracker
+	checkpointBlobMu          sync.Mutex
+	checkpointBlobs           map[string]*checkpointBlobCacheEntry
+	tabRenamerConfigLoader    TabRenamerConfigLoader
+	tabRenamerFullConfigLoader func() serverconfig.Config
 }
 
 type agentModelMemory interface {
