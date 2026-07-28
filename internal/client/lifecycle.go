@@ -279,6 +279,94 @@ func (s *ProxyService) setCursorSettingsApplied(applied bool) {
 	s.cursorSettingsApplied = applied
 }
 
+// SetSystemProxyEnabled 控制系统代理开关，不重启本地模式（backend）。
+//
+// enabled=true：启动 MITM 代理并注入 Cursor 代理设置；若 backend 未运行则一并启动。
+// enabled=false：停止 MITM 代理并清理 Cursor 代理设置，backend 继续运行不受影响。
+func (s *ProxyService) SetSystemProxyEnabled(enabled bool) (ProxyState, error) {
+	if s == nil {
+		return ProxyState{}, fmt.Errorf("proxy service is nil")
+	}
+	if enabled {
+		return s.enableSystemProxy()
+	}
+	return s.disableSystemProxy()
+}
+
+func (s *ProxyService) enableSystemProxy() (ProxyState, error) {
+	cfg, err := s.LoadUserConfig()
+	if err != nil {
+		return s.GetState(), fmt.Errorf("加载配置失败: %w", err)
+	}
+	if err := s.ensureBackendHost(); err != nil {
+		return s.GetState(), fmt.Errorf("创建 backend 失败: %w", err)
+	}
+	if !s.backendHost.IsRunning() {
+		logger.Infof("system proxy enable: starting backend listen_addr=%s", s.backendHost.ListenAddr())
+		if err := s.backendHost.Start(); err != nil {
+			return s.GetState(), fmt.Errorf("启动 backend 失败: %w", err)
+		}
+	}
+	healthCtx, healthCancel := context.WithTimeout(context.Background(), backendReadyTimeout)
+	defer healthCancel()
+	if err := s.waitForBackend(healthCtx); err != nil {
+		return s.GetState(), fmt.Errorf("等待 backend 就绪失败: %w", err)
+	}
+	if err := s.ensureProxy(cfg); err != nil {
+		return s.GetState(), fmt.Errorf("创建代理失败: %w", err)
+	}
+	if s.proxy != nil && !s.proxy.IsRunning() {
+		logger.Infof("system proxy enable: starting mitm proxy listen_addr=%s", s.proxy.Snapshot().ListenAddr)
+		if err := s.proxy.Start(); err != nil {
+			return s.GetState(), fmt.Errorf("启动 MITM 代理失败: %w", err)
+		}
+	}
+	if err := s.ApplyCursorSettings(); err != nil {
+		// 注入 Cursor 设置失败不回退 proxy，只报错
+		s.setLastError(fmt.Errorf("已启动代理，但注入 Cursor 配置失败: %w", err))
+		s.emitState()
+		return s.GetState(), s.lastErrorMsg()
+	}
+	s.setLastError(nil)
+	s.emitState()
+	logger.Infof("system proxy enabled backend_running=%t proxy_running=%t", s.backendHost.IsRunning(), s.proxy != nil && s.proxy.IsRunning())
+	return s.GetState(), nil
+}
+
+func (s *ProxyService) disableSystemProxy() (ProxyState, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	var failErr error
+	if s.proxy != nil && s.proxy.IsRunning() {
+		logger.Infof("system proxy disable: stopping mitm proxy listen_addr=%s", s.proxy.Snapshot().ListenAddr)
+		if err := s.proxy.Stop(ctx); err != nil {
+			failErr = fmt.Errorf("停止 MITM 代理失败: %w", err)
+		}
+	}
+	if err := s.ClearCursorSettings(); err != nil {
+		failErr = errors.Join(failErr, fmt.Errorf("清理 Cursor 代理设置失败: %w", err))
+	}
+	// 保留 backend 运行，不停止本地模式
+	if failErr != nil {
+		s.setLastError(failErr)
+		s.emitState()
+		return s.GetState(), failErr
+	}
+	s.setLastError(nil)
+	s.emitState()
+	logger.Infof("system proxy disabled backend_running=%t", s.backendHost != nil && s.backendHost.IsRunning())
+	return s.GetState(), nil
+}
+
+func (s *ProxyService) lastErrorMsg() error {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.lastError == "" {
+		return nil
+	}
+	return fmt.Errorf("%s", s.lastError)
+}
+
 // ShutdownForQuitPreserveSettings stops proxy and backend without clearing Cursor proxy settings.
 func (s *ProxyService) ShutdownForQuitPreserveSettings() {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

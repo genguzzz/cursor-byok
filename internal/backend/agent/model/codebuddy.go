@@ -47,7 +47,6 @@ func CodeBuddyStandardHeaders() map[string]string {
 		"Accept":                      "application/json",
 		"Content-Type":                "application/json",
 		"x-requested-with":            "XMLHttpRequest",
-		"x-codebuddy-request":         "1",
 		"User-Agent":                  CodeBuddyUserAgent,
 		"X-IDE-Type":                  "CLI",
 		"X-IDE-Name":                  "CLI",
