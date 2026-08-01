@@ -17,6 +17,13 @@ const (
 
 	modelRuntimeThinkingEffortParameterID = "thinking_effort"
 
+	// localPathEncryptionKey — стабильный ключ шифрования путей для индексации
+	// репозитория, который cursor-agent CLI запрашивает через GetServerConfig
+	// (indexingConfig.default{User,Team}PathEncryptionKey). Без него CLI
+	// не может инициализировать repo identity в git-воркспейсе и вызовы
+	// файловых инструментов падают с "[unimplemented] HTTP 404".
+	localPathEncryptionKey = "6f6e63652d6c6f63616c2d706174682d656e6372797074696f6e2d6b6579"
+
 	localUltraMembershipType       = "ultra"
 	localUltraPaymentID            = "local_ultra"
 	localUltraSubscriptionStatus   = "active"
@@ -427,6 +434,10 @@ func buildServerConfigPayload(*RequestContext) (map[string]any, error) {
 		"configVersion": "local_cli_sandbox_defaults_disabled_v2",
 		// "http2Config":              "HTTP2_CONFIG_FORCE_ALL_DISABLED",
 		"cliSandboxDefaultEnabled": true,
+		"indexingConfig": map[string]any{
+			"defaultUserPathEncryptionKey": localPathEncryptionKey,
+			"defaultTeamPathEncryptionKey": localPathEncryptionKey,
+		},
 	}, nil
 }
 
@@ -484,6 +495,36 @@ func buildDefaultModelNudgeDataPayload(reqCtx *RequestContext) (map[string]any, 
 		"modelsWithNoDefaultSwitch": collectModelAdapterRefs(adapters),
 		"nudgeDate":                 "0",
 	}, nil
+}
+
+func buildUsableModelsPayload(reqCtx *RequestContext) (map[string]any, error) {
+	adapters, err := loadConfiguredModelAdapters(reqCtx)
+	if err != nil {
+		return nil, err
+	}
+	refs := collectModelAdapterRefs(adapters)
+	models := make([]map[string]any, 0, len(refs))
+	for _, ref := range refs {
+		models = append(models, map[string]any{"modelName": ref})
+	}
+	return map[string]any{"models": models}, nil
+}
+
+func buildDefaultModelForCliPayload(reqCtx *RequestContext) (map[string]any, error) {
+	adapters, err := loadConfiguredModelAdapters(reqCtx)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"model": map[string]any{"modelName": firstModelAdapterRef(adapters)}}, nil
+}
+
+func buildDefaultModelPayload(reqCtx *RequestContext) (map[string]any, error) {
+	adapters, err := loadConfiguredModelAdapters(reqCtx)
+	if err != nil {
+		return nil, err
+	}
+	defaultModel := firstModelAdapterRef(adapters)
+	return map[string]any{"model": defaultModel, "thinkingModel": defaultModel}, nil
 }
 
 func buildBootstrapStatsigPayload(reqCtx *RequestContext) (map[string]any, error) {
@@ -821,6 +862,16 @@ func collectModelAdapterRefs(adapters []legacyruntime.ModelAdapterConfig) []stri
 		output = append(output, channelID)
 	}
 	return output
+}
+
+// firstModelAdapterRef возвращает канал первого адаптера или пустую строку,
+// если ни один адаптер не сконфигурирован.
+func firstModelAdapterRef(adapters []legacyruntime.ModelAdapterConfig) string {
+	refs := collectModelAdapterRefs(adapters)
+	if len(refs) == 0 {
+		return ""
+	}
+	return refs[0]
 }
 
 func resolveBootstrapStatsigAuthID(reqCtx *RequestContext) string {
