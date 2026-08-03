@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"cursor/gen/agentv1"
 	"cursor/gen/aiserverv1"
 	"cursor/internal/logger"
 	"cursor/internal/netproxy"
@@ -433,9 +434,9 @@ func newProtoMessage(typeName string) (proto.Message, error) {
 	case "aiserver.v1.ListMarketplacesResponse":
 		return &aiserverv1.ListMarketplacesResponse{}, nil
 	case "aiserver.v1.GetUsableModelsResponse":
-		return &aiserverv1.GetUsableModelsResponse{}, nil
+		return &agentv1.GetUsableModelsResponse{}, nil
 	case "aiserver.v1.GetDefaultModelForCliResponse":
-		return &aiserverv1.GetDefaultModelForCliResponse{}, nil
+		return &agentv1.GetDefaultModelForCliResponse{}, nil
 	case "aiserver.v1.GetDefaultModelResponse":
 		return &aiserverv1.GetDefaultModelResponse{}, nil
 	case "aiserver.v1.GetGlobalCommandsResponse":

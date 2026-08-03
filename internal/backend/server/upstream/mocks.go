@@ -431,8 +431,8 @@ func buildServerTimePayload(*RequestContext) (map[string]any, error) {
 
 func buildServerConfigPayload(*RequestContext) (map[string]any, error) {
 	return map[string]any{
-		"configVersion": "local_cli_sandbox_defaults_disabled_v2",
-		// "http2Config":              "HTTP2_CONFIG_FORCE_ALL_DISABLED",
+		"configVersion":            "local_cli_sandbox_defaults_disabled_v2",
+		"http2Config":              "HTTP2_CONFIG_FORCE_ALL_DISABLED",
 		"cliSandboxDefaultEnabled": true,
 		"indexingConfig": map[string]any{
 			"defaultUserPathEncryptionKey": localPathEncryptionKey,
@@ -451,6 +451,7 @@ func buildAvailableModelsPayload(reqCtx *RequestContext) (map[string]any, error)
 	if len(modelRefs) > 0 {
 		defaultModel = modelRefs[0]
 	}
+	modelEntries := buildAvailableModelEntries(adapters)
 	return map[string]any{
 		"backgroundComposerModelConfig": map[string]any{
 			"bestOfNDefaultModels": append([]string(nil), modelRefs...),
@@ -470,7 +471,7 @@ func buildAvailableModelsPayload(reqCtx *RequestContext) (map[string]any, error)
 			"defaultModel": defaultModel,
 		},
 		"disableUnusedModelsAfterNHours": availableModelsDisableUnusedHours,
-		"models":                         buildAvailableModelEntries(adapters),
+		"models":                         modelEntries,
 		"planExecutionModelConfig": map[string]any{
 			"defaultModel":   defaultModel,
 			"fallbackModels": append([]string(nil), modelRefs...),
@@ -502,12 +503,7 @@ func buildUsableModelsPayload(reqCtx *RequestContext) (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
-	refs := collectModelAdapterRefs(adapters)
-	models := make([]map[string]any, 0, len(refs))
-	for _, ref := range refs {
-		models = append(models, map[string]any{"modelName": ref})
-	}
-	return map[string]any{"models": models}, nil
+	return map[string]any{"models": buildCLIModelDetails(adapters)}, nil
 }
 
 func buildDefaultModelForCliPayload(reqCtx *RequestContext) (map[string]any, error) {
@@ -515,7 +511,11 @@ func buildDefaultModelForCliPayload(reqCtx *RequestContext) (map[string]any, err
 	if err != nil {
 		return nil, err
 	}
-	return map[string]any{"model": map[string]any{"modelName": firstModelAdapterRef(adapters)}}, nil
+	models := buildCLIModelDetails(adapters)
+	if len(models) == 0 {
+		return map[string]any{"model": map[string]any{}}, nil
+	}
+	return map[string]any{"model": models[0]}, nil
 }
 
 func buildDefaultModelPayload(reqCtx *RequestContext) (map[string]any, error) {
@@ -718,6 +718,25 @@ func buildAvailableModelEntries(adapters []legacyruntime.ModelAdapterConfig) []m
 		})
 	}
 	return output
+}
+
+func buildCLIModelDetails(adapters []legacyruntime.ModelAdapterConfig) []map[string]any {
+	models := make([]map[string]any, 0, len(adapters))
+	for _, adapter := range adapters {
+		channelID := strings.TrimSpace(adapter.ID)
+		if channelID == "" {
+			continue
+		}
+		models = append(models, map[string]any{
+			"modelId":        channelID,
+			"displayModelId": channelID,
+			"apiKeyCredentials": map[string]any{
+				"apiKey":  strings.TrimSpace(adapter.APIKey),
+				"baseUrl": strings.TrimSpace(adapter.BaseURL),
+			},
+		})
+	}
+	return models
 }
 
 func buildThinkingEffortParameterDefinitions(adapterType string) []map[string]any {
