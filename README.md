@@ -20,7 +20,7 @@ https://t.me/cursor_byok
 ## 路线图
 
 [正式版路线图](https://github.com/leookun/cursor-byok/discussions/32)
-[详细使用教程](https://dcne38qm5vlg.feishu.cn/wiki/JeP7wdGnziBXuikNaF5czWbrn8c)
+[详细使用教程](https://docs.leokun.cn)
 
 ## 后续
 
