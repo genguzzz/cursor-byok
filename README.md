@@ -37,13 +37,3 @@ https://t.me/cursor_byok
 
 
 
-
-## Star History
-
-<a href="https://www.star-history.com/?repos=leookun%2Fcursor-byok&type=timeline&legend=top-left">
- <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=leookun/cursor-byok&type=timeline&theme=dark&legend=top-left&sealed_token=P_uOQmhcANUj5cLSuGZe513GEwqsyO6F8te1NR9jbkWCUmrZvDWMa-Fy50pgr2Rb4SZTYVNozuLD4g0SCanZ6_KP0INqks3z_hjcYHQXwTC1mtZ0G8ZiAw" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=leookun/cursor-byok&type=timeline&legend=top-left&sealed_token=P_uOQmhcANUj5cLSuGZe513GEwqsyO6F8te1NR9jbkWCUmrZvDWMa-Fy50pgr2Rb4SZTYVNozuLD4g0SCanZ6_KP0INqks3z_hjcYHQXwTC1mtZ0G8ZiAw" />
-   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=leookun/cursor-byok&type=timeline&legend=top-left&sealed_token=P_uOQmhcANUj5cLSuGZe513GEwqsyO6F8te1NR9jbkWCUmrZvDWMa-Fy50pgr2Rb4SZTYVNozuLD4g0SCanZ6_KP0INqks3z_hjcYHQXwTC1mtZ0G8ZiAw" />
- </picture>
-</a>
