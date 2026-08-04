@@ -134,6 +134,11 @@ func Run(resources EmbeddedResources) error {
 		Assets: application.AssetOptions{
 			Handler: application.AssetFileServerFS(resources.Assets),
 		},
+		Windows: application.WindowsOptions{
+			// VDI 环境（如 VMware Horizon）会阻止 WebView2 创建沙箱受限令牌的renderer 进程，导致主窗口白屏。
+			// --no-sandbox 跳过受限沙箱创建，使渲染进程可以正常启动。
+			AdditionalBrowserArgs: []string{"--no-sandbox"},
+		},
 		Mac: application.MacOptions{
 			ActivationPolicy: application.ActivationPolicyAccessory,
 			ApplicationShouldTerminateAfterLastWindowClosed: false,
