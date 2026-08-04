@@ -506,158 +506,10 @@ func (projector *HistoryProjector) ProjectLegacyCheckpoint(conversation *Convers
 	if structuredState.HasTodos {
 		state.Todos = encodeConversationTodoBytes(structuredState.Todos)
 	}
-	grouped := make(map[int64][]HistoryEntry)
-	order := make([]int64, 0, conversation.NextTurnSeq)
-	for _, entry := range checkpointProjectionEntries(conversation.Entries) {
-		if entry.TurnSeq <= 0 {
-			continue
-		}
-		if _, ok := grouped[entry.TurnSeq]; !ok {
-			order = append(order, entry.TurnSeq)
-		}
-		grouped[entry.TurnSeq] = append(grouped[entry.TurnSeq], entry)
-	}
-
-	for _, turnSeq := range order {
-		entries := grouped[turnSeq]
-		var rawUserMessage []byte
-		var turnRequestID string
-		steps := make([][]byte, 0, len(entries))
-		seenToolCalls := make(map[string]struct{})
-		openToolCalls := make(map[string]struct{})
-		for _, entry := range entries {
-			if turnRequestID == "" {
-				turnRequestID = strings.TrimSpace(entry.RequestID)
-			}
-			switch strings.TrimSpace(entry.Kind) {
-			case "user_message":
-				userMessage := &agentv1.UserMessage{}
-				if err := protojson.Unmarshal(entry.Payload, userMessage); err != nil {
-					return nil, fmt.Errorf("decode checkpoint user_message: %w", err)
-				}
-				payload, err := proto.Marshal(userMessage)
-				if err != nil {
-					return nil, err
-				}
-				rawUserMessage = payload
-			case "assistant_text":
-				var payload assistantTextPayload
-				if err := json.Unmarshal(entry.Payload, &payload); err != nil {
-					return nil, err
-				}
-				if strings.TrimSpace(payload.Text) == "" && strings.TrimSpace(payload.ReasoningContent) != "" && len(openToolCalls) > 0 {
-					continue
-				}
-				if strings.TrimSpace(payload.ReasoningContent) != "" {
-					stepPayload, err := marshalThinkingStep(payload.ReasoningContent)
-					if err != nil {
-						return nil, err
-					}
-					steps = append(steps, stepPayload)
-				}
-				if strings.TrimSpace(payload.Text) == "" {
-					continue
-				}
-				stepPayload, err := proto.Marshal(&agentv1.ConversationStep{
-					Message: &agentv1.ConversationStep_AssistantMessage{
-						AssistantMessage: &agentv1.AssistantMessage{Text: strings.TrimSpace(payload.Text)},
-					},
-				})
-				if err != nil {
-					return nil, err
-				}
-				steps = append(steps, stepPayload)
-			case "tool_call":
-				var payload toolCallEntryPayload
-				if err := json.Unmarshal(entry.Payload, &payload); err != nil {
-					return nil, err
-				}
-				if strings.TrimSpace(payload.ReasoningContent) != "" {
-					stepPayload, err := marshalThinkingStep(payload.ReasoningContent)
-					if err != nil {
-						return nil, err
-					}
-					steps = append(steps, stepPayload)
-				}
-				toolCall := &agentv1.ToolCall{}
-				if err := protojson.Unmarshal(payload.ToolCall, toolCall); err != nil {
-					return nil, err
-				}
-				if !shouldPersistToolResultName(firstNonEmpty(strings.TrimSpace(payload.ToolName), inferToolName(toolCall))) {
-					continue
-				}
-				stepPayload, err := proto.Marshal(&agentv1.ConversationStep{
-					Message: &agentv1.ConversationStep_ToolCall{
-						ToolCall: toolCall,
-					},
-				})
-				if err != nil {
-					return nil, err
-				}
-				steps = append(steps, stepPayload)
-				if toolCallID := strings.TrimSpace(payload.ToolCallID); toolCallID != "" {
-					seenToolCalls[toolCallID] = struct{}{}
-					openToolCalls[toolCallID] = struct{}{}
-				}
-			case "tool_result":
-				var payload toolResultEntryPayload
-				if err := json.Unmarshal(entry.Payload, &payload); err != nil {
-					return nil, err
-				}
-				if toolCallID := strings.TrimSpace(payload.ToolCallID); toolCallID != "" {
-					if _, ok := seenToolCalls[toolCallID]; ok {
-						delete(openToolCalls, toolCallID)
-						continue
-					}
-				}
-				if strings.TrimSpace(payload.ReasoningContent) != "" {
-					stepPayload, err := marshalThinkingStep(payload.ReasoningContent)
-					if err != nil {
-						return nil, err
-					}
-					steps = append(steps, stepPayload)
-				}
-				if len(payload.ToolCall) == 0 {
-					continue
-				}
-				toolCall := &agentv1.ToolCall{}
-				if err := protojson.Unmarshal(payload.ToolCall, toolCall); err != nil {
-					return nil, err
-				}
-				if !shouldPersistToolResultName(firstNonEmpty(strings.TrimSpace(payload.ToolName), inferToolName(toolCall))) {
-					continue
-				}
-				stepPayload, err := proto.Marshal(&agentv1.ConversationStep{
-					Message: &agentv1.ConversationStep_ToolCall{
-						ToolCall: toolCall,
-					},
-				})
-				if err != nil {
-					return nil, err
-				}
-				steps = append(steps, stepPayload)
-			}
-		}
-		if len(rawUserMessage) == 0 && len(steps) == 0 {
-			continue
-		}
-		agentTurn := &agentv1.AgentConversationTurnStructure{
-			UserMessage: rawUserMessage,
-			Steps:       steps,
-		}
-		if turnRequestID != "" {
-			agentTurn.RequestId = &turnRequestID
-		}
-		turnPayload, err := proto.Marshal(&agentv1.ConversationTurnStructure{
-			Turn: &agentv1.ConversationTurnStructure_AgentConversationTurn{
-				AgentConversationTurn: agentTurn,
-			},
-		})
-		if err != nil {
-			return nil, err
-		}
-		state.Turns = append(state.Turns, turnPayload)
-	}
+	// Cursor 3.14 treats ConversationStateStructure.turns as content-addressed
+	// blob IDs. Inline protobuf turns make Fork Chat look up the serialized turn
+	// itself as an ID and fail with "Missing turn blob". Keep model-visible
+	// history in root_prompt_messages_json until checkpoint blob sync is safe.
 	replayMessages, err := projector.ProjectPromptReplay(conversation)
 	if err != nil {
 		return nil, err
@@ -686,14 +538,6 @@ func (projector *HistoryProjector) ProjectLegacyCheckpoint(conversation *Convers
 	}
 	state.RootPromptMessagesJson = rootPromptMessages
 	return state, nil
-}
-
-func marshalThinkingStep(text string) ([]byte, error) {
-	return proto.Marshal(&agentv1.ConversationStep{
-		Message: &agentv1.ConversationStep_ThinkingMessage{
-			ThinkingMessage: &agentv1.ThinkingMessage{Text: text},
-		},
-	})
 }
 
 func conversationTokenDetailsUsedTokens(conversation *ConversationFile) uint32 {
