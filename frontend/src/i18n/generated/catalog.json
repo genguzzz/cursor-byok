@@ -7,7 +7,7 @@
       "refs": [
         {
           "file": "src/state/appState.js",
-          "line": 982,
+          "line": 983,
           "column": 14
         }
       ]
@@ -31,7 +31,7 @@
       "refs": [
         {
           "file": "src/views/ModelEditor.vue",
-          "line": 362,
+          "line": 474,
           "column": 21
         }
       ]
@@ -43,7 +43,7 @@
       "refs": [
         {
           "file": "src/state/appState.js",
-          "line": 448,
+          "line": 449,
           "column": 14
         }
       ]
@@ -67,12 +67,12 @@
       "refs": [
         {
           "file": "src/views/ModelEditor.vue",
-          "line": 406,
+          "line": 569,
           "column": 15
         },
         {
           "file": "src/views/ModelEditor.vue",
-          "line": 434,
+          "line": 597,
           "column": 15
         }
       ]
@@ -108,7 +108,7 @@
       "refs": [
         {
           "file": "src/state/appState.js",
-          "line": 415,
+          "line": 416,
           "column": 14
         }
       ]
@@ -209,7 +209,7 @@
       "refs": [
         {
           "file": "src/views/ModelEditor.vue",
-          "line": 131,
+          "line": 174,
           "column": 24
         }
       ]
@@ -221,7 +221,7 @@
       "refs": [
         {
           "file": "src/state/appState.js",
-          "line": 295,
+          "line": 296,
           "column": 14
         }
       ]
@@ -233,8 +233,25 @@
       "refs": [
         {
           "file": "src/state/appState.js",
-          "line": 959,
+          "line": 960,
           "column": 47
+        }
+      ]
+    },
+    "1afed6a81a2512d2": {
+      "source": "选择模型",
+      "kind": "text",
+      "placeholders": 0,
+      "refs": [
+        {
+          "file": "src/views/ModelEditor.vue",
+          "line": 514,
+          "column": 24
+        },
+        {
+          "file": "src/views/ModelEditor.vue",
+          "line": 530,
+          "column": 15
         }
       ]
     },
@@ -257,7 +274,7 @@
       "refs": [
         {
           "file": "src/views/ModelEditor.vue",
-          "line": 100,
+          "line": 142,
           "column": 67
         }
       ]
@@ -303,12 +320,12 @@
         },
         {
           "file": "src/state/appState.js",
-          "line": 321,
+          "line": 322,
           "column": 36
         },
         {
           "file": "src/views/ModelEditor.vue",
-          "line": 455,
+          "line": 618,
           "column": 21
         }
       ]
@@ -359,7 +376,7 @@
       "refs": [
         {
           "file": "src/state/appState.js",
-          "line": 950,
+          "line": 951,
           "column": 12
         }
       ]
@@ -371,7 +388,7 @@
       "refs": [
         {
           "file": "src/state/appState.js",
-          "line": 457,
+          "line": 458,
           "column": 14
         }
       ]
@@ -396,6 +413,18 @@
         {
           "file": "src/layouts/MainLayout.vue",
           "line": 35,
+          "column": 24
+        }
+      ]
+    },
+    "2c18d5e2d70b45db": {
+      "source": "模型前缀",
+      "kind": "text",
+      "placeholders": 0,
+      "refs": [
+        {
+          "file": "src/views/ModelEditor.vue",
+          "line": 501,
           "column": 24
         }
       ]
@@ -437,12 +466,12 @@
         },
         {
           "file": "src/state/appState.js",
-          "line": 1024,
+          "line": 1025,
           "column": 12
         },
         {
           "file": "src/views/ModelEditor.vue",
-          "line": 286,
+          "line": 438,
           "column": 57
         }
       ]
@@ -478,7 +507,7 @@
       "refs": [
         {
           "file": "src/views/ModelEditor.vue",
-          "line": 531,
+          "line": 694,
           "column": 13
         }
       ]
@@ -490,17 +519,17 @@
       "refs": [
         {
           "file": "src/state/appState.js",
-          "line": 429,
+          "line": 430,
           "column": 16
         },
         {
           "file": "src/state/appState.js",
-          "line": 435,
+          "line": 436,
           "column": 16
         },
         {
           "file": "src/state/appState.js",
-          "line": 441,
+          "line": 442,
           "column": 16
         }
       ]
@@ -596,7 +625,7 @@
       "refs": [
         {
           "file": "src/state/appState.js",
-          "line": 1016,
+          "line": 1017,
           "column": 14
         }
       ]
@@ -618,12 +647,12 @@
         },
         {
           "file": "src/views/ModelEditor.vue",
-          "line": 40,
+          "line": 44,
           "column": 12
         },
         {
           "file": "src/views/ModelEditor.vue",
-          "line": 48,
+          "line": 52,
           "column": 12
         }
       ]
@@ -637,6 +666,18 @@
           "file": "src/components/charts/CacheHitRateChart.vue",
           "line": 76,
           "column": 12
+        }
+      ]
+    },
+    "3a5040b68abf75f9": {
+      "source": "全选",
+      "kind": "text",
+      "placeholders": 0,
+      "refs": [
+        {
+          "file": "src/components/ui/MultiSelect.vue",
+          "line": 326,
+          "column": 37
         }
       ]
     },
@@ -674,6 +715,18 @@
         }
       ]
     },
+    "3b2e5f2fba1bcbc7": {
+      "source": "请输入接口地址和访问密钥",
+      "kind": "text",
+      "placeholders": 0,
+      "refs": [
+        {
+          "file": "src/views/ModelEditor.vue",
+          "line": 528,
+          "column": 29
+        }
+      ]
+    },
     "3c2a9f9901109e75": {
       "source": "{0} 的类型仅支持 OpenAI 或 Anthropic",
       "kind": "template",
@@ -681,7 +734,7 @@
       "refs": [
         {
           "file": "src/state/appState.js",
-          "line": 406,
+          "line": 407,
           "column": 14
         }
       ]
@@ -727,7 +780,7 @@
       "refs": [
         {
           "file": "src/state/appState.js",
-          "line": 980,
+          "line": 981,
           "column": 5
         }
       ]
@@ -799,7 +852,7 @@
       "refs": [
         {
           "file": "src/views/ModelEditor.vue",
-          "line": 81,
+          "line": 93,
           "column": 65
         }
       ]
@@ -823,7 +876,7 @@
       "refs": [
         {
           "file": "src/state/appState.js",
-          "line": 418,
+          "line": 419,
           "column": 14
         }
       ]
@@ -871,7 +924,7 @@
       "refs": [
         {
           "file": "src/state/appState.js",
-          "line": 114,
+          "line": 115,
           "column": 12
         }
       ]
@@ -907,7 +960,7 @@
       "refs": [
         {
           "file": "src/views/ModelEditor.vue",
-          "line": 138,
+          "line": 181,
           "column": 23
         }
       ]
@@ -919,12 +972,12 @@
       "refs": [
         {
           "file": "src/views/ModelEditor.vue",
-          "line": 400,
+          "line": 563,
           "column": 21
         },
         {
           "file": "src/views/ModelEditor.vue",
-          "line": 428,
+          "line": 591,
           "column": 21
         }
       ]
@@ -965,8 +1018,20 @@
       "refs": [
         {
           "file": "src/state/appState.js",
-          "line": 298,
+          "line": 299,
           "column": 12
+        }
+      ]
+    },
+    "5a5c8318ef649672": {
+      "source": "已选择 {0} 项",
+      "kind": "template",
+      "placeholders": 1,
+      "refs": [
+        {
+          "file": "src/components/ui/MultiSelect.vue",
+          "line": 57,
+          "column": 10
         }
       ]
     },
@@ -989,7 +1054,7 @@
       "refs": [
         {
           "file": "src/views/ModelEditor.vue",
-          "line": 133,
+          "line": 176,
           "column": 24
         }
       ]
@@ -1071,7 +1136,7 @@
       "refs": [
         {
           "file": "src/state/appState.js",
-          "line": 401,
+          "line": 402,
           "column": 20
         }
       ]
@@ -1095,7 +1160,7 @@
       "refs": [
         {
           "file": "src/state/appState.js",
-          "line": 314,
+          "line": 315,
           "column": 14
         }
       ]
@@ -1119,7 +1184,7 @@
       "refs": [
         {
           "file": "src/state/appState.js",
-          "line": 948,
+          "line": 949,
           "column": 14
         }
       ]
@@ -1131,7 +1196,7 @@
       "refs": [
         {
           "file": "src/state/appState.js",
-          "line": 412,
+          "line": 413,
           "column": 14
         }
       ]
@@ -1160,7 +1225,7 @@
         },
         {
           "file": "src/views/ModelEditor.vue",
-          "line": 97,
+          "line": 139,
           "column": 54
         }
       ]
@@ -1184,7 +1249,7 @@
       "refs": [
         {
           "file": "src/views/ModelEditor.vue",
-          "line": 354,
+          "line": 493,
           "column": 15
         }
       ]
@@ -1223,7 +1288,7 @@
         },
         {
           "file": "src/state/appState.js",
-          "line": 23,
+          "line": 24,
           "column": 31
         },
         {
@@ -1347,6 +1412,18 @@
         }
       ]
     },
+    "75b5f4c68c79322c": {
+      "source": "请先选择要保存的模型",
+      "kind": "text",
+      "placeholders": 0,
+      "refs": [
+        {
+          "file": "src/views/ModelEditor.vue",
+          "line": 270,
+          "column": 58
+        }
+      ]
+    },
     "774d6e1b7cb89751": {
       "source": "默认口径",
       "kind": "text",
@@ -1371,13 +1448,25 @@
         },
         {
           "file": "src/views/ModelEditor.vue",
-          "line": 537,
+          "line": 700,
           "column": 20
         },
         {
           "file": "src/views/ModelEditor.vue",
-          "line": 537,
+          "line": 700,
           "column": 20
+        }
+      ]
+    },
+    "7923d007483ae04c": {
+      "source": "没有可保存的模型",
+      "kind": "text",
+      "placeholders": 0,
+      "refs": [
+        {
+          "file": "src/state/appState.js",
+          "line": 1195,
+          "column": 32
         }
       ]
     },
@@ -1388,7 +1477,7 @@
       "refs": [
         {
           "file": "src/views/ModelEditor.vue",
-          "line": 127,
+          "line": 169,
           "column": 16
         }
       ]
@@ -1405,7 +1494,7 @@
         },
         {
           "file": "src/state/appState.js",
-          "line": 200,
+          "line": 201,
           "column": 12
         },
         {
@@ -1415,7 +1504,7 @@
         },
         {
           "file": "src/views/ModelEditor.vue",
-          "line": 288,
+          "line": 440,
           "column": 14
         }
       ]
@@ -1468,7 +1557,7 @@
         },
         {
           "file": "src/state/appState.js",
-          "line": 1001,
+          "line": 1002,
           "column": 16
         }
       ]
@@ -1492,7 +1581,7 @@
       "refs": [
         {
           "file": "src/views/ModelEditor.vue",
-          "line": 348,
+          "line": 487,
           "column": 21
         }
       ]
@@ -1504,8 +1593,20 @@
       "refs": [
         {
           "file": "src/views/ModelEditor.vue",
-          "line": 136,
+          "line": 179,
           "column": 18
+        }
+      ]
+    },
+    "826c0e5a4407befa": {
+      "source": "可多选。保存时只会写入选中的模型，每个模型生成一条配置。",
+      "kind": "text",
+      "placeholders": 0,
+      "refs": [
+        {
+          "file": "src/views/ModelEditor.vue",
+          "line": 170,
+          "column": 12
         }
       ]
     },
@@ -1533,7 +1634,7 @@
         },
         {
           "file": "src/views/ModelEditor.vue",
-          "line": 41,
+          "line": 45,
           "column": 12
         }
       ]
@@ -1545,8 +1646,20 @@
       "refs": [
         {
           "file": "src/state/appState.js",
-          "line": 945,
+          "line": 946,
           "column": 14
+        }
+      ]
+    },
+    "891bfee3bbe52d3c": {
+      "source": "请填写模型标识",
+      "kind": "text",
+      "placeholders": 0,
+      "refs": [
+        {
+          "file": "src/views/ModelEditor.vue",
+          "line": 270,
+          "column": 46
         }
       ]
     },
@@ -1625,18 +1738,6 @@
         }
       ]
     },
-    "8e2dc7b0d2e8f6f8": {
-      "source": "例如：OpenAI - GPT-4.1",
-      "kind": "text",
-      "placeholders": 0,
-      "refs": [
-        {
-          "file": "src/views/ModelEditor.vue",
-          "line": 327,
-          "column": 15
-        }
-      ]
-    },
     "8f6f8d979c981ced": {
       "source": "已复制",
       "kind": "text",
@@ -1680,7 +1781,7 @@
       "refs": [
         {
           "file": "src/state/appState.js",
-          "line": 424,
+          "line": 425,
           "column": 14
         }
       ]
@@ -1697,7 +1798,7 @@
         },
         {
           "file": "src/views/ModelEditor.vue",
-          "line": 291,
+          "line": 443,
           "column": 14
         }
       ]
@@ -1733,8 +1834,8 @@
       "refs": [
         {
           "file": "src/views/ModelEditor.vue",
-          "line": 128,
-          "column": 12
+          "line": 171,
+          "column": 18
         }
       ]
     },
@@ -1745,8 +1846,8 @@
       "refs": [
         {
           "file": "src/views/ModelEditor.vue",
-          "line": 335,
-          "column": 21
+          "line": 514,
+          "column": 24
         }
       ]
     },
@@ -1805,12 +1906,12 @@
       "refs": [
         {
           "file": "src/state/appState.js",
-          "line": 1256,
+          "line": 1351,
           "column": 32
         },
         {
           "file": "src/state/appState.js",
-          "line": 1277,
+          "line": 1372,
           "column": 32
         }
       ]
@@ -1822,7 +1923,7 @@
       "refs": [
         {
           "file": "src/views/ModelEditor.vue",
-          "line": 129,
+          "line": 172,
           "column": 12
         }
       ]
@@ -1858,7 +1959,7 @@
       "refs": [
         {
           "file": "src/views/ModelEditor.vue",
-          "line": 414,
+          "line": 577,
           "column": 21
         }
       ]
@@ -1870,7 +1971,7 @@
       "refs": [
         {
           "file": "src/state/appState.js",
-          "line": 1022,
+          "line": 1023,
           "column": 14
         }
       ]
@@ -1894,7 +1995,7 @@
       "refs": [
         {
           "file": "src/views/ModelEditor.vue",
-          "line": 297,
+          "line": 449,
           "column": 1
         }
       ]
@@ -1906,7 +2007,7 @@
       "refs": [
         {
           "file": "src/state/appState.js",
-          "line": 461,
+          "line": 462,
           "column": 14
         }
       ]
@@ -1930,7 +2031,7 @@
       "refs": [
         {
           "file": "src/state/appState.js",
-          "line": 445,
+          "line": 446,
           "column": 14
         }
       ]
@@ -1942,12 +2043,12 @@
       "refs": [
         {
           "file": "src/state/appState.js",
-          "line": 968,
+          "line": 969,
           "column": 12
         },
         {
           "file": "src/state/appState.js",
-          "line": 1011,
+          "line": 1012,
           "column": 87
         }
       ]
@@ -1964,7 +2065,7 @@
         },
         {
           "file": "src/views/ModelEditor.vue",
-          "line": 291,
+          "line": 443,
           "column": 14
         }
       ]
@@ -1976,7 +2077,7 @@
       "refs": [
         {
           "file": "src/state/appState.js",
-          "line": 1201,
+          "line": 1296,
           "column": 14
         },
         {
@@ -2005,7 +2106,7 @@
       "refs": [
         {
           "file": "src/views/ModelEditor.vue",
-          "line": 137,
+          "line": 180,
           "column": 25
         }
       ]
@@ -2027,12 +2128,12 @@
         },
         {
           "file": "src/views/ModelEditor.vue",
-          "line": 38,
+          "line": 42,
           "column": 12
         },
         {
           "file": "src/views/ModelEditor.vue",
-          "line": 46,
+          "line": 50,
           "column": 12
         }
       ]
@@ -2044,7 +2145,7 @@
       "refs": [
         {
           "file": "src/views/ModelEditor.vue",
-          "line": 130,
+          "line": 173,
           "column": 11
         }
       ]
@@ -2056,7 +2157,7 @@
       "refs": [
         {
           "file": "src/views/ModelEditor.vue",
-          "line": 288,
+          "line": 440,
           "column": 14
         }
       ]
@@ -2073,8 +2174,8 @@
         },
         {
           "file": "src/views/ModelEditor.vue",
-          "line": 322,
-          "column": 21
+          "line": 501,
+          "column": 24
         }
       ]
     },
@@ -2095,12 +2196,12 @@
         },
         {
           "file": "src/views/ModelEditor.vue",
-          "line": 37,
+          "line": 41,
           "column": 12
         },
         {
           "file": "src/views/ModelEditor.vue",
-          "line": 45,
+          "line": 49,
           "column": 12
         }
       ]
@@ -2124,7 +2225,7 @@
       "refs": [
         {
           "file": "src/state/appState.js",
-          "line": 997,
+          "line": 998,
           "column": 16
         }
       ]
@@ -2194,12 +2295,12 @@
         },
         {
           "file": "src/views/ModelEditor.vue",
-          "line": 39,
+          "line": 43,
           "column": 12
         },
         {
           "file": "src/views/ModelEditor.vue",
-          "line": 47,
+          "line": 51,
           "column": 12
         }
       ]
@@ -2211,7 +2312,7 @@
       "refs": [
         {
           "file": "src/views/ModelEditor.vue",
-          "line": 55,
+          "line": 59,
           "column": 12
         }
       ]
@@ -2235,7 +2336,7 @@
       "refs": [
         {
           "file": "src/views/ModelEditor.vue",
-          "line": 340,
+          "line": 520,
           "column": 15
         }
       ]
@@ -2247,8 +2348,20 @@
       "refs": [
         {
           "file": "src/views/ModelEditor.vue",
-          "line": 134,
+          "line": 177,
           "column": 19
+        }
+      ]
+    },
+    "b7ceef2fbfeb4a85": {
+      "source": "例如：GPT-5",
+      "kind": "text",
+      "placeholders": 0,
+      "refs": [
+        {
+          "file": "src/views/ModelEditor.vue",
+          "line": 506,
+          "column": 15
         }
       ]
     },
@@ -2259,7 +2372,7 @@
       "refs": [
         {
           "file": "src/views/ModelEditor.vue",
-          "line": 442,
+          "line": 605,
           "column": 21
         }
       ]
@@ -2307,7 +2420,7 @@
       "refs": [
         {
           "file": "src/views/ModelEditor.vue",
-          "line": 375,
+          "line": 538,
           "column": 21
         }
       ]
@@ -2396,7 +2509,7 @@
       "refs": [
         {
           "file": "src/views/ModelEditor.vue",
-          "line": 139,
+          "line": 182,
           "column": 28
         }
       ]
@@ -2410,6 +2523,18 @@
           "file": "src/views/Home.vue",
           "line": 182,
           "column": 63
+        }
+      ]
+    },
+    "c72d5dc20cd27118": {
+      "source": "已选择 {0} / {1} 个模型",
+      "kind": "template",
+      "placeholders": 2,
+      "refs": [
+        {
+          "file": "src/views/ModelEditor.vue",
+          "line": 529,
+          "column": 35
         }
       ]
     },
@@ -2432,7 +2557,7 @@
       "refs": [
         {
           "file": "src/views/ModelEditor.vue",
-          "line": 389,
+          "line": 552,
           "column": 21
         }
       ]
@@ -2444,18 +2569,28 @@
       "refs": [
         {
           "file": "src/state/appState.js",
-          "line": 1172,
+          "line": 1155,
+          "column": 48
+        },
+        {
+          "file": "src/state/appState.js",
+          "line": 1267,
           "column": 28
         },
         {
           "file": "src/state/appState.js",
-          "line": 1174,
+          "line": 1269,
           "column": 38
         },
         {
           "file": "src/state/appState.js",
-          "line": 1209,
+          "line": 1304,
           "column": 93
+        },
+        {
+          "file": "src/views/ModelEditor.vue",
+          "line": 281,
+          "column": 40
         }
       ]
     },
@@ -2478,7 +2613,7 @@
       "refs": [
         {
           "file": "src/state/appState.js",
-          "line": 957,
+          "line": 958,
           "column": 51
         }
       ]
@@ -2502,7 +2637,7 @@
       "refs": [
         {
           "file": "src/state/appState.js",
-          "line": 290,
+          "line": 291,
           "column": 12
         }
       ]
@@ -2550,7 +2685,7 @@
       "refs": [
         {
           "file": "src/state/appState.js",
-          "line": 403,
+          "line": 404,
           "column": 14
         }
       ]
@@ -2562,7 +2697,7 @@
       "refs": [
         {
           "file": "src/views/ModelEditor.vue",
-          "line": 100,
+          "line": 142,
           "column": 56
         }
       ]
@@ -2574,7 +2709,7 @@
       "refs": [
         {
           "file": "src/state/appState.js",
-          "line": 1153,
+          "line": 1248,
           "column": 14
         },
         {
@@ -2603,12 +2738,12 @@
       "refs": [
         {
           "file": "src/state/appState.js",
-          "line": 203,
+          "line": 204,
           "column": 38
         },
         {
           "file": "src/state/appState.js",
-          "line": 233,
+          "line": 234,
           "column": 50
         }
       ]
@@ -2620,12 +2755,12 @@
       "refs": [
         {
           "file": "src/state/appState.js",
-          "line": 304,
+          "line": 305,
           "column": 49
         },
         {
           "file": "src/views/ModelEditor.vue",
-          "line": 503,
+          "line": 666,
           "column": 21
         }
       ]
@@ -2649,12 +2784,12 @@
       "refs": [
         {
           "file": "src/state/appState.js",
-          "line": 325,
+          "line": 326,
           "column": 36
         },
         {
           "file": "src/views/ModelEditor.vue",
-          "line": 479,
+          "line": 642,
           "column": 21
         }
       ]
@@ -2666,7 +2801,7 @@
       "refs": [
         {
           "file": "src/views/ModelEditor.vue",
-          "line": 381,
+          "line": 544,
           "column": 15
         }
       ]
@@ -2694,6 +2829,11 @@
       "placeholders": 0,
       "refs": [
         {
+          "file": "src/components/ui/MultiSelect.vue",
+          "line": 14,
+          "column": 41
+        },
+        {
           "file": "src/components/ui/Select.vue",
           "line": 11,
           "column": 41
@@ -2707,12 +2847,17 @@
       "refs": [
         {
           "file": "src/state/appState.js",
-          "line": 254,
+          "line": 255,
           "column": 18
         },
         {
+          "file": "src/state/appState.js",
+          "line": 1176,
+          "column": 40
+        },
+        {
           "file": "src/views/ModelEditor.vue",
-          "line": 526,
+          "line": 689,
           "column": 19
         }
       ]
@@ -2724,7 +2869,7 @@
       "refs": [
         {
           "file": "src/state/appState.js",
-          "line": 421,
+          "line": 422,
           "column": 14
         }
       ]
@@ -2736,7 +2881,7 @@
       "refs": [
         {
           "file": "src/state/appState.js",
-          "line": 409,
+          "line": 410,
           "column": 14
         }
       ]
@@ -2748,7 +2893,7 @@
       "refs": [
         {
           "file": "src/state/appState.js",
-          "line": 979,
+          "line": 980,
           "column": 5
         }
       ]
@@ -2772,7 +2917,7 @@
       "refs": [
         {
           "file": "src/views/ModelEditor.vue",
-          "line": 135,
+          "line": 178,
           "column": 22
         }
       ]
@@ -2854,6 +2999,18 @@
         }
       ]
     },
+    "e6943d5cbfb863e0": {
+      "source": "正在获取模型...",
+      "kind": "text",
+      "placeholders": 0,
+      "refs": [
+        {
+          "file": "src/views/ModelEditor.vue",
+          "line": 528,
+          "column": 29
+        }
+      ]
+    },
     "e6faccfddce722e8": {
       "source": "缓存读取：{0}",
       "kind": "template",
@@ -2885,7 +3042,7 @@
       "refs": [
         {
           "file": "src/views/ModelEditor.vue",
-          "line": 81,
+          "line": 93,
           "column": 32
         }
       ]
@@ -2909,7 +3066,7 @@
       "refs": [
         {
           "file": "src/state/appState.js",
-          "line": 209,
+          "line": 210,
           "column": 10
         }
       ]
@@ -2921,7 +3078,7 @@
       "refs": [
         {
           "file": "src/state/appState.js",
-          "line": 999,
+          "line": 1000,
           "column": 16
         }
       ]
@@ -2945,7 +3102,7 @@
       "refs": [
         {
           "file": "src/views/ModelEditor.vue",
-          "line": 140,
+          "line": 183,
           "column": 16
         }
       ]
@@ -2957,7 +3114,7 @@
       "refs": [
         {
           "file": "src/views/ModelEditor.vue",
-          "line": 132,
+          "line": 175,
           "column": 20
         }
       ]
@@ -2981,7 +3138,7 @@
       "refs": [
         {
           "file": "src/state/appState.js",
-          "line": 311,
+          "line": 312,
           "column": 14
         }
       ]
@@ -2993,8 +3150,20 @@
       "refs": [
         {
           "file": "src/state/appState.js",
-          "line": 959,
+          "line": 960,
           "column": 38
+        }
+      ]
+    },
+    "f4d4bae588c4c0ff": {
+      "source": "取消全选",
+      "kind": "text",
+      "placeholders": 0,
+      "refs": [
+        {
+          "file": "src/components/ui/MultiSelect.vue",
+          "line": 326,
+          "column": 37
         }
       ]
     },
@@ -3010,17 +3179,17 @@
         },
         {
           "file": "src/views/ModelEditor.vue",
-          "line": 463,
+          "line": 626,
           "column": 21
         },
         {
           "file": "src/views/ModelEditor.vue",
-          "line": 487,
+          "line": 650,
           "column": 21
         },
         {
           "file": "src/views/ModelEditor.vue",
-          "line": 511,
+          "line": 674,
           "column": 21
         }
       ]
@@ -3074,12 +3243,12 @@
       "refs": [
         {
           "file": "src/state/appState.js",
-          "line": 451,
+          "line": 452,
           "column": 14
         },
         {
           "file": "src/state/appState.js",
-          "line": 454,
+          "line": 455,
           "column": 14
         }
       ]
@@ -3128,7 +3297,7 @@
         },
         {
           "file": "src/state/appState.js",
-          "line": 1018,
+          "line": 1019,
           "column": 12
         }
       ]
@@ -3140,7 +3309,7 @@
       "refs": [
         {
           "file": "src/state/appState.js",
-          "line": 957,
+          "line": 958,
           "column": 40
         }
       ]
