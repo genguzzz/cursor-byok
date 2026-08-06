@@ -76,36 +76,42 @@ func (broker *StreamBroker) OpenStream(requestID string, conversationID string, 
 		if existing.BackgroundShellActions == nil {
 			existing.BackgroundShellActions = make(map[string]time.Time)
 		}
+		if existing.PendingCheckpointBlobWrites == nil {
+			existing.PendingCheckpointBlobWrites = make(map[uint32]string)
+		}
+		if existing.ConfirmedCheckpointBlobs == nil {
+			existing.ConfirmedCheckpointBlobs = make(map[string]struct{})
+		}
 		existing.UpdatedAt = time.Now().UTC()
 		existing.mu.Unlock()
 		return existing, nil
 	}
 	now := time.Now().UTC()
 	stream := &ActiveStream{
-		RequestID:                     normalizedRequestID,
-		ConversationID:                strings.TrimSpace(conversationID),
-		TurnSeq:                       turnSeq,
-		ModelID:                       strings.TrimSpace(modelID),
-		ModelName:                     strings.TrimSpace(modelName),
-		Mode:                          normalizedMode,
-		LatestUserText:                strings.TrimSpace(latestUserText),
-		Status:                        StreamStatusCreated,
-		Backlog:                       make([]StreamEvent, 0, 64),
-		Subscribers:                   make(map[string]*StreamSubscriber),
-		PendingExecs:                  make(map[string]runtimecore.PendingExec),
-		PendingInteractions:           make(map[string]runtimecore.PendingInteraction),
-		PartialToolCallIDs:            make(map[string]struct{}),
-		PatchEditQueues:               make(map[string][]queuedPatchEditOperation),
-		MCPToolServers:                make(map[string]string),
-		RecentCompletedExecs:          make(map[uint32]time.Time),
-		BackgroundShells:              make(map[string]*BackgroundShellState),
-		BackgroundShellsByMessageID:   make(map[uint32]string),
-		BackgroundShellsByExecID:      make(map[string]string),
-		BackgroundShellActions:        make(map[string]time.Time),
-		PendingCheckpointBlobWrites:   make(map[uint32]pendingCheckpointBlobWrite),
-		PendingCheckpointBlobRequests: make(map[string]uint32),
-		CreatedAt:                     now,
-		UpdatedAt:                     now,
+		RequestID:                   normalizedRequestID,
+		ConversationID:              strings.TrimSpace(conversationID),
+		TurnSeq:                     turnSeq,
+		ModelID:                     strings.TrimSpace(modelID),
+		ModelName:                   strings.TrimSpace(modelName),
+		Mode:                        normalizedMode,
+		LatestUserText:              strings.TrimSpace(latestUserText),
+		Status:                      StreamStatusCreated,
+		Backlog:                     make([]StreamEvent, 0, 64),
+		Subscribers:                 make(map[string]*StreamSubscriber),
+		PendingExecs:                make(map[string]runtimecore.PendingExec),
+		PendingInteractions:         make(map[string]runtimecore.PendingInteraction),
+		PartialToolCallIDs:          make(map[string]struct{}),
+		PatchEditQueues:             make(map[string][]queuedPatchEditOperation),
+		MCPToolServers:              make(map[string]string),
+		RecentCompletedExecs:        make(map[uint32]time.Time),
+		BackgroundShells:            make(map[string]*BackgroundShellState),
+		BackgroundShellsByMessageID: make(map[uint32]string),
+		BackgroundShellsByExecID:    make(map[string]string),
+		BackgroundShellActions:      make(map[string]time.Time),
+		PendingCheckpointBlobWrites: make(map[uint32]string),
+		ConfirmedCheckpointBlobs:    make(map[string]struct{}),
+		CreatedAt:                   now,
+		UpdatedAt:                   now,
 	}
 	broker.streams[normalizedRequestID] = stream
 	return stream, nil

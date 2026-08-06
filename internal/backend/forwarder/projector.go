@@ -566,7 +566,7 @@ func (projector *HistoryProjector) ProjectCheckpointProjection(conversation *Con
 	if err != nil {
 		return nil, err
 	}
-	state.Turns = append(cloneByteSlices(conversation.ImportedTurnIDs), turnIDs...)
+	state.Turns = turnIDs
 	replayMessages, err := projector.ProjectPromptReplay(conversation)
 	if err != nil {
 		return nil, err
@@ -1218,6 +1218,60 @@ func shouldPersistToolResultName(toolName string) bool {
 	}
 }
 
+func filterCheckpointTurns(rawTurns [][]byte) [][]byte {
+	if len(rawTurns) == 0 {
+		return nil
+	}
+	filtered := make([][]byte, 0, len(rawTurns))
+	for _, rawTurn := range rawTurns {
+		if len(rawTurn) == 0 {
+			continue
+		}
+		turn := &agentv1.ConversationTurnStructure{}
+		if err := proto.Unmarshal(rawTurn, turn); err != nil {
+			filtered = append(filtered, append([]byte(nil), rawTurn...))
+			continue
+		}
+		agentTurn := turn.GetAgentConversationTurn()
+		if agentTurn == nil {
+			filtered = append(filtered, append([]byte(nil), rawTurn...))
+			continue
+		}
+
+		nextSteps := make([][]byte, 0, len(agentTurn.GetSteps()))
+		for _, rawStep := range agentTurn.GetSteps() {
+			if len(rawStep) == 0 {
+				continue
+			}
+			step := &agentv1.ConversationStep{}
+			if err := proto.Unmarshal(rawStep, step); err != nil {
+				continue
+			}
+			if toolCall := step.GetToolCall(); toolCall != nil && !shouldPersistToolResultName(inferToolName(toolCall)) {
+				continue
+			}
+			nextSteps = append(nextSteps, append([]byte(nil), rawStep...))
+		}
+		if len(agentTurn.GetUserMessage()) == 0 && len(nextSteps) == 0 {
+			continue
+		}
+		encoded, err := proto.Marshal(&agentv1.ConversationTurnStructure{
+			Turn: &agentv1.ConversationTurnStructure_AgentConversationTurn{
+				AgentConversationTurn: &agentv1.AgentConversationTurnStructure{
+					UserMessage: append([]byte(nil), agentTurn.GetUserMessage()...),
+					Steps:       nextSteps,
+				},
+			},
+		})
+		if err != nil {
+			filtered = append(filtered, append([]byte(nil), rawTurn...))
+			continue
+		}
+		filtered = append(filtered, encoded)
+	}
+	return filtered
+}
+
 func filterCheckpointPersistentToolReplay(messages []promptengine.Message) []promptengine.Message {
 	if len(messages) == 0 {
 		return nil
@@ -1254,7 +1308,7 @@ func filterCheckpointPersistentToolReplay(messages []promptengine.Message) []pro
 	return filtered
 }
 
-func restoreImportedReplayUserMessages(messages []promptengine.Message, importedTurns [][]byte, blobs importedBlobStore) []promptengine.Message {
+func restoreImportedReplayUserMessages(messages []promptengine.Message, importedTurns [][]byte) []promptengine.Message {
 	if len(messages) == 0 || len(importedTurns) == 0 {
 		return messages
 	}
@@ -1263,16 +1317,16 @@ func restoreImportedReplayUserMessages(messages []promptengine.Message, imported
 		if len(rawTurn) == 0 {
 			continue
 		}
-		turn, _, err := decodeImportedTurn(rawTurn, blobs)
-		if err != nil || turn == nil {
+		turn := &agentv1.ConversationTurnStructure{}
+		if err := proto.Unmarshal(rawTurn, turn); err != nil {
 			continue
 		}
 		agentTurn := turn.GetAgentConversationTurn()
 		if agentTurn == nil || len(agentTurn.GetUserMessage()) == 0 {
 			continue
 		}
-		userMessage, err := decodeImportedUserMessage(agentTurn.GetUserMessage(), blobs)
-		if err != nil {
+		userMessage := &agentv1.UserMessage{}
+		if err := proto.Unmarshal(agentTurn.GetUserMessage(), userMessage); err != nil {
 			continue
 		}
 		replay, ok := promptengine.BuildUserMessageReplayMessage(userMessage)
