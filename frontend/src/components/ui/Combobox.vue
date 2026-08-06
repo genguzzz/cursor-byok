@@ -295,10 +295,10 @@ onBeforeUnmount(() => {
         ref="menuRef"
         :id="listboxID"
         role="listbox"
-        class="fixed z-[999] overflow-hidden rounded-[8px] border border-[#3f3f3f] bg-[#232323] p-1 shadow-[0_16px_30px_-12px_rgba(0,0,0,0.7)]"
+        class="fixed z-[999] overflow-y-auto rounded-[8px] border border-[#3f3f3f] bg-[#232323] p-1 shadow-[0_16px_30px_-12px_rgba(0,0,0,0.7)]"
         :style="menuStyle"
       >
-        <ul v-show="filteredOptions.length" role="presentation" class="overflow-y-auto py-1">
+        <ul v-show="filteredOptions.length" role="presentation" class="py-1">
           <li
             v-for="option in normalizedOptions"
             v-show="filteredOptions.includes(option)"
