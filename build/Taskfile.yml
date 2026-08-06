@@ -13,8 +13,8 @@ tasks:
     preconditions:
       - sh: 'test -z "{{.PROTO_INPUT}}" || test -f "{{.PROTO_INPUT}}"'
         msg: "PROTO_INPUT 指向的 Cursor 扩展 bundle 不存在。"
-      - sh: 'test -n "{{.PROTO_INPUT}}" || test -f ./proto/extensions-cursor-app/cursor-always-local/dist/main.js || test -f /Applications/Cursor.app/Contents/Resources/app/extensions/cursor-always-local/dist/main.js'
-        msg: "未找到 Cursor 扩展 bundle；请传入 PROTO_INPUT=/path/to/cursor-always-local/dist/main.js。"
+      - sh: 'test -n "{{.PROTO_INPUT}}" || test -f /Applications/Cursor.app/Contents/Resources/app/extensions/cursor-always-local/dist/main.js'
+        msg: "未找到已安装 Cursor 的扩展 bundle；请传入 PROTO_INPUT=/path/to/cursor-always-local/dist/main.js。"
     cmds:
       - chmod +x ./proto/extract_extensions_proto.sh
       - '{{if .PROTO_INPUT}}./proto/extract_extensions_proto.sh "{{.PROTO_INPUT}}"{{else}}./proto/extract_extensions_proto.sh{{end}}'
