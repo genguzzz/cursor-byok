@@ -3,6 +3,8 @@ package forwarder
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -834,14 +836,22 @@ func (service *Service) handleCancelIntent(intent InboundIntent) error {
 	}
 	hasCheckpoint := checkpointConversationInitialized(stream)
 	if hasCheckpoint {
+		preservedInterruptedOutput, err := service.persistInterruptedProviderOutput(stream)
+		if err != nil {
+			return err
+		}
 		cancelReason := firstNonEmpty(intent.CancelReason, "user aborted")
-		_, err := service.appendConversationEntries(stream, stream.ConversationID, []HistoryEntry{
-			newMetadataEntry(stream.TurnSeq, intent.RequestID, "control", map[string]any{
-				"status":        "canceled",
-				"reason":        cancelReason,
-				"replay_policy": cancelReplayPolicyForReason(cancelReason),
-			}),
+		replayPolicy := cancelReplayPolicyForReason(cancelReason)
+		if preservedInterruptedOutput || checkpointTurnHasReplayActivity(stream) {
+			replayPolicy = cancelReplayPolicyKeepInterrupted
+		}
+		cancelEntry := newMetadataEntry(stream.TurnSeq, intent.RequestID, "control", map[string]any{
+			"status":        "canceled",
+			"reason":        cancelReason,
+			"replay_policy": replayPolicy,
 		})
+		cancelEntry.IdempotencyKey = cancelMetadataIdempotencyKey(stream.TurnSeq, intent.RequestID)
+		_, err = service.appendConversationEntries(stream, stream.ConversationID, []HistoryEntry{cancelEntry})
 		if err != nil {
 			return err
 		}
@@ -867,6 +877,89 @@ func (service *Service) handleCancelIntent(intent InboundIntent) error {
 	stream.mu.Unlock()
 	service.setTurnPhase(stream, TurnPhaseCanceled)
 	return service.broker.Cancel(intent.RequestID, firstNonEmpty(intent.CancelReason, "[canceled] User aborted request"))
+}
+
+func checkpointTurnHasReplayActivity(stream *ActiveStream) bool {
+	if stream == nil {
+		return false
+	}
+	stream.mu.Lock()
+	defer stream.mu.Unlock()
+	if stream.CheckpointConversation == nil {
+		return false
+	}
+	for _, entry := range stream.CheckpointConversation.Entries {
+		if entry.TurnSeq == stream.TurnSeq && isCanceledTurnActivityEntry(entry) {
+			return true
+		}
+	}
+	return false
+}
+
+// persistInterruptedProviderOutput commits the current provider pass before cancellation.
+// The entry key is stable for this provider pass, so repeated cancellation handling is a no-op.
+func (service *Service) persistInterruptedProviderOutput(stream *ActiveStream) (bool, error) {
+	if stream == nil {
+		return false, nil
+	}
+	stream.mu.Lock()
+	turnSeq := stream.TurnSeq
+	requestID := strings.TrimSpace(stream.RequestID)
+	modelCallID := strings.TrimSpace(stream.CurrentModelCallID)
+	providerPass := stream.ProviderPassCount
+	text := stream.ProviderAccumulatedText
+	reasoning := stream.ProviderAccumulatedReasoning
+	reasoningSignature := stream.ProviderAccumulatedReasoningSignature
+	reasoningSignatureSource := stream.ProviderAccumulatedReasoningSignatureSource
+	reasoningItemID := stream.ProviderAccumulatedReasoningItemID
+	reasoningStatus := stream.ProviderAccumulatedReasoningStatus
+	reasoningSummary := append([]byte(nil), stream.ProviderAccumulatedReasoningSummary...)
+	stream.mu.Unlock()
+	if strings.TrimSpace(text) == "" && !hasReplayableReasoningPayload(reasoning, reasoningSignature, reasoningSignatureSource) {
+		return false, nil
+	}
+	key := interruptedProviderOutputIdempotencyKey(turnSeq, requestID, modelCallID, providerPass)
+	_, err := service.appendConversationEntries(stream, stream.ConversationID, []HistoryEntry{
+		{
+			TurnSeq:        turnSeq,
+			RequestID:      requestID,
+			IdempotencyKey: key,
+			Role:           "assistant",
+			Kind:           "assistant_text",
+			Payload: newAssistantTextPayload(
+				text,
+				reasoning,
+				reasoningSignature,
+				reasoningSignatureSource,
+				reasoningItemID,
+				reasoningStatus,
+				reasoningSummary,
+			),
+		},
+	})
+	return true, err
+}
+
+func interruptedProviderOutputIdempotencyKey(turnSeq int64, requestID string, modelCallID string, providerPass int) string {
+	payload := strings.Join([]string{
+		"provider_interrupted_output",
+		fmt.Sprintf("%d", turnSeq),
+		strings.TrimSpace(requestID),
+		strings.TrimSpace(modelCallID),
+		fmt.Sprintf("%d", providerPass),
+	}, "\x00")
+	digest := sha256.Sum256([]byte(payload))
+	return "provider-interrupted-output:" + hex.EncodeToString(digest[:])
+}
+
+func cancelMetadataIdempotencyKey(turnSeq int64, requestID string) string {
+	payload := strings.Join([]string{
+		"cancel",
+		fmt.Sprintf("%d", turnSeq),
+		strings.TrimSpace(requestID),
+	}, "\x00")
+	digest := sha256.Sum256([]byte(payload))
+	return "cancel:" + hex.EncodeToString(digest[:])
 }
 
 // handleExecResult 处理客户端返回的执行桥结果，并在终态时把 tool_result 写回 history。
@@ -2431,6 +2524,16 @@ func newAssistantTextEntry(turnSeq int64, requestID string, text string, reasoni
 }
 
 func newAssistantTextEntryWithProviderMetadata(turnSeq int64, requestID string, text string, reasoningContent string, reasoningSignature string, reasoningSignatureSource string, reasoningItemID string, reasoningStatus string, reasoningSummary json.RawMessage) HistoryEntry {
+	return HistoryEntry{
+		TurnSeq:   turnSeq,
+		RequestID: strings.TrimSpace(requestID),
+		Role:      "assistant",
+		Kind:      "assistant_text",
+		Payload:   newAssistantTextPayload(text, reasoningContent, reasoningSignature, reasoningSignatureSource, reasoningItemID, reasoningStatus, reasoningSummary),
+	}
+}
+
+func newAssistantTextPayload(text string, reasoningContent string, reasoningSignature string, reasoningSignatureSource string, reasoningItemID string, reasoningStatus string, reasoningSummary json.RawMessage) json.RawMessage {
 	payload, _ := json.Marshal(assistantTextPayload{
 		Text:                     text,
 		ReasoningContent:         reasoningContent,
@@ -2440,13 +2543,7 @@ func newAssistantTextEntryWithProviderMetadata(turnSeq int64, requestID string, 
 		ReasoningStatus:          strings.TrimSpace(reasoningStatus),
 		ReasoningSummary:         append(json.RawMessage(nil), reasoningSummary...),
 	})
-	return HistoryEntry{
-		TurnSeq:   turnSeq,
-		RequestID: strings.TrimSpace(requestID),
-		Role:      "assistant",
-		Kind:      "assistant_text",
-		Payload:   payload,
-	}
+	return payload
 }
 
 // newToolCallEntry 构造 tool_call entry。

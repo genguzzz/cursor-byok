@@ -79,6 +79,7 @@ type HistoryEntry struct {
 	Seq              int64           `json:"seq"`
 	TurnSeq          int64           `json:"turn_seq"`
 	RequestID        string          `json:"request_id,omitempty"`
+	IdempotencyKey   string          `json:"idempotency_key,omitempty"`
 	Role             string          `json:"role"`
 	Kind             string          `json:"kind"`
 	ToolCallID       string          `json:"tool_call_id,omitempty"`
