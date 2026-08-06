@@ -2,6 +2,7 @@
 import Button from "@/components/ui/Button.vue";
 import Input from "@/components/ui/Input.vue";
 import ModelAdapterTestCard from "@/components/ModelAdapterTestCard.vue";
+import MultiSelect from "@/components/ui/MultiSelect.vue";
 import Select from "@/components/ui/Select.vue";
 import Tooltip from "@/components/ui/Tooltip.vue";
 import { getModelEditorContext } from "@/services/clientApi";
@@ -9,9 +10,11 @@ import {
   ANTHROPIC_THINKING_EFFORT_DEFAULT,
   appState,
   buildModelAdapterTestRequestHash,
+  buildModelAdaptersFromModelIDs,
   createEmptyModelAdapter,
   CUSTOM_HEADERS_DEFAULT_JSON,
   EXTRA_PARAMS_DEFAULT_JSON,
+  fetchAvailableModelIDs,
   getModelAdapterTestResult,
   getModelAdapterTestResultByID,
   isModelAdapterTestResultStale,
@@ -22,11 +25,12 @@ import {
   OPENAI_EXTRA_PARAMS_DEFAULT_JSON,
   runModelAdapterTest,
   saveModelAdapterAt,
+  saveModelAdaptersFromModelIDs,
   toUserError,
   validateModelAdapters,
 } from "@/state/appState";
 import { Window } from "@wailsio/runtime";
-import { computed, onMounted, reactive, ref, watch } from "vue";
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
 
 const modelTypeTabs = [
   { label: "OpenAI", value: "openai", icon: "icon-[bxl--openai]" },
@@ -61,6 +65,14 @@ const errorMessage = ref("");
 const loading = ref(true);
 const lastTestAdapterID = ref("");
 const localTestFailure = ref("");
+const modelPrefix = ref("");
+const existingModelPrefixCleared = ref(false);
+const availableModelIDs = ref([]);
+const selectedModelIDs = ref([]);
+const modelSelectionMode = ref("auto");
+const modelListLoading = ref(false);
+const modelListRequestSeq = ref(0);
+let modelListDebounceTimer = 0;
 
 function createOptionalPositiveIntegerModel(key) {
   return computed({
@@ -80,14 +92,44 @@ const contextWindowTokensInput = createOptionalPositiveIntegerModel("contextWind
 const interfacePlaceholder = computed(() =>
   draft.type === "anthropic" ? "例如：https://api.anthropic.com" : "例如：https://api.openai.com/v1",
 );
-const currentRequestHash = computed(() => buildModelAdapterTestRequestHash(draft));
-const directModelTestResult = computed(() => getModelAdapterTestResult(draft));
+const modelOptions = computed(() => availableModelIDs.value.map((modelID) => ({
+  label: modelID,
+  value: modelID,
+  icon: "icon-[mdi--cube-outline]",
+})));
+const isManualModelInput = computed(() => modelSelectionMode.value === "manual");
+const activeModelIDs = computed(() => (
+  isManualModelInput.value
+    ? [String(draft.modelID || "").trim()].filter(Boolean)
+    : selectedModelIDs.value
+));
+const primaryModelID = computed(() => (
+  isManualModelInput.value
+    ? String(draft.modelID || "").trim()
+    : selectedModelIDs.value.includes(draft.modelID) ? draft.modelID : selectedModelIDs.value[0] || ""
+));
+const selectedTestAdapter = computed(() => {
+  if (isManualModelInput.value) {
+    const modelID = primaryModelID.value;
+    return normalizeModelAdapter({
+      ...draft,
+      modelID,
+      displayName: modelID,
+    });
+  }
+  const adapters = buildModelAdaptersFromModelIDs(draft, selectedModelIDs.value, modelPrefix.value);
+  return adapters.find((adapter) => adapter.modelID === primaryModelID.value)
+    ?? adapters[0]
+    ?? normalizeModelAdapter(draft);
+});
+const currentRequestHash = computed(() => buildModelAdapterTestRequestHash(selectedTestAdapter.value));
+const directModelTestResult = computed(() => getModelAdapterTestResult(selectedTestAdapter.value));
 const rememberedModelTestResult = computed(() =>
   lastTestAdapterID.value ? getModelAdapterTestResultByID(lastTestAdapterID.value) : null,
 );
 const activeModelTestResult = computed(() => directModelTestResult.value || rememberedModelTestResult.value);
 const modelTestResultStale = computed(() =>
-  isModelAdapterTestResultStale(draft, activeModelTestResult.value),
+  isModelAdapterTestResultStale(selectedTestAdapter.value, activeModelTestResult.value),
 );
 const isCurrentConfigTesting = computed(() => directModelTestResult.value?.status === "running");
 const modelTestSummary = computed(() => {
@@ -125,7 +167,8 @@ function ensureAnthropicThinkingEffort() {
 
 const fieldTips = {
   displayName: "仅用于界面展示，便于你区分不同模型。",
-  modelID: "请求实际发送给服务端的模型名称，例如 gpt-4.1 或 claude-sonnet。",
+  modelID: "可多选。保存时只会写入选中的模型，每个模型生成一条配置。",
+  manualModelID: "请求实际发送给服务端的模型名称，例如 gpt-4.1 或 claude-sonnet。",
   baseURL: "模型服务的 API 根地址，通常为兼容 OpenAI 或 Anthropic 的接口入口。",
   apiKey: "调用该模型服务需要使用的访问密钥。",
   contextWindowTokens: "模型单次可接受的最大上下文 Token 数。留空时使用默认值。",
@@ -146,6 +189,11 @@ async function loadContext() {
     editorIndex.value = typeof ctx.index === "number" ? ctx.index : -1;
     const parsed = JSON.parse(ctx.adapterJSON || "{}");
     Object.assign(draft, normalizeModelAdapter(parsed));
+    if (draft.modelID) {
+      availableModelIDs.value = [draft.modelID];
+      selectedModelIDs.value = [draft.modelID];
+    }
+    modelPrefix.value = draft.displayName || "";
     if (!draft.type) {
       draft.type = "openai";
     }
@@ -157,8 +205,81 @@ async function loadContext() {
   }
 }
 
+function syncSelectionWithAvailable() {
+  const available = availableModelIDs.value;
+  const kept = selectedModelIDs.value.filter((modelID) => available.includes(modelID));
+  selectedModelIDs.value = kept;
+  draft.modelID = kept.includes(draft.modelID) ? draft.modelID : kept[0] || "";
+}
+
+function handleModelSelectionChange(values) {
+  selectedModelIDs.value = values;
+  draft.modelID = values.includes(draft.modelID) ? draft.modelID : values[0] || "";
+}
+
+async function refreshModelList() {
+  const baseURL = String(draft.baseURL || "").trim();
+  const apiKey = String(draft.apiKey || "").trim();
+  if (!baseURL || !apiKey || !draft.type) {
+    modelSelectionMode.value = "auto";
+    availableModelIDs.value = draft.modelID ? [draft.modelID] : [];
+    syncSelectionWithAvailable();
+    return [];
+  }
+
+  const requestSeq = modelListRequestSeq.value + 1;
+  modelListRequestSeq.value = requestSeq;
+  modelSelectionMode.value = "auto";
+  modelListLoading.value = true;
+  try {
+    const models = await fetchAvailableModelIDs({
+      type: draft.type,
+      baseURL,
+      apiKey,
+      customHeadersEnabled: draft.customHeadersEnabled,
+      customHeadersJSON: draft.customHeadersJSON,
+    });
+    if (requestSeq !== modelListRequestSeq.value) {
+      return availableModelIDs.value;
+    }
+    if (editorIndex.value >= 0 && !existingModelPrefixCleared.value) {
+      modelPrefix.value = "";
+      existingModelPrefixCleared.value = true;
+    }
+    modelSelectionMode.value = "auto";
+    availableModelIDs.value = models;
+    syncSelectionWithAvailable();
+    return models;
+  } catch (_error) {
+    if (requestSeq === modelListRequestSeq.value) {
+      modelSelectionMode.value = "manual";
+      availableModelIDs.value = [];
+      selectedModelIDs.value = [];
+    }
+    return availableModelIDs.value;
+  } finally {
+    if (requestSeq === modelListRequestSeq.value) {
+      modelListLoading.value = false;
+    }
+  }
+}
+
 async function persistDraft() {
-  const adapter = normalizeModelAdapter(draft);
+  const models = activeModelIDs.value;
+  if (models.length === 0) {
+    const error = isManualModelInput.value ? "请填写模型标识" : "请先选择要保存的模型";
+    errorMessage.value = error;
+    return { ok: false, error, adapter: null };
+  }
+
+  const selectedModelID = primaryModelID.value || models[0];
+  const adapter = normalizeModelAdapter({
+    ...draft,
+    modelID: selectedModelID,
+    displayName: isManualModelInput.value
+      ? String(modelPrefix.value || selectedModelID).trim()
+      : `${String(modelPrefix.value || "模型").trim()}-${selectedModelID}`,
+  });
 
   const singleCheck = validateModelAdapters([adapter]);
   if (singleCheck) {
@@ -166,7 +287,9 @@ async function persistDraft() {
     return { ok: false, error: singleCheck, adapter: null };
   }
 
-  const result = await saveModelAdapterAt(editorIndex.value, adapter);
+  const result = isManualModelInput.value
+    ? await saveModelAdapterAt(editorIndex.value, adapter)
+    : await saveModelAdaptersFromModelIDs(adapter, models, modelPrefix.value, selectedModelID);
   if (!result.ok) {
     errorMessage.value = result.error;
     return { ok: false, error: result.error, adapter: null };
@@ -177,12 +300,14 @@ async function persistDraft() {
   }
   if (result.adapter) {
     Object.assign(draft, normalizeModelAdapter(result.adapter));
+  } else {
+    Object.assign(draft, adapter);
   }
   errorMessage.value = "";
   return {
     ok: true,
     error: "",
-    adapter: result.adapter ? normalizeModelAdapter(result.adapter) : normalizeModelAdapter(draft),
+    adapter: result.adapter ? normalizeModelAdapter(result.adapter) : normalizeModelAdapter(adapter),
   };
 }
 
@@ -200,6 +325,10 @@ async function handleCancel() {
 
 function handleModelTypeChange(type) {
   draft.type = type;
+  modelSelectionMode.value = "auto";
+  availableModelIDs.value = [];
+  selectedModelIDs.value = [];
+  draft.modelID = "";
   if (type === "openai" && !draft.openAIEndpoint) {
     draft.openAIEndpoint = OPENAI_ENDPOINT_RESPONSES;
   } else if (type === "anthropic") {
@@ -273,8 +402,31 @@ watch(
   },
 );
 
+watch(
+  () => [draft.type, draft.baseURL, draft.apiKey, draft.customHeadersEnabled, draft.customHeadersJSON],
+  () => {
+    window.clearTimeout(modelListDebounceTimer);
+    const baseURL = String(draft.baseURL || "").trim();
+    const apiKey = String(draft.apiKey || "").trim();
+    if (!baseURL || !apiKey) {
+      modelSelectionMode.value = "auto";
+      modelListLoading.value = false;
+      availableModelIDs.value = draft.modelID ? [draft.modelID] : [];
+      syncSelectionWithAvailable();
+      return;
+    }
+    modelListDebounceTimer = window.setTimeout(() => {
+      void refreshModelList();
+    }, 600);
+  },
+);
+
 onMounted(async () => {
   await loadContext();
+});
+
+onBeforeUnmount(() => {
+  window.clearTimeout(modelListDebounceTimer);
 });
 </script>
 
@@ -318,26 +470,13 @@ onMounted(async () => {
         <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
           <label class="flex flex-col gap-1">
             <span class="center-row justify-start gap-1.5 text-sm text-[#d4d4d4]">
-              <Tooltip :content="fieldTips.displayName" />
-              <span>显示名称</span>
+              <Tooltip :content="fieldTips.baseURL" />
+              <span>接口地址</span>
             </span>
             <input
-              v-model="draft.displayName"
+              v-model="draft.baseURL"
               type="text"
-              placeholder="例如：OpenAI - GPT-4.1"
-              class="h-9 rounded-[6px] border border-[#3f3f3f] bg-[#232323] px-3 text-sm text-[#e5e5e5] outline-none focus:border-[#10AD5D]"
-            />
-          </label>
-
-          <label class="flex flex-col gap-1">
-            <span class="center-row justify-start gap-1.5 text-sm text-[#d4d4d4]">
-              <Tooltip :content="fieldTips.modelID" />
-              <span>模型标识</span>
-            </span>
-            <input
-              v-model="draft.modelID"
-              type="text"
-              placeholder="例如：gpt-4.1"
+              :placeholder="interfacePlaceholder"
               class="h-9 rounded-[6px] border border-[#3f3f3f] bg-[#232323] px-3 text-sm text-[#e5e5e5] outline-none focus:border-[#10AD5D]"
             />
           </label>
@@ -358,16 +497,40 @@ onMounted(async () => {
 
           <label class="flex flex-col gap-1">
             <span class="center-row justify-start gap-1.5 text-sm text-[#d4d4d4]">
-              <Tooltip :content="fieldTips.baseURL" />
-              <span>接口地址</span>
+              <Tooltip :content="isManualModelInput ? fieldTips.displayName : fieldTips.modelID" />
+              <span>{{ isManualModelInput ? "显示名称" : "模型前缀" }}</span>
             </span>
             <input
-              v-model="draft.baseURL"
+              v-model="modelPrefix"
               type="text"
-              :placeholder="interfacePlaceholder"
+              placeholder="例如：GPT-5"
               class="h-9 rounded-[6px] border border-[#3f3f3f] bg-[#232323] px-3 text-sm text-[#e5e5e5] outline-none focus:border-[#10AD5D]"
             />
           </label>
+
+          <div class="flex flex-col gap-1">
+            <span class="center-row justify-start gap-1.5 text-sm text-[#d4d4d4]">
+              <Tooltip :content="isManualModelInput ? fieldTips.manualModelID : fieldTips.modelID" />
+              <span>{{ isManualModelInput ? "模型标识" : "选择模型" }}</span>
+            </span>
+            <input
+              v-if="isManualModelInput"
+              v-model="draft.modelID"
+              type="text"
+              placeholder="例如：gpt-4.1"
+              class="h-9 rounded-[6px] border border-[#3f3f3f] bg-[#232323] px-3 text-sm text-[#e5e5e5] outline-none focus:border-[#10AD5D]"
+            />
+            <MultiSelect
+              v-else
+              :model-value="selectedModelIDs"
+              :options="modelOptions"
+              :disabled="modelListLoading || modelOptions.length === 0"
+              :placeholder="modelListLoading ? '正在获取模型...' : '请输入接口地址和访问密钥'"
+              :summary-formatter="(count, total) => `已选择 ${count} / ${total} 个模型`"
+              aria-label="选择模型"
+              @update:model-value="handleModelSelectionChange"
+            />
+          </div>
 
           <label class="flex flex-col gap-1">
             <span class="center-row justify-start gap-1.5 text-sm text-[#d4d4d4]">
