@@ -1,7 +1,9 @@
 package forwarder
 
 import (
+	"bytes"
 	"crypto/sha256"
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -9,6 +11,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"cursor/gen/agentv1"
+	promptengine "cursor/internal/backend/agent/prompt"
 )
 
 func TestProjectCheckpointProjectionBuildsResolvableForkState(t *testing.T) {
@@ -137,4 +140,241 @@ func TestProjectCheckpointProjectionKeepsForkPointIsolatedFromLaterHistory(t *te
 	if midpointMessages[1].Content != "first answer" || latestMessages[3].Content != "second answer" {
 		t.Fatalf("fork snapshots are not isolated: midpoint=%#v latest=%#v", midpointMessages, latestMessages)
 	}
+}
+
+func TestProjectCheckpointProjectionMergesToolCallWithCompletedResult(t *testing.T) {
+	userPayload, err := protojson.Marshal(&agentv1.UserMessage{Text: "inspect file", MessageId: "message-1"})
+	if err != nil {
+		t.Fatalf("marshal user message: %v", err)
+	}
+	startedAt := uint64(100)
+	toolCallID := "call-1"
+	startedToolCall := checkpointTestToolCallPayload(t, &agentv1.ToolCall{
+		ToolCallId:  &toolCallID,
+		StartedAtMs: &startedAt,
+		Tool: &agentv1.ToolCall_ReadToolCall{
+			ReadToolCall: &agentv1.ReadToolCall{
+				Args: &agentv1.ReadToolArgs{Path: "/tmp/example.txt"},
+			},
+		},
+	})
+	completedAt := uint64(200)
+	completedToolCall := checkpointTestToolCallPayload(t, &agentv1.ToolCall{
+		CompletedAtMs: &completedAt,
+		Tool: &agentv1.ToolCall_ReadToolCall{
+			ReadToolCall: &agentv1.ReadToolCall{
+				Result: &agentv1.ReadToolResult{
+					Result: &agentv1.ReadToolResult_Success{
+						Success: &agentv1.ReadToolSuccess{
+							Path:       "/tmp/example.txt",
+							TotalLines: 1,
+							Output:     &agentv1.ReadToolSuccess_Content{Content: "file contents"},
+						},
+					},
+				},
+			},
+		},
+	})
+	conversation := &ConversationFile{
+		ConversationID: "conversation-1",
+		Mode:           "agent",
+		NextTurnSeq:    2,
+		Entries: []HistoryEntry{
+			{Seq: 1, TurnSeq: 1, RequestID: "request-1", Role: "user", Kind: "user_message", Payload: userPayload},
+			newAssistantTextEntry(1, "request-1", "before", "", ""),
+			newToolCallEntry(1, "request-1", "call-1", "Read", "", "", startedToolCall),
+			newToolResultEntry(1, "request-1", "call-1", "Read", `{"path":"/tmp/example.txt"}`, "file contents", "", completedToolCall),
+			newAssistantTextEntry(1, "request-1", "after", "", ""),
+		},
+	}
+
+	projection, err := NewHistoryProjector().ProjectCheckpointProjection(conversation)
+	if err != nil {
+		t.Fatalf("ProjectCheckpointProjection() error = %v", err)
+	}
+	if len(projection.Blobs) != 5 {
+		t.Fatalf("checkpoint blobs = %d, want user, three final steps, and turn", len(projection.Blobs))
+	}
+	steps := checkpointProjectionSteps(t, projection)
+	if len(steps) != 3 {
+		t.Fatalf("checkpoint steps = %d, want assistant, completed Read, assistant", len(steps))
+	}
+	if steps[0].GetAssistantMessage().GetText() != "before" || steps[2].GetAssistantMessage().GetText() != "after" {
+		t.Fatalf("checkpoint step ordering changed: %#v", steps)
+	}
+	mergedToolCall := steps[1].GetToolCall()
+	readCall := mergedToolCall.GetReadToolCall()
+	if readCall == nil || readCall.GetResult().GetSuccess().GetContent() != "file contents" {
+		t.Fatalf("checkpoint Read step does not contain completed result: %#v", steps[1].GetToolCall())
+	}
+	if readCall.GetArgs().GetPath() != "/tmp/example.txt" || mergedToolCall.GetToolCallId() != toolCallID || mergedToolCall.GetStartedAtMs() != startedAt || mergedToolCall.GetCompletedAtMs() != completedAt {
+		t.Fatalf("checkpoint Read step lost started-call fields: %#v", mergedToolCall)
+	}
+
+	replay, err := promptengine.DecodeReplayMessages(projection.State.GetRootPromptMessagesJson())
+	if err != nil {
+		t.Fatalf("decode root prompt replay: %v", err)
+	}
+	for _, message := range replay {
+		if message.Name == "Read" || len(message.ToolCalls) > 0 {
+			t.Fatalf("UI-only Read result leaked into root prompt replay: %#v", replay)
+		}
+	}
+}
+
+func TestProjectCheckpointProjectionIsIdempotentAndDoesNotMutateHistory(t *testing.T) {
+	userPayload, err := protojson.Marshal(&agentv1.UserMessage{Text: "inspect file", MessageId: "message-1"})
+	if err != nil {
+		t.Fatalf("marshal user message: %v", err)
+	}
+	completedToolCall := checkpointTestReadToolCall(t, &agentv1.ReadToolResult{
+		Result: &agentv1.ReadToolResult_Success{
+			Success: &agentv1.ReadToolSuccess{
+				Path:       "/tmp/example.txt",
+				TotalLines: 1,
+				Output:     &agentv1.ReadToolSuccess_Content{Content: "file contents"},
+			},
+		},
+	})
+	conversation := &ConversationFile{
+		ConversationID: "conversation-1",
+		Mode:           "agent",
+		NextTurnSeq:    2,
+		Entries: []HistoryEntry{
+			{Seq: 1, TurnSeq: 1, RequestID: "request-1", Role: "user", Kind: "user_message", Payload: userPayload},
+			newToolCallEntry(1, "request-1", "call-1", "Read", "", "", checkpointTestReadToolCall(t, nil)),
+			newToolResultEntry(1, "request-1", "call-1", "Read", `{"path":"/tmp/example.txt"}`, "file contents", "", completedToolCall),
+		},
+	}
+	before, err := json.Marshal(conversation)
+	if err != nil {
+		t.Fatalf("marshal conversation before projection: %v", err)
+	}
+
+	projector := NewHistoryProjector()
+	first, err := projector.ProjectCheckpointProjection(conversation)
+	if err != nil {
+		t.Fatalf("first projection: %v", err)
+	}
+	second, err := projector.ProjectCheckpointProjection(conversation)
+	if err != nil {
+		t.Fatalf("second projection: %v", err)
+	}
+
+	if !proto.Equal(first.State, second.State) {
+		t.Fatalf("repeated projection changed checkpoint state: first=%#v second=%#v", first.State, second.State)
+	}
+	if len(first.Blobs) != len(second.Blobs) {
+		t.Fatalf("repeated projection changed blob count: first=%d second=%d", len(first.Blobs), len(second.Blobs))
+	}
+	for index := range first.Blobs {
+		if !bytes.Equal(first.Blobs[index].ID, second.Blobs[index].ID) || !bytes.Equal(first.Blobs[index].Data, second.Blobs[index].Data) {
+			t.Fatalf("repeated projection changed blob %d", index)
+		}
+	}
+	after, err := json.Marshal(conversation)
+	if err != nil {
+		t.Fatalf("marshal conversation after projection: %v", err)
+	}
+	if !bytes.Equal(before, after) {
+		t.Fatalf("checkpoint projection mutated semantic history:\nbefore=%s\nafter=%s", before, after)
+	}
+}
+
+func TestProjectCheckpointProjectionKeepsStartedToolCallWhenResultPayloadIsMissing(t *testing.T) {
+	startedToolCall := checkpointTestReadToolCall(t, nil)
+	conversation := &ConversationFile{
+		ConversationID: "conversation-1",
+		Mode:           "agent",
+		NextTurnSeq:    2,
+		Entries: []HistoryEntry{
+			newToolCallEntry(1, "request-1", "call-1", "Read", "", "", startedToolCall),
+			newToolResultEntry(1, "request-1", "call-1", "Read", `{"path":"/tmp/example.txt"}`, "read failed", "", nil),
+		},
+	}
+
+	projection, err := NewHistoryProjector().ProjectCheckpointProjection(conversation)
+	if err != nil {
+		t.Fatalf("ProjectCheckpointProjection() error = %v", err)
+	}
+	steps := checkpointProjectionSteps(t, projection)
+	if len(steps) != 1 {
+		t.Fatalf("checkpoint steps = %d, want the original Read step", len(steps))
+	}
+	readCall := steps[0].GetToolCall().GetReadToolCall()
+	if readCall == nil || readCall.GetArgs().GetPath() != "/tmp/example.txt" || readCall.GetResult() != nil {
+		t.Fatalf("checkpoint did not preserve the original Read call: %#v", steps[0].GetToolCall())
+	}
+}
+
+func TestProjectCheckpointProjectionAppendsLegacyResultWithoutToolCallEntry(t *testing.T) {
+	completedToolCall := checkpointTestReadToolCall(t, &agentv1.ReadToolResult{
+		Result: &agentv1.ReadToolResult_Error{Error: &agentv1.ReadToolError{ErrorMessage: "not readable"}},
+	})
+	conversation := &ConversationFile{
+		ConversationID: "conversation-1",
+		Mode:           "agent",
+		NextTurnSeq:    2,
+		Entries: []HistoryEntry{
+			newToolResultEntry(1, "request-1", "call-1", "Read", `{"path":"/tmp/example.txt"}`, "not readable", "", completedToolCall),
+		},
+	}
+
+	projection, err := NewHistoryProjector().ProjectCheckpointProjection(conversation)
+	if err != nil {
+		t.Fatalf("ProjectCheckpointProjection() error = %v", err)
+	}
+	steps := checkpointProjectionSteps(t, projection)
+	if len(steps) != 1 || steps[0].GetToolCall().GetReadToolCall().GetResult().GetError().GetErrorMessage() != "not readable" {
+		t.Fatalf("legacy result-only Read step was not preserved: %#v", steps)
+	}
+}
+
+func checkpointTestReadToolCall(t *testing.T, result *agentv1.ReadToolResult) []byte {
+	t.Helper()
+	return checkpointTestToolCallPayload(t, &agentv1.ToolCall{
+		Tool: &agentv1.ToolCall_ReadToolCall{
+			ReadToolCall: &agentv1.ReadToolCall{
+				Args:   &agentv1.ReadToolArgs{Path: "/tmp/example.txt"},
+				Result: result,
+			},
+		},
+	})
+}
+
+func checkpointTestToolCallPayload(t *testing.T, toolCall *agentv1.ToolCall) []byte {
+	t.Helper()
+	payload, err := protojson.Marshal(toolCall)
+	if err != nil {
+		t.Fatalf("marshal Read tool call: %v", err)
+	}
+	return payload
+}
+
+func checkpointProjectionSteps(t *testing.T, projection *CheckpointProjection) []*agentv1.ConversationStep {
+	t.Helper()
+	if projection == nil || projection.State == nil || len(projection.State.GetTurns()) != 1 {
+		t.Fatalf("checkpoint turns = %#v, want exactly one turn", projection)
+	}
+	blobs := make(map[string][]byte, len(projection.Blobs))
+	for _, blob := range projection.Blobs {
+		blobs[string(blob.ID)] = blob.Data
+	}
+	turn := &agentv1.ConversationTurnStructure{}
+	if err := proto.Unmarshal(blobs[string(projection.State.GetTurns()[0])], turn); err != nil {
+		t.Fatalf("decode checkpoint turn: %v", err)
+	}
+	agentTurn := turn.GetAgentConversationTurn()
+	if agentTurn == nil {
+		t.Fatal("checkpoint turn does not contain an agent turn")
+	}
+	steps := make([]*agentv1.ConversationStep, 0, len(agentTurn.GetSteps()))
+	for _, stepID := range agentTurn.GetSteps() {
+		step := &agentv1.ConversationStep{}
+		if err := proto.Unmarshal(blobs[string(stepID)], step); err != nil {
+			t.Fatalf("decode checkpoint step: %v", err)
+		}
+		steps = append(steps, step)
+	}
+	return steps
 }
