@@ -69,13 +69,13 @@ void setupMenubar() {
 
     [menu addItem:[NSMenuItem separatorItem]];
 
-    g_debugItem = [menu addItemWithTitle:@"🪲 调试模式 (9092→9091)"
+    g_debugItem = [menu addItemWithTitle:@"🪲 调试模式"
                                   action:@selector(toggleDebugAction:)
                            keyEquivalent:@""];
     [g_debugItem setTarget:g_handler];
     [g_debugItem setState:NSControlStateValueOff];
 
-    g_debugLogItem = [menu addItemWithTitle:@"调试日志 (app.log)"
+    g_debugLogItem = [menu addItemWithTitle:@"调试日志"
                                      action:@selector(toggleDebugLogAction:)
                               keyEquivalent:@""];
     [g_debugLogItem setTarget:g_handler];
