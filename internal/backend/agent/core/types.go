@@ -240,6 +240,9 @@ type PendingExec struct {
 	FirstChunkAt time.Time
 	// ChunkCount 表示 shellStream 已接收的输出块数量。
 	ChunkCount int64
+	// ShellUIStartedEnsured 表示已在首个 UI 可见 stdout/stderr delta 前补发过 tool_call_started。
+	// 不能用 ChunkCount==1：空 chunk / start 事件可能导致首个可见输出时 ChunkCount>1，从而漏补气泡。
+	ShellUIStartedEnsured bool
 	// LastShellActivityAt 记录最近一次 shell 相关上行事件时间，包括输出、start、heartbeat 和 close。
 	LastShellActivityAt time.Time
 	// LastShellHeartbeatAt 记录最近一次 shell heartbeat 到达时间。

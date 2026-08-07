@@ -326,8 +326,12 @@ func (broker *StreamBroker) Publish(requestID string, event StreamEvent) error {
 	}
 	stream.mu.Lock()
 	if !event.End && isTerminalStreamStatus(stream.Status) {
-		stream.mu.Unlock()
-		return nil
+		// 后台 shell 可能在 turn/cancel 之后仍在跑；若 RunSSE 订阅者还在，
+		// 允许继续投递 shell UI delta，否则客户端只能依赖终端订阅（本地模式常不可靠）。
+		if !allowShellUIPublishAfterTerminalLocked(stream, event) {
+			stream.mu.Unlock()
+			return nil
+		}
 	}
 	event.PublishedAt = time.Now().UTC()
 	stream.Backlog = append(stream.Backlog, event)
@@ -348,6 +352,19 @@ func (broker *StreamBroker) Publish(requestID string, event StreamEvent) error {
 		}
 	}
 	return nil
+}
+
+// allowShellUIPublishAfterTerminalLocked 在 stream 已终态时，仍允许投递 shell UI delta
+//（调用方必须已持有 stream.mu）。
+func allowShellUIPublishAfterTerminalLocked(stream *ActiveStream, event StreamEvent) bool {
+	if stream == nil || len(stream.Subscribers) == 0 || event.Message == nil {
+		return false
+	}
+	iu := event.Message.GetInteractionUpdate()
+	if iu == nil {
+		return false
+	}
+	return iu.GetToolCallDelta() != nil
 }
 
 // ReadFromCursor 返回从 cursor 开始尚未消费的 backlog 事件副本。

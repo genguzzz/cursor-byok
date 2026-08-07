@@ -33,6 +33,7 @@ const (
 var cursorStateDisabledStatsigGates = []string{
 	"decompose_always_local_ext_host",
 	"cursor_extensions_isolation_v2",
+	"disable_terminal_output_ui_streaming",
 }
 
 // cursorAuthBackupKeys 是启动注入前需要备份的 cursorAuth/* 键列表。

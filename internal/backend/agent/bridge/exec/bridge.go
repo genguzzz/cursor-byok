@@ -1574,7 +1574,8 @@ const (
 	readReplayLineLimit        = 0
 	readReplayBinaryLimit      = 32 * replayKiB
 	readReplayImageBinaryLimit = 384 * replayKiB // 对齐 CodeBuddy 压缩 JPEG 量级
-	shellReplayStreamLimit     = 16 * replayKiB
+	// Shell 终态回放给模型/UI 的单路流上限；过小会导致长命令输出在完成态被截断。
+	shellReplayStreamLimit = 256 * replayKiB
 	grepReplayContentLimit     = 32 * replayKiB
 	grepReplayMatchLimit       = 2 * replayKiB
 	grepReplayMatchesPerFile   = 100

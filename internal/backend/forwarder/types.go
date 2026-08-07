@@ -209,10 +209,18 @@ type BackgroundShellState struct {
 	StderrBuffer       string
 	AwaitStdoutOffset  int
 	AwaitStderrOffset  int
-	CreatedAt          time.Time
-	LastActivityAt     time.Time
-	CompletedAt        time.Time
-	StreamClosed       bool
+	// UIStdoutOffset / UIStderrOffset 记录已通过 tool_call_delta 推给 Cursor UI 的字节偏移。
+	// 后台 shell 的实时输出依赖终端文件轮询增量发布，避免只在 AwaitShell 时才更新气泡。
+	UIStdoutOffset int
+	UIStderrOffset int
+	// UIStartedEnsured 表示后台路径已为该 shell 补发过 tool_call_started（或前台已确保）。
+	UIStartedEnsured bool
+	// UIPollTicks 记录后台 UI 轮询次数，便于 debug 判断轮询是否在跑、是否空转。
+	UIPollTicks    int
+	CreatedAt      time.Time
+	LastActivityAt time.Time
+	CompletedAt    time.Time
+	StreamClosed   bool
 }
 
 type pendingTurnCompletion struct {

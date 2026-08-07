@@ -11,6 +11,7 @@ import (
 	"log"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"connectrpc.com/connect"
@@ -21,6 +22,7 @@ import (
 	"cursor/gen/agentv1"
 	"cursor/gen/aiserverv1"
 	"cursor/internal/appdata"
+	"cursor/internal/logger"
 	serverconfig "cursor/internal/backend/server/config"
 	execbridge "cursor/internal/backend/agent/bridge/exec"
 	interactionbridge "cursor/internal/backend/agent/bridge/interaction"
@@ -266,6 +268,8 @@ type Service struct {
 	appendSeq                 *appendSequenceTracker
 	tabRenamerConfigLoader    TabRenamerConfigLoader
 	tabRenamerFullConfigLoader func() serverconfig.Config
+	// backgroundShellUIPollers 按 requestID\\0shellID 去重，独立于 stream actor 生命周期。
+	backgroundShellUIPollers sync.Map
 }
 
 type agentModelMemory interface {
@@ -400,10 +404,10 @@ func (service *Service) BidiAppend(ctx context.Context, req *connect.Request[ais
 			if contentTail != "" {
 				mark = fmt.Sprintf(" content=%q", contentTail)
 			}
-			log.Printf("[shell-debug] BidiAppend shell_result request_id=%s exec_id=%s kind=%s append_seqno=%d%s",
+			logger.Debugf("[shell-debug] BidiAppend shell_result request_id=%s exec_id=%s kind=%s append_seqno=%d%s",
 				requestID, strings.TrimSpace(ecm.GetExecId()), streamKind, appendSeqno, mark)
 		} else {
-			log.Printf("[shell-debug] BidiAppend exec_client_message request_id=%s exec_id=%s message_id=%d non_shell exec_kind=%s append_seqno=%d",
+			logger.Debugf("[shell-debug] BidiAppend exec_client_message request_id=%s exec_id=%s message_id=%d non_shell exec_kind=%s append_seqno=%d",
 				requestID, strings.TrimSpace(ecm.GetExecId()), ecm.GetId(), detectExecClientMessageKind(ecm), appendSeqno)
 		}
 	}
@@ -507,14 +511,24 @@ func (service *Service) RunSSE(ctx context.Context, req *connect.Request[aiserve
 							event.Message.GetExecServerMessage().GetShellStreamArgs() != nil
 						if isShell {
 							payload := protoJSONDebugPayload(event.Message)
-							log.Printf("[shell-debug] RunSSE send request_id=%s cursor=%d case=%s end=%v payload=%s",
+							logger.Debugf("[shell-debug] RunSSE send request_id=%s cursor=%d case=%s end=%v payload=%s",
 								requestID, cursor, msgCase, event.End, truncateSSELogPayload(msgCase, payload))
 						}
 					}
 					if shellDelta := getShellOutputDeltaFromMessage(event.Message); shellDelta != nil {
 						deltaKind := shellOutputDeltaEventKind(shellDelta)
-						log.Printf("[shell-debug] RunSSE send shell_result request_id=%s cursor=%d kind=%s subscriber_outbound=true",
+						logger.Debugf("[shell-debug] RunSSE send shell_result request_id=%s cursor=%d kind=%s subscriber_outbound=true",
 							requestID, cursor, deltaKind)
+					}
+					// tool_call_delta(ShellToolCallDelta) 才是 Glass UI 真正消费的实时路径；
+					// 必须单独记日志，否则只能看到无用的 shell_output_delta 出站。
+					if callID, deltaKind, contentLen, ok := getShellToolCallDeltaDebugFromMessage(event.Message); ok {
+						logger.Debugf("[shell-debug] RunSSE send tool_call_delta request_id=%s cursor=%d tool_call_id=%s delta_kind=%s content_len=%d subscriber_outbound=true reconnect=%v",
+							requestID, cursor, callID, deltaKind, contentLen, isReconnect)
+					}
+					if started := getShellToolCallStartedDebugFromMessage(event.Message); started != "" {
+						logger.Debugf("[shell-debug] RunSSE send tool_call_started request_id=%s cursor=%d tool_call_id=%s subscriber_outbound=true reconnect=%v",
+							requestID, cursor, started, isReconnect)
 					}
 					if err := stream.Send(event.Message); err != nil {
 						service.debug.LogRunSSE(ctx, requestID, "", "send_error", map[string]any{
@@ -1032,7 +1046,7 @@ func (service *Service) handleExecResult(intent InboundIntent) error {
 	if ss := intent.ExecClientMessage.GetShellStream(); ss != nil {
 		shellStreamKind = shellStreamEventKind(ss)
 	}
-	log.Printf("[shell-debug] handleExecResult entry request_id=%s exec_id=%s message_id=%d shell_stream=%v bg_spawn=%v force_bg=%v stream_kind=%s",
+	logger.Debugf("[shell-debug] handleExecResult entry request_id=%s exec_id=%s message_id=%d shell_stream=%v bg_spawn=%v force_bg=%v stream_kind=%s",
 		strings.TrimSpace(intent.RequestID), execID, msgID,
 		intent.ExecClientMessage.GetShellStream() != nil,
 		intent.ExecClientMessage.GetBackgroundShellSpawnResult() != nil,
@@ -1062,15 +1076,16 @@ func (service *Service) handleExecResult(intent InboundIntent) error {
 	}
 	result, err := service.execBridge.ApplyExecClientMessage(intent.ExecClientMessage, pending)
 	if err != nil {
-		log.Printf("[shell-debug] handleExecResult ApplyExecClientMessage error request_id=%s exec_id=%s exec_kind=%s err=%v",
+		logger.Debugf("[shell-debug] handleExecResult ApplyExecClientMessage error request_id=%s exec_id=%s exec_kind=%s err=%v",
 			strings.TrimSpace(intent.RequestID), execID, pending.ExecKind, err)
 		return err
 	}
 	if result.ShellOutputDelta != nil {
 		deltaKind := shellOutputDeltaEventKind(result.ShellOutputDelta)
-		log.Printf("[shell-debug] handleExecResult ShellOutputDelta publish request_id=%s exec_id=%s exec_kind=%s tool_call_id=%s is_terminal=%v delta_kind=%s payload_tail=%q",
+		toolCallID := firstNonEmpty(strings.TrimSpace(result.ToolCallID), strings.TrimSpace(pending.ToolCallID))
+		logger.Debugf("[shell-debug] handleExecResult ShellOutputDelta publish request_id=%s exec_id=%s exec_kind=%s tool_call_id=%s is_terminal=%v delta_kind=%s payload_tail=%q",
 			strings.TrimSpace(intent.RequestID), execID, pending.ExecKind,
-			strings.TrimSpace(result.ToolCallID), result.IsTerminal,
+			toolCallID, result.IsTerminal,
 			deltaKind,
 			truncateForLog(result.ToolResultPayload, 500))
 		if err := service.broker.Publish(intent.RequestID, StreamEvent{
@@ -1078,13 +1093,23 @@ func (service *Service) handleExecResult(intent InboundIntent) error {
 		}); err != nil {
 			return err
 		}
+		// Cursor UI 实时终端输出消费的是 tool_call_delta(ShellToolCallDelta)，
+		// 不是 shell_output_delta（workbench 对后者直接 break 忽略）。
+		// Glass 客户端 handleToolCallDelta 在 bubble 不存在时会静默 return，
+		// 因此在首个 stdout/stderr UI delta 前再补发一次 tool_call_started，确保气泡已建好。
+		if content, streamKind, ok := shellStreamTextFromOutputUpdate(result.ShellOutputDelta); ok && toolCallID != "" {
+			ensureStarted := service.markShellUIStartedEnsured(stream, pending.ExecID)
+			if err := service.publishShellToolCallUIDeltas(intent.RequestID, toolCallID, pending.ModelCallID, pending.ArgsJSON, content, streamKind, ensureStarted, "foreground"); err != nil {
+				return err
+			}
+		}
 	}
 	if !result.IsTerminal {
-		log.Printf("[shell-debug] handleExecResult non_terminal return request_id=%s exec_id=%s exec_kind=%s stream_state=%s",
+		logger.Debugf("[shell-debug] handleExecResult non_terminal return request_id=%s exec_id=%s exec_kind=%s stream_state=%s",
 			strings.TrimSpace(intent.RequestID), execID, pending.ExecKind, pending.StreamState)
 		return nil
 	}
-	log.Printf("[shell-debug] handleExecResult terminal request_id=%s exec_id=%s exec_kind=%s tool_call_id=%s payload_len=%d payload_tail=%q",
+	logger.Debugf("[shell-debug] handleExecResult terminal request_id=%s exec_id=%s exec_kind=%s tool_call_id=%s payload_len=%d payload_tail=%q",
 		strings.TrimSpace(intent.RequestID), execID, pending.ExecKind,
 		strings.TrimSpace(result.ToolCallID), len(result.ToolResultPayload),
 		truncateForLog(result.ToolResultPayload, 500))
@@ -1112,6 +1137,11 @@ func (service *Service) handleExecResult(intent InboundIntent) error {
 			}); err != nil {
 				return err
 			}
+		}
+		if shellID := backgroundShellIDFromToolCall(result.ToolCall); shellID != "" {
+			// 与 Backgrounded 事件一致：禁止 completed 后再补发 tool_call_started。
+			service.markBackgroundShellUIStartedEnsured(stream, shellID)
+			service.scheduleBackgroundShellUIPoll(stream.RequestID, shellID)
 		}
 	}
 	if err := service.publishToolCallCompleted(intent.RequestID, result.ToolCallID, pending.ModelCallID, result.ToolCall); err != nil {
@@ -1485,7 +1515,7 @@ func (service *Service) driveProvider(stream *ActiveStream) error {
 	latestUserText := stream.LatestUserText
 	stream.UpdatedAt = time.Now().UTC()
 	stream.mu.Unlock()
-	log.Printf("forwarder provider pass started request_id=%s model_call_id=%s provider_pass=%d", strings.TrimSpace(requestID), strings.TrimSpace(modelCallID), currentPass)
+	logger.Debugf("forwarder provider pass started request_id=%s model_call_id=%s provider_pass=%d", strings.TrimSpace(requestID), strings.TrimSpace(modelCallID), currentPass)
 
 	conversation, _, _, err := service.snapshotCheckpointConversation(stream)
 	if err != nil {
@@ -1943,11 +1973,16 @@ func (service *Service) handleToolInvocation(stream *ActiveStream, invocation ru
 					cmd = strings.TrimSpace(sa.GetCommand())
 				}
 			}
-			log.Printf("[shell-debug] OpenExec shell_stream_args dispatch request_id=%s exec_id=%s tool_call_id=%s command=%s",
+			logger.Debugf("[shell-debug] OpenExec shell_stream_args dispatch request_id=%s exec_id=%s tool_call_id=%s command=%s",
 				stream.RequestID, strings.TrimSpace(pendingExec.ExecID), strings.TrimSpace(pendingExec.ToolCallID), cmd)
 		}
 		stream.mu.Lock()
 		pendingExec.ProviderPass = stream.ProviderPassCount
+		// OpenExec path may already have published tool_call_started; mark so the first
+		// shell UI delta does not emit a duplicate started event.
+		if startedEmitted && strings.TrimSpace(pendingExec.ExecKind) == "shell" {
+			pendingExec.ShellUIStartedEnsured = true
+		}
 		stream.PendingExecs[pendingExec.ExecID] = pendingExec
 		stream.mu.Unlock()
 		service.scheduleShellForegroundRecovery(stream.RequestID, pendingExec)
@@ -1980,6 +2015,14 @@ func (service *Service) handleToolInvocation(stream *ActiveStream, invocation ru
 				return err
 			}
 			startedEmitted = true
+			if strings.TrimSpace(pendingExec.ExecKind) == "shell" {
+				stream.mu.Lock()
+				if current, ok := stream.PendingExecs[pendingExec.ExecID]; ok {
+					current.ShellUIStartedEnsured = true
+					stream.PendingExecs[pendingExec.ExecID] = current
+				}
+				stream.mu.Unlock()
+			}
 			service.recordExecDispatchMetadata(stream, pendingExec, true, startedEmitted, "exec_then_started_then_checkpoint")
 			if err := ensureLoopActive(); err != nil {
 				removePendingExec()
@@ -3968,8 +4011,155 @@ func getShellOutputDeltaFromMessage(msg *agentv1.AgentServerMessage) *agentv1.Sh
 	return iu.GetShellOutputDelta()
 }
 
+// shellToolCallDeltaChunkLimit 限制单条 ShellToolCallDelta 的文本大小。
+// Cursor Glass UI 对超大单包（例如 gradle 一次 150KB+）更容易出现气泡不刷新；
+// 官方 agent-exec 也是按小块 stdout 事件 emitToolCallDelta。
+const shellToolCallDeltaChunkLimit = 8 * 1024
+
+// backgroundShellUIPollInterval 控制后台 shell 终端文件轮询间隔。
+// 需要足够密以感知 sleep 1 级别的逐行输出，又避免过热读盘。
+const backgroundShellUIPollInterval = 250 * time.Millisecond
+
+// markShellUIStartedEnsured 标记并返回是否需要在本次 UI delta 前补发 tool_call_started。
+func (service *Service) markShellUIStartedEnsured(stream *ActiveStream, execID string) bool {
+	if stream == nil || strings.TrimSpace(execID) == "" {
+		return false
+	}
+	stream.mu.Lock()
+	defer stream.mu.Unlock()
+	current, ok := stream.PendingExecs[strings.TrimSpace(execID)]
+	if !ok {
+		return false
+	}
+	if current.ShellUIStartedEnsured {
+		return false
+	}
+	current.ShellUIStartedEnsured = true
+	stream.PendingExecs[strings.TrimSpace(execID)] = current
+	return true
+}
+
+// markBackgroundShellUIStartedEnsured 标记后台 shell 的 UI started 已确保，
+// 避免 background_poll 在 tool_call_completed 之后再次补发 tool_call_started。
+func (service *Service) markBackgroundShellUIStartedEnsured(stream *ActiveStream, shellID string) {
+	if stream == nil {
+		return
+	}
+	shellID = strings.TrimSpace(shellID)
+	if shellID == "" {
+		return
+	}
+	stream.mu.Lock()
+	defer stream.mu.Unlock()
+	state := stream.BackgroundShells[shellID]
+	if state == nil {
+		return
+	}
+	state.UIStartedEnsured = true
+}
+
+// publishShellToolCallUIDeltas 把 shell stdout/stderr 增量发成 Cursor UI 可消费的 tool_call_delta。
+// source 用于区分前台 Bidi 回传 / 后台终端文件轮询 / AwaitShell，方便日志定位哪条路径在推 UI。
+func (service *Service) publishShellToolCallUIDeltas(requestID string, toolCallID string, modelCallID string, argsJSON []byte, content string, streamKind string, ensureStarted bool, source string) error {
+	if service == nil || service.broker == nil {
+		return nil
+	}
+	requestID = strings.TrimSpace(requestID)
+	toolCallID = strings.TrimSpace(toolCallID)
+	source = firstNonEmpty(strings.TrimSpace(source), "unknown")
+	if requestID == "" || toolCallID == "" || content == "" {
+		logger.Debugf("[shell-debug] ToolCallDelta publish skip request_id=%s tool_call_id=%s source=%s content_len=%d reason=missing_id_or_empty",
+			requestID, toolCallID, source, len(content))
+		return nil
+	}
+	if ensureStarted {
+		if started := buildStartedToolCall(runtimecore.ToolInvocation{
+			CallID:      toolCallID,
+			ToolName:    "Shell",
+			ArgsJSON:    argsJSON,
+			ModelCallID: modelCallID,
+		}); started != nil {
+			logger.Debugf("[shell-debug] ensure ToolCallStarted before UI delta request_id=%s tool_call_id=%s source=%s",
+				requestID, toolCallID, source)
+			if err := service.broker.Publish(requestID, StreamEvent{
+				Message: buildToolCallStartedMessage(toolCallID, modelCallID, started),
+			}); err != nil {
+				return err
+			}
+		} else {
+			logger.Debugf("[shell-debug] ensure ToolCallStarted skipped build_nil request_id=%s tool_call_id=%s source=%s",
+				requestID, toolCallID, source)
+		}
+	}
+	chunks := chunkShellStreamText(content, shellToolCallDeltaChunkLimit)
+	logger.Debugf("[shell-debug] ToolCallDelta publish begin request_id=%s tool_call_id=%s source=%s delta_kind=%s content_len=%d chunk_count=%d",
+		requestID, toolCallID, source, streamKind, len(content), len(chunks))
+	for i, chunk := range chunks {
+		shellDelta := shellToolCallDeltaFromStreamText(streamKind, chunk)
+		if shellDelta == nil {
+			continue
+		}
+		logger.Debugf("[shell-debug] ToolCallDelta publish request_id=%s tool_call_id=%s source=%s delta_kind=%s chunk_index=%d content_len=%d",
+			requestID, toolCallID, source, streamKind, i, len(chunk))
+		if err := service.broker.Publish(requestID, StreamEvent{
+			Message: buildToolCallDeltaMessage(toolCallID, modelCallID, shellDelta),
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// getShellToolCallDeltaDebugFromMessage 提取 RunSSE 出站的 ShellToolCallDelta 摘要。
+func getShellToolCallDeltaDebugFromMessage(msg *agentv1.AgentServerMessage) (toolCallID string, deltaKind string, contentLen int, ok bool) {
+	if msg == nil {
+		return "", "", 0, false
+	}
+	iu := msg.GetInteractionUpdate()
+	if iu == nil {
+		return "", "", 0, false
+	}
+	update := iu.GetToolCallDelta()
+	if update == nil {
+		return "", "", 0, false
+	}
+	delta := update.GetToolCallDelta()
+	if delta == nil || delta.GetShellToolCallDelta() == nil {
+		return "", "", 0, false
+	}
+	shellDelta := delta.GetShellToolCallDelta()
+	switch {
+	case shellDelta.GetStdout() != nil:
+		return strings.TrimSpace(update.GetCallId()), "stdout", len(shellDelta.GetStdout().GetContent()), true
+	case shellDelta.GetStderr() != nil:
+		return strings.TrimSpace(update.GetCallId()), "stderr", len(shellDelta.GetStderr().GetContent()), true
+	default:
+		return strings.TrimSpace(update.GetCallId()), "other", 0, true
+	}
+}
+
+// getShellToolCallStartedDebugFromMessage 提取 RunSSE 出站的 Shell tool_call_started call id。
+func getShellToolCallStartedDebugFromMessage(msg *agentv1.AgentServerMessage) string {
+	if msg == nil {
+		return ""
+	}
+	iu := msg.GetInteractionUpdate()
+	if iu == nil {
+		return ""
+	}
+	started := iu.GetToolCallStarted()
+	if started == nil {
+		return ""
+	}
+	tc := started.GetToolCall()
+	if tc == nil || tc.GetShellToolCall() == nil {
+		return ""
+	}
+	return strings.TrimSpace(started.GetCallId())
+}
+
 // isTransientReplaySafeEvent 判断消息是否属于重连时不应重放的暂态 UI 事件。
-// 重连时 InteractionUpdate（thinking delta、text delta、tool_call_started 等）
+// 重连时 InteractionUpdate（thinking delta、text delta 等）
 // 已在首次连接时发送过，跳过以避免重复显示。exec、checkpoint、kv 等需重放。
 func isTransientReplaySafeEvent(msg *agentv1.AgentServerMessage) bool {
 	if msg == nil {
@@ -3979,9 +4169,113 @@ func isTransientReplaySafeEvent(msg *agentv1.AgentServerMessage) bool {
 	if iu == nil {
 		return false
 	}
-	// ShellOutputDelta 不属于暂态事件，需要实时重放
+	// Shell 流式输出需重放：UI 靠 tool_call_delta；shell_output_delta 保留兼容。
 	if iu.GetShellOutputDelta() != nil {
 		return false
 	}
+	if toolCallDelta := iu.GetToolCallDelta(); toolCallDelta != nil {
+		if delta := toolCallDelta.GetToolCallDelta(); delta != nil && delta.GetShellToolCallDelta() != nil {
+			return false
+		}
+	}
+	// Shell tool_call_started 也必须重放：Glass handleToolCallDelta 找不到 bubble 会直接 return，
+	// 只重放 delta 而跳过 started 会导致整段实时输出静默丢失。
+	if started := iu.GetToolCallStarted(); started != nil {
+		if tc := started.GetToolCall(); tc != nil && tc.GetShellToolCall() != nil {
+			return false
+		}
+	}
 	return true
+}
+
+// shellStreamTextFromOutputUpdate 提取可用于 UI 流式刷新的 stdout/stderr 文本。
+func shellStreamTextFromOutputUpdate(delta *agentv1.ShellOutputDeltaUpdate) (content string, kind string, ok bool) {
+	if delta == nil {
+		return "", "", false
+	}
+	switch event := delta.GetEvent().(type) {
+	case *agentv1.ShellOutputDeltaUpdate_Stdout:
+		content = execbridge.DecodeShellStdout(event.Stdout)
+		if content == "" {
+			return "", "", false
+		}
+		return content, "stdout", true
+	case *agentv1.ShellOutputDeltaUpdate_Stderr:
+		if event.Stderr == nil {
+			return "", "", false
+		}
+		content = event.Stderr.GetData()
+		if content == "" {
+			return "", "", false
+		}
+		return content, "stderr", true
+	default:
+		return "", "", false
+	}
+}
+
+// chunkShellStreamText 把超长 shell 输出拆成多段，避免单包过大。
+func chunkShellStreamText(content string, limit int) []string {
+	if content == "" {
+		return nil
+	}
+	if limit <= 0 || len(content) <= limit {
+		return []string{content}
+	}
+	chunks := make([]string, 0, (len(content)+limit-1)/limit)
+	for len(content) > 0 {
+		n := limit
+		if n > len(content) {
+			n = len(content)
+		}
+		// 尽量在换行处切开，减少半行撕裂。
+		if n < len(content) {
+			if cut := strings.LastIndex(content[:n], "\n"); cut >= limit/2 {
+				n = cut + 1
+			}
+		}
+		chunks = append(chunks, content[:n])
+		content = content[n:]
+	}
+	return chunks
+}
+
+// shellToolCallDeltaFromStreamText 按 stdout/stderr 构造 UI 可消费的 ToolCallDelta。
+func shellToolCallDeltaFromStreamText(kind string, content string) *agentv1.ToolCallDelta {
+	if content == "" {
+		return nil
+	}
+	switch kind {
+	case "stdout":
+		return &agentv1.ToolCallDelta{
+			Delta: &agentv1.ToolCallDelta_ShellToolCallDelta{
+				ShellToolCallDelta: &agentv1.ShellToolCallDelta{
+					Delta: &agentv1.ShellToolCallDelta_Stdout{
+						Stdout: &agentv1.ShellToolCallStdoutDelta{Content: content},
+					},
+				},
+			},
+		}
+	case "stderr":
+		return &agentv1.ToolCallDelta{
+			Delta: &agentv1.ToolCallDelta_ShellToolCallDelta{
+				ShellToolCallDelta: &agentv1.ShellToolCallDelta{
+					Delta: &agentv1.ShellToolCallDelta_Stderr{
+						Stderr: &agentv1.ShellToolCallStderrDelta{Content: content},
+					},
+				},
+			},
+		}
+	default:
+		return nil
+	}
+}
+
+// shellToolCallDeltaFromOutputUpdate 把 shell_stream 增量转成 UI 可消费的 ToolCallDelta。
+func shellToolCallDeltaFromOutputUpdate(delta *agentv1.ShellOutputDeltaUpdate) *agentv1.ToolCallDelta {
+	content, kind, ok := shellStreamTextFromOutputUpdate(delta)
+	if !ok {
+		return nil
+	}
+	return shellToolCallDeltaFromStreamText(kind, content)
 }

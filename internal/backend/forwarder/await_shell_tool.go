@@ -3,7 +3,6 @@ package forwarder
 import (
 	"encoding/json"
 	"fmt"
-	"log"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -14,6 +13,7 @@ import (
 	"cursor/gen/agentv1"
 	execbridge "cursor/internal/backend/agent/bridge/exec"
 	runtimecore "cursor/internal/backend/agent/core"
+	"cursor/internal/logger"
 )
 
 const awaitShellOutputLimit = 16 * 1024
@@ -120,13 +120,22 @@ func (service *Service) awaitShellSnapshot(stream *ActiveStream, args awaitShell
 	state, ok := stream.BackgroundShells[shellID]
 	if !ok || state == nil {
 		stream.mu.Unlock()
-		log.Printf("[shell-debug] AwaitShell unknown_shell request_id=%s shell_id=%s", strings.TrimSpace(stream.RequestID), shellID)
+		logger.Debugf("[shell-debug] AwaitShell unknown_shell request_id=%s shell_id=%s", strings.TrimSpace(stream.RequestID), shellID)
 		return awaitShellResult{
 			ShellID:  shellID,
 			Status:   backgroundShellStatusUnknown,
 			TimedOut: false,
 			Message:  "unknown or expired shell_id",
 		}
+	}
+	uiToolCallID := strings.TrimSpace(state.OriginalToolCallID)
+	uiModelCallID := strings.TrimSpace(state.ModelCallID)
+	uiArgsJSON := append([]byte(nil), state.ArgsJSON...)
+	uiDelta := takeBackgroundShellUIStdoutDeltaLocked(state)
+	uiEnsureStarted := false
+	if uiDelta != "" && uiToolCallID != "" && !state.UIStartedEnsured {
+		state.UIStartedEnsured = true
+		uiEnsureStarted = true
 	}
 	stdoutStart := clampOffset(state.AwaitStdoutOffset, len(state.StdoutBuffer))
 	stderrStart := clampOffset(state.AwaitStderrOffset, len(state.StderrBuffer))
@@ -148,10 +157,18 @@ func (service *Service) awaitShellSnapshot(stream *ActiveStream, args awaitShell
 	createdAt := state.CreatedAt
 	completedAt := state.CompletedAt
 	combinedOutput := state.StdoutBuffer + "\n" + state.StderrBuffer
+	requestID := strings.TrimSpace(stream.RequestID)
 	stream.UpdatedAt = time.Now().UTC()
 	stream.mu.Unlock()
 
-	log.Printf("[shell-debug] AwaitShell request_id=%s shell_id=%s status=%s block_until_ms=%d stdout_offset=%d->%d stderr_offset=%d->%d new_stdout_len=%d new_stderr_len=%d total_stdout_len=%d total_stderr_len=%d stdout_tail=%q",
+	if uiDelta != "" && uiToolCallID != "" {
+		_ = service.publishShellToolCallUIDeltas(requestID, uiToolCallID, uiModelCallID, uiArgsJSON, uiDelta, "stdout", uiEnsureStarted, "await_shell")
+	} else if uiDelta != "" && uiToolCallID == "" {
+		logger.Debugf("[shell-debug] AwaitShell UI delta dropped missing_tool_call_id request_id=%s shell_id=%s delta_len=%d",
+			requestID, shellID, len(uiDelta))
+	}
+
+	logger.Debugf("[shell-debug] AwaitShell request_id=%s shell_id=%s status=%s block_until_ms=%d stdout_offset=%d->%d stderr_offset=%d->%d new_stdout_len=%d new_stderr_len=%d total_stdout_len=%d total_stderr_len=%d stdout_tail=%q",
 		strings.TrimSpace(stream.RequestID), shellID, status, blockUntilMS,
 		stdoutStart, stdoutEnd, stderrStart, stderrEnd,
 		len(stdout), len(stderr), stdoutEnd, stderrEnd,
@@ -167,7 +184,7 @@ func (service *Service) awaitShellSnapshot(stream *ActiveStream, args awaitShell
 	stderr = truncateAwaitShellOutput(stderr)
 
 	if len(stdout) > 0 || len(stderr) > 0 || isBackgroundShellTerminalStatus(status) {
-		log.Printf("[shell-debug] AwaitShell result request_id=%s shell_id=%s status=%s matched=%v timed_out=%v exit_code=%v stdout_returned=%d stderr_returned=%d stdout_tail=%q",
+		logger.Debugf("[shell-debug] AwaitShell result request_id=%s shell_id=%s status=%s matched=%v timed_out=%v exit_code=%v stdout_returned=%d stderr_returned=%d stdout_tail=%q",
 			strings.TrimSpace(stream.RequestID), shellID, status, matched, timedOut, exitCode,
 			len(stdout), len(stderr), truncateForLog(stdout, 500))
 	}
@@ -313,14 +330,10 @@ func (service *Service) refreshBackgroundShellFromTerminalFile(stream *ActiveStr
 	stream.mu.Unlock()
 	terminalSnapshot, ok := readTerminalShellFileSnapshot(terminalsFolder, shellID)
 	if !ok {
-		log.Printf("[shell-debug] TerminalFileReadFail request_id=%s shell_id=%s terminals_folder=%q",
+		logger.Debugf("[shell-debug] TerminalFileReadFail request_id=%s shell_id=%s terminals_folder=%q",
 			requestID, shellID, terminalsFolder)
 		return
 	}
-	log.Printf("[shell-debug] TerminalFileRead request_id=%s shell_id=%s file_output_len=%d command=%q exit_code=%v output_tail=%q",
-		requestID, shellID, len(terminalSnapshot.Output),
-		strings.TrimSpace(terminalSnapshot.Command), terminalSnapshot.ExitCode,
-		truncateForLog(terminalSnapshot.Output, 500))
 	now := time.Now().UTC()
 	stream.mu.Lock()
 	defer stream.mu.Unlock()
@@ -341,8 +354,13 @@ func (service *Service) refreshBackgroundShellFromTerminalFile(stream *ActiveStr
 	if state.CreatedAt.IsZero() {
 		state.CreatedAt = firstNonZeroTime(terminalSnapshot.StartedAt, now)
 	}
-	if state.StdoutBuffer == "" && state.StderrBuffer == "" && terminalSnapshot.Output != "" {
-		state.StdoutBuffer = terminalSnapshot.Output
+	// 终端文件是完整快照：始终以其为 stdout 真源，才能在后台任务运行期间持续增长。
+	// 旧逻辑只在 buffer 全空时写入一次，导致 AwaitShell / UI 轮询拿不到后续行。
+	beforeStdoutLen := len(state.StdoutBuffer)
+	beforeUIOffset := state.UIStdoutOffset
+	grew := false
+	if terminalSnapshot.Output != "" {
+		grew = mergeBackgroundShellStdoutFromTerminalOutput(state, terminalSnapshot.Output)
 		if !isBackgroundShellTerminalStatus(state.Status) {
 			state.Status = backgroundShellStatusRunning
 		}
@@ -361,29 +379,205 @@ func (service *Service) refreshBackgroundShellFromTerminalFile(stream *ActiveStr
 	if state.LastActivityAt.IsZero() {
 		state.LastActivityAt = now
 	}
-	log.Printf("[shell-debug] TerminalFileMerged request_id=%s shell_id=%s status=%s stdout_len=%d stderr_len=%d exit_code=%v",
-		strings.TrimSpace(stream.RequestID), shellID, state.Status,
-		len(state.StdoutBuffer), len(state.StderrBuffer), state.ExitCode)
+	afterStdoutLen := len(state.StdoutBuffer)
+	if grew || afterStdoutLen != beforeStdoutLen || terminalSnapshot.ExitCode != nil {
+		logger.Debugf("[shell-debug] TerminalFileMerged request_id=%s shell_id=%s status=%s stdout_len=%d->%d grew=%v file_output_len=%d ui_stdout_offset=%d->%d stderr_len=%d exit_code=%v",
+			strings.TrimSpace(stream.RequestID), shellID, state.Status,
+			beforeStdoutLen, afterStdoutLen, grew, len(terminalSnapshot.Output),
+			beforeUIOffset, state.UIStdoutOffset, len(state.StderrBuffer), state.ExitCode)
+	}
 	stream.UpdatedAt = now
+}
+
+func takeBackgroundShellUIStdoutDeltaLocked(state *BackgroundShellState) string {
+	if state == nil {
+		return ""
+	}
+	if state.UIStdoutOffset < 0 {
+		state.UIStdoutOffset = 0
+	}
+	if state.UIStdoutOffset > len(state.StdoutBuffer) {
+		state.UIStdoutOffset = len(state.StdoutBuffer)
+	}
+	delta := state.StdoutBuffer[state.UIStdoutOffset:]
+	state.UIStdoutOffset = len(state.StdoutBuffer)
+	return delta
+}
+
+func mergeBackgroundShellStdoutFromTerminalOutput(state *BackgroundShellState, output string) bool {
+	if state == nil || output == "" {
+		return false
+	}
+	before := len(state.StdoutBuffer)
+	if state.StdoutBuffer == "" {
+		state.StdoutBuffer = output
+		return len(state.StdoutBuffer) > before
+	}
+	if strings.HasPrefix(output, state.StdoutBuffer) || len(output) >= len(state.StdoutBuffer) {
+		state.StdoutBuffer = output
+		if state.UIStdoutOffset > len(state.StdoutBuffer) {
+			state.UIStdoutOffset = len(state.StdoutBuffer)
+		}
+	}
+	return len(state.StdoutBuffer) > before
+}
+
+func backgroundShellUIPollerKey(requestID string, shellID string) string {
+	return strings.TrimSpace(requestID) + "\x00" + strings.TrimSpace(shellID)
+}
+
+func (service *Service) scheduleBackgroundShellUIPoll(requestID string, shellID string) {
+	if service == nil {
+		return
+	}
+	requestID = strings.TrimSpace(requestID)
+	shellID = strings.TrimSpace(shellID)
+	if requestID == "" || shellID == "" {
+		logger.Debugf("[shell-debug] BackgroundShellUI schedule skip reason=missing_ids request_id=%q shell_id=%q",
+			requestID, shellID)
+		return
+	}
+	if _, ok := service.broker.Get(requestID); !ok {
+		logger.Debugf("[shell-debug] BackgroundShellUI schedule skip reason=stream_missing request_id=%s shell_id=%s",
+			requestID, shellID)
+		return
+	}
+	key := backgroundShellUIPollerKey(requestID, shellID)
+	if _, loaded := service.backgroundShellUIPollers.LoadOrStore(key, true); loaded {
+		logger.Debugf("[shell-debug] BackgroundShellUI schedule skip reason=already_running request_id=%s shell_id=%s",
+			requestID, shellID)
+		return
+	}
+	logger.Debugf("[shell-debug] BackgroundShellUI schedule request_id=%s shell_id=%s interval_ms=%d mode=detached_goroutine",
+		requestID, shellID, int(backgroundShellUIPollInterval/time.Millisecond))
+	go service.runBackgroundShellUIPoller(requestID, shellID, key)
+}
+
+func (service *Service) runBackgroundShellUIPoller(requestID string, shellID string, key string) {
+	defer service.backgroundShellUIPollers.Delete(key)
+	for {
+		timer := time.NewTimer(backgroundShellUIPollInterval)
+		<-timer.C
+		timer.Stop()
+
+		stream, ok := service.broker.Get(requestID)
+		if !ok || stream == nil {
+			logger.Debugf("[shell-debug] BackgroundShellUI poll stop request_id=%s shell_id=%s reason=stream_missing",
+				requestID, shellID)
+			return
+		}
+		cont, err := service.pollBackgroundShellUI(stream, shellID)
+		if err != nil {
+			logger.Debugf("[shell-debug] BackgroundShellUI poll stop request_id=%s shell_id=%s reason=publish_error err=%v",
+				requestID, shellID, err)
+			return
+		}
+		if !cont {
+			return
+		}
+	}
+}
+
+func (service *Service) pollBackgroundShellUI(stream *ActiveStream, shellID string) (bool, error) {
+	if stream == nil {
+		logger.Debugf("[shell-debug] BackgroundShellUI poll skip reason=stream_nil shell_id=%s", shellID)
+		return false, nil
+	}
+	shellID = strings.TrimSpace(shellID)
+	if shellID == "" {
+		logger.Debugf("[shell-debug] BackgroundShellUI poll skip reason=empty_shell_id request_id=%s",
+			strings.TrimSpace(stream.RequestID))
+		return false, nil
+	}
+	service.refreshBackgroundShellFromTerminalFile(stream, shellID)
+
+	stream.mu.Lock()
+	state := stream.BackgroundShells[shellID]
+	var (
+		toolCallID    string
+		modelCallID   string
+		argsJSON      []byte
+		delta         string
+		status        string
+		terminal      bool
+		tick          int
+		stdoutLen     int
+		uiOffset      int
+		ensureStarted bool
+		stateNil      bool
+		subscribers   int
+	)
+	if state == nil {
+		stateNil = true
+	} else {
+		state.UIPollTicks++
+		tick = state.UIPollTicks
+		toolCallID = strings.TrimSpace(state.OriginalToolCallID)
+		modelCallID = strings.TrimSpace(state.ModelCallID)
+		argsJSON = append([]byte(nil), state.ArgsJSON...)
+		stdoutLen = len(state.StdoutBuffer)
+		uiOffset = state.UIStdoutOffset
+		delta = takeBackgroundShellUIStdoutDeltaLocked(state)
+		if delta != "" && toolCallID != "" && !state.UIStartedEnsured {
+			state.UIStartedEnsured = true
+			ensureStarted = true
+		}
+		status = strings.TrimSpace(state.Status)
+		terminal = isBackgroundShellTerminalStatus(status)
+	}
+	requestID := strings.TrimSpace(stream.RequestID)
+	streamStatus := stream.Status
+	subscribers = len(stream.Subscribers)
+	stream.mu.Unlock()
+
+	if stateNil {
+		logger.Debugf("[shell-debug] BackgroundShellUI poll state_nil request_id=%s shell_id=%s stream_status=%s",
+			requestID, shellID, streamStatus)
+	} else if delta != "" && toolCallID == "" {
+		logger.Debugf("[shell-debug] BackgroundShellUI delta dropped missing_tool_call_id request_id=%s shell_id=%s delta_len=%d status=%s tick=%d stdout_len=%d ui_offset=%d",
+			requestID, shellID, len(delta), status, tick, stdoutLen, uiOffset)
+	} else if delta != "" && toolCallID != "" {
+		logger.Debugf("[shell-debug] BackgroundShellUI delta request_id=%s shell_id=%s tool_call_id=%s delta_len=%d status=%s tick=%d stdout_len=%d ui_offset_before=%d ensure_started=%v",
+			requestID, shellID, toolCallID, len(delta), status, tick, stdoutLen, uiOffset, ensureStarted)
+		if err := service.publishShellToolCallUIDeltas(requestID, toolCallID, modelCallID, argsJSON, delta, "stdout", ensureStarted, "background_poll"); err != nil {
+			return false, err
+		}
+	} else if tick == 1 || tick%20 == 0 {
+		// 空转降噪：首 tick + 每约 5s（250ms*20）打一次 heartbeat，确认轮询仍在跑。
+		logger.Debugf("[shell-debug] BackgroundShellUI poll idle request_id=%s shell_id=%s tool_call_id=%s status=%s tick=%d stdout_len=%d ui_offset=%d",
+			requestID, shellID, toolCallID, status, tick, stdoutLen, uiOffset)
+	}
+	if terminal {
+		logger.Debugf("[shell-debug] BackgroundShellUI poll stop request_id=%s shell_id=%s status=%s stream_status=%s tick=%d",
+			requestID, shellID, status, streamStatus, tick)
+		return false, nil
+	}
+	// turn/cancel 后若仍有订阅者，继续推 UI delta；无订阅者再停。
+	if isTerminalStreamStatus(streamStatus) && subscribers == 0 {
+		logger.Debugf("[shell-debug] BackgroundShellUI poll stop request_id=%s shell_id=%s status=%s stream_status=%s tick=%d reason=stream_terminal_no_subscribers",
+			requestID, shellID, status, streamStatus, tick)
+		return false, nil
+	}
+	return true, nil
 }
 
 func readTerminalShellFileSnapshot(terminalsFolder string, shellID string) (terminalShellFileSnapshot, bool) {
 	path, ok := terminalShellFilePath(terminalsFolder, shellID)
 	if !ok {
-		log.Printf("[shell-debug] TerminalFilePathInvalid terminals_folder=%q shell_id=%q", terminalsFolder, shellID)
+		logger.Debugf("[shell-debug] TerminalFilePathInvalid terminals_folder=%q shell_id=%q", terminalsFolder, shellID)
 		return terminalShellFileSnapshot{}, false
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
-		log.Printf("[shell-debug] TerminalFileReadError path=%q err=%v", path, err)
+		logger.Debugf("[shell-debug] TerminalFileReadError path=%q err=%v", path, err)
 		return terminalShellFileSnapshot{}, false
 	}
 	if len(data) == 0 {
-		log.Printf("[shell-debug] TerminalFileEmpty path=%q", path)
+		logger.Debugf("[shell-debug] TerminalFileEmpty path=%q", path)
 		return terminalShellFileSnapshot{}, false
 	}
 	snapshot := parseTerminalShellFileSnapshot(string(data))
-	log.Printf("[shell-debug] TerminalFileParsed path=%q raw_len=%d output_len=%d output_tail=%q",
+	logger.Debugf("[shell-debug] TerminalFileParsed path=%q raw_len=%d output_len=%d output_tail=%q",
 		path, len(data), len(snapshot.Output), truncateForLog(snapshot.Output, 300))
 	return snapshot, true
 }
@@ -683,6 +877,9 @@ func (service *Service) observeShellStreamLocked(stream *ActiveStream, pending r
 
 	shellID := backgroundShellIDForMessageLocked(stream, pending.MessageID, pending.ExecID)
 	switch event := shellStream.GetEvent().(type) {
+	case *agentv1.ShellStream_Start:
+		// 前台 Start 不进入 BackgroundShellState；显式忽略避免 UnknownShellEvent 噪音。
+		return
 	case *agentv1.ShellStream_Backgrounded:
 		shellID = strconv.FormatUint(uint64(event.Backgrounded.GetShellId()), 10)
 		state := stream.BackgroundShells[shellID]
@@ -699,6 +896,24 @@ func (service *Service) observeShellStreamLocked(stream *ActiveStream, pending r
 		state.OriginalMessageID = pending.MessageID
 		state.ArgsJSON = append([]byte(nil), pending.ArgsJSON...)
 		state.ModelCallID = strings.TrimSpace(pending.ModelCallID)
+		// 前台阶段已通过 tool_call_delta 推过的输出：并入 buffer，并把 UI 偏移设到末尾，避免后台轮询重复推送。
+		if state.StdoutBuffer == "" && strings.TrimSpace(pending.StdoutBuffer) != "" {
+			state.StdoutBuffer = pending.StdoutBuffer
+		}
+		if state.StderrBuffer == "" && strings.TrimSpace(pending.StderrBuffer) != "" {
+			state.StderrBuffer = pending.StderrBuffer
+		}
+		if state.UIStdoutOffset < len(state.StdoutBuffer) {
+			state.UIStdoutOffset = len(state.StdoutBuffer)
+		}
+		if state.UIStderrOffset < len(state.StderrBuffer) {
+			state.UIStderrOffset = len(state.StderrBuffer)
+		}
+		// OpenExec 时已发过 tool_call_started；background 后客户端靠
+		// startBackgroundTerminalStreaming(shellId) 订阅终端。
+		// 若此处 UIStartedEnsured=false，轮询首包会再次 ensure started，
+		// 发生在 tool_call_completed 之后，会打乱 bubble / 打断终端订阅。
+		state.UIStartedEnsured = true
 		state.LastActivityAt = now
 		if pending.MessageID != 0 {
 			stream.BackgroundShellsByMessageID[pending.MessageID] = shellID
@@ -706,14 +921,15 @@ func (service *Service) observeShellStreamLocked(stream *ActiveStream, pending r
 		if strings.TrimSpace(pending.ExecID) != "" {
 			stream.BackgroundShellsByExecID[strings.TrimSpace(pending.ExecID)] = shellID
 		}
-		log.Printf("[shell-debug] Backgrounded request_id=%s shell_id=%s exec_id=%s command=%q cwd=%q pid=%v",
+		logger.Debugf("[shell-debug] Backgrounded request_id=%s shell_id=%s exec_id=%s command=%q cwd=%q pid=%v ui_stdout_offset=%d ui_started_ensured=%v",
 			strings.TrimSpace(stream.RequestID), shellID, strings.TrimSpace(pending.ExecID),
 			strings.TrimSpace(event.Backgrounded.GetCommand()),
-			strings.TrimSpace(event.Backgrounded.GetWorkingDirectory()), event.Backgrounded.GetPid())
+			strings.TrimSpace(event.Backgrounded.GetWorkingDirectory()), event.Backgrounded.GetPid(),
+			state.UIStdoutOffset, state.UIStartedEnsured)
 	case *agentv1.ShellStream_Stdout:
 		state := ensureBackgroundShellStateLocked(stream, shellID, pending, now)
 		if state == nil {
-			log.Printf("[shell-debug] Stdout state_nil_drop request_id=%s shell_id=%s exec_id=%s",
+			logger.Debugf("[shell-debug] Stdout state_nil_drop request_id=%s shell_id=%s exec_id=%s",
 				strings.TrimSpace(stream.RequestID), shellID, strings.TrimSpace(pending.ExecID))
 			return
 		}
@@ -721,14 +937,14 @@ func (service *Service) observeShellStreamLocked(stream *ActiveStream, pending r
 		state.StdoutBuffer += decodedStdout
 		state.Status = backgroundShellStatusRunning
 		state.LastActivityAt = now
-		log.Printf("[shell-debug] Stdout request_id=%s shell_id=%s exec_id=%s delta_len=%d total_stdout_len=%d delta_content=%q",
+		logger.Debugf("[shell-debug] Stdout request_id=%s shell_id=%s exec_id=%s delta_len=%d total_stdout_len=%d delta_content=%q",
 			strings.TrimSpace(stream.RequestID), shellID, strings.TrimSpace(pending.ExecID),
 			len(decodedStdout), len(state.StdoutBuffer),
 			truncateForLog(decodedStdout, 500))
 	case *agentv1.ShellStream_Stderr:
 		state := ensureBackgroundShellStateLocked(stream, shellID, pending, now)
 		if state == nil {
-			log.Printf("[shell-debug] Stderr state_nil_drop request_id=%s shell_id=%s exec_id=%s",
+			logger.Debugf("[shell-debug] Stderr state_nil_drop request_id=%s shell_id=%s exec_id=%s",
 				strings.TrimSpace(stream.RequestID), shellID, strings.TrimSpace(pending.ExecID))
 			return
 		}
@@ -736,14 +952,14 @@ func (service *Service) observeShellStreamLocked(stream *ActiveStream, pending r
 		state.StderrBuffer += stderrData
 		state.Status = backgroundShellStatusRunning
 		state.LastActivityAt = now
-		log.Printf("[shell-debug] Stderr request_id=%s shell_id=%s exec_id=%s delta_len=%d total_stderr_len=%d delta_content=%q",
+		logger.Debugf("[shell-debug] Stderr request_id=%s shell_id=%s exec_id=%s delta_len=%d total_stderr_len=%d delta_content=%q",
 			strings.TrimSpace(stream.RequestID), shellID, strings.TrimSpace(pending.ExecID),
 			len(stderrData), len(state.StderrBuffer),
 			truncateForLog(stderrData, 500))
 	case *agentv1.ShellStream_Exit:
 		state := ensureBackgroundShellStateLocked(stream, shellID, pending, now)
 		if state == nil {
-			log.Printf("[shell-debug] Exit state_nil_drop request_id=%s shell_id=%s exec_id=%s",
+			logger.Debugf("[shell-debug] Exit state_nil_drop request_id=%s shell_id=%s exec_id=%s",
 				strings.TrimSpace(stream.RequestID), shellID, strings.TrimSpace(pending.ExecID))
 			return
 		}
@@ -753,7 +969,7 @@ func (service *Service) observeShellStreamLocked(stream *ActiveStream, pending r
 		state.Status = backgroundShellStatusCompleted
 		state.LastActivityAt = now
 		state.CompletedAt = now
-		log.Printf("[shell-debug] Exit request_id=%s shell_id=%s exec_id=%s exit_code=%d stdout_total=%d stderr_total=%d stdout_tail=%q",
+		logger.Debugf("[shell-debug] Exit request_id=%s shell_id=%s exec_id=%s exit_code=%d stdout_total=%d stderr_total=%d stdout_tail=%q",
 			strings.TrimSpace(stream.RequestID), shellID, strings.TrimSpace(pending.ExecID),
 			exitCode, len(state.StdoutBuffer), len(state.StderrBuffer),
 			truncateForLog(state.StdoutBuffer, 500))
@@ -766,7 +982,7 @@ func (service *Service) observeShellStreamLocked(stream *ActiveStream, pending r
 		state.StderrBuffer += strings.TrimSpace(event.Rejected.GetReason())
 		state.LastActivityAt = now
 		state.CompletedAt = now
-		log.Printf("[shell-debug] Rejected request_id=%s shell_id=%s exec_id=%s reason=%q",
+		logger.Debugf("[shell-debug] Rejected request_id=%s shell_id=%s exec_id=%s reason=%q",
 			strings.TrimSpace(stream.RequestID), shellID, strings.TrimSpace(pending.ExecID),
 			strings.TrimSpace(event.Rejected.GetReason()))
 	case *agentv1.ShellStream_PermissionDenied:
@@ -778,11 +994,11 @@ func (service *Service) observeShellStreamLocked(stream *ActiveStream, pending r
 		state.StderrBuffer += strings.TrimSpace(event.PermissionDenied.GetError())
 		state.LastActivityAt = now
 		state.CompletedAt = now
-		log.Printf("[shell-debug] PermissionDenied request_id=%s shell_id=%s exec_id=%s error=%q",
+		logger.Debugf("[shell-debug] PermissionDenied request_id=%s shell_id=%s exec_id=%s error=%q",
 			strings.TrimSpace(stream.RequestID), shellID, strings.TrimSpace(pending.ExecID),
 			strings.TrimSpace(event.PermissionDenied.GetError()))
 	default:
-		log.Printf("[shell-debug] UnknownShellEvent request_id=%s shell_id=%s exec_id=%s event_type=%T",
+		logger.Debugf("[shell-debug] UnknownShellEvent request_id=%s shell_id=%s exec_id=%s event_type=%T",
 			strings.TrimSpace(stream.RequestID), shellID, strings.TrimSpace(pending.ExecID), event)
 	}
 	stream.UpdatedAt = now
@@ -949,6 +1165,20 @@ func shellToolCallIsBackgrounded(toolCall *agentv1.ToolCall) bool {
 		return false
 	}
 	return shellToolCall.GetResult().GetIsBackground()
+}
+
+func backgroundShellIDFromToolCall(toolCall *agentv1.ToolCall) string {
+	if toolCall == nil {
+		return ""
+	}
+	shellToolCall := toolCall.GetShellToolCall()
+	if shellToolCall == nil || shellToolCall.GetResult() == nil {
+		return ""
+	}
+	if success := shellToolCall.GetResult().GetSuccess(); success != nil && success.ShellId != nil {
+		return strconv.FormatUint(uint64(success.GetShellId()), 10)
+	}
+	return ""
 }
 
 func appendBackgroundShellBuffer(current string, value string) string {

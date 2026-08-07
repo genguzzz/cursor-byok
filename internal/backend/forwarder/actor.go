@@ -67,6 +67,7 @@ const (
 	streamTimerNonStreamingRecovery streamTimerKind = "non_streaming_recovery"
 	streamTimerShellForeground      streamTimerKind = "shell_foreground"
 	streamTimerShellTransportClose  streamTimerKind = "shell_transport_close"
+	streamTimerBackgroundShellUI    streamTimerKind = "background_shell_ui"
 	streamTimerCheckpointBlobs      streamTimerKind = "checkpoint_blobs"
 	streamTimerOrphanCancel         streamTimerKind = "orphan_cancel"
 )
@@ -1039,6 +1040,9 @@ func (service *Service) handleTimerEvent(stream *ActiveStream, payload *streamTi
 			return nil
 		}
 		return service.recoverShellWithoutTerminal(stream, current, shellRecoveryReasonTransportClosed)
+	case streamTimerBackgroundShellUI:
+		_, err := service.pollBackgroundShellUI(stream, payload.ExecID)
+		return err
 	case streamTimerCheckpointBlobs:
 		return service.handleCheckpointBlobTimeout(stream)
 	case streamTimerOrphanCancel:
