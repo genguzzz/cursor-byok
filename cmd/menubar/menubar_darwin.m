@@ -69,11 +69,26 @@ void setupMenubar() {
 
     [menu addItem:[NSMenuItem separatorItem]];
 
-    g_debugItem = [menu addItemWithTitle:@"🪲 调试模式"
+    g_debugItem = [menu addItemWithTitle:@"调试模式"
                                   action:@selector(toggleDebugAction:)
                            keyEquivalent:@""];
     [g_debugItem setTarget:g_handler];
     [g_debugItem setState:NSControlStateValueOff];
+    {
+        // 把 SF Symbol 作为文本附件内嵌在标题末尾，避免 setImage 产生
+        // 图像列导致其他菜单项（如"调试日志"）被缩进；template 渲染为白色。
+        NSImage *bugIcon = [NSImage imageWithSystemSymbolName:@"ladybug.fill"
+                                    accessibilityDescription:@"调试模式"];
+        if (bugIcon != nil) {
+            [bugIcon setTemplate:YES];
+            NSTextAttachment *attachment = [[NSTextAttachment alloc] init];
+            attachment.image = bugIcon;
+            attachment.bounds = NSMakeRect(0, -2, 14, 14);
+            NSMutableAttributedString *title = [[NSMutableAttributedString alloc] initWithString:@"调试模式 "];
+            [title appendAttributedString:[NSAttributedString attributedStringWithAttachment:attachment]];
+            [g_debugItem setAttributedTitle:title];
+        }
+    }
 
     g_debugLogItem = [menu addItemWithTitle:@"调试日志"
                                      action:@selector(toggleDebugLogAction:)
