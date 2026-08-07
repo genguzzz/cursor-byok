@@ -98,18 +98,16 @@ func runDebugMode() {
 	caCertPEM := certs.EmbeddedCACertPEM()
 	service := client.NewProxyService(nil, certManager, caCertPEM)
 
-	// 加载当前配置
 	cfg, err := service.LoadUserConfig()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to load config: %v\n", err)
 		os.Exit(1)
 	}
 
-	// 保存原始端口，退出时恢复。
 	origProxyListen := cfg.ProxyListenAddr
 	origBackendListen := cfg.BackendListenAddr
+	overrodePorts := *debugProxyListen != "" || *debugBackendListen != ""
 
-	// 应用端口覆盖
 	if *debugProxyListen != "" {
 		cfg.ProxyListenAddr = *debugProxyListen
 		fmt.Printf("[debug] Overriding proxy listen addr: %s\n", cfg.ProxyListenAddr)
@@ -119,15 +117,15 @@ func runDebugMode() {
 		fmt.Printf("[debug] Overriding backend listen addr: %s\n", cfg.BackendListenAddr)
 	}
 
-	// 如果有端口覆盖，需要保存以便 backend 使用新地址
-	if *debugProxyListen != "" || *debugBackendListen != "" {
+	// 端口覆盖会写共享 config.yaml；必须用 defer 保证异常/信号退出时恢复，避免污染 menubar。
+	if overrodePorts {
 		if err := service.SaveUserConfig(cfg); err != nil {
 			fmt.Fprintf(os.Stderr, "Failed to save overridden config: %v\n", err)
 			os.Exit(1)
 		}
+		defer restoreDebugPortOverrides(service, *debugProxyListen != "", origProxyListen, *debugBackendListen != "", origBackendListen)
 	}
 
-	// 如果指定了 --config，提示功能暂不支持（debug 模式应使用 menubar）。
 	if *debugConfigPath != "" {
 		fmt.Printf("[debug] --config flag is not supported in standalone mode. Use menubar instead.\n")
 	}
@@ -155,27 +153,29 @@ func runDebugMode() {
 	fmt.Println("\nShutting down...")
 	// 关闭时不清理 Cursor 设置，避免影响正在运行的 menubar
 	service.ShutdownForQuitPreserveSettings()
-
-	// 恢复原始端口配置
-	if *debugProxyListen != "" || *debugBackendListen != "" {
-		cfg, err := service.LoadUserConfig()
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Failed to load config for restore: %v\n", err)
-			return
-		}
-		if *debugProxyListen != "" {
-			cfg.ProxyListenAddr = origProxyListen
-		}
-		if *debugBackendListen != "" {
-			cfg.BackendListenAddr = origBackendListen
-		}
-		if err := service.SaveUserConfig(cfg); err != nil {
-			fmt.Fprintf(os.Stderr, "Failed to restore original ports: %v\n", err)
-		} else {
-			fmt.Println("Restored original port configuration.")
-		}
-	}
 	fmt.Println("Stopped.")
+}
+
+func restoreDebugPortOverrides(service *client.ProxyService, restoreProxy bool, origProxy string, restoreBackend bool, origBackend string) {
+	if service == nil || (!restoreProxy && !restoreBackend) {
+		return
+	}
+	cfg, err := service.LoadUserConfig()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to load config for restore: %v\n", err)
+		return
+	}
+	if restoreProxy {
+		cfg.ProxyListenAddr = origProxy
+	}
+	if restoreBackend {
+		cfg.BackendListenAddr = origBackend
+	}
+	if err := service.SaveUserConfig(cfg); err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to restore original ports: %v\n", err)
+		return
+	}
+	fmt.Println("Restored original port configuration.")
 }
 
 // runOff 清除 Cursor 代理设置并恢复原始账号鉴权，无需启动代理。

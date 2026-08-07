@@ -53,7 +53,7 @@ func toggleDebug() {
 	startDebugLocked(true)
 }
 
-func startDebugLocked(openBrowserTab bool) {
+func startDebugLocked(openBrowserTab bool) bool {
 	upstream := ""
 	if isServiceRunning() {
 		upstream = localModeProxyURL
@@ -70,19 +70,19 @@ func startDebugLocked(openBrowserTab bool) {
 	if err != nil {
 		logger.Errorf("menubar: 调试代理创建失败: %v", err)
 		updateStatus("状态: 调试启动失败", isServiceRunning(), false)
-		return
+		return false
 	}
 	if err := server.Start(); err != nil {
 		logger.Errorf("menubar: 调试代理启动失败: %v", err)
 		updateStatus("状态: 调试启动失败", isServiceRunning(), false)
-		return
+		return false
 	}
 
 	if err := ensureDebugCATrusted(); err != nil {
 		logger.Errorf("menubar: 调试 CA 准备失败: %v", err)
 		closeDebugServer(server)
 		updateStatus("状态: 调试 CA 失败", isServiceRunning(), false)
-		return
+		return false
 	}
 
 	if !debugState.wroteCursorProxy {
@@ -95,7 +95,7 @@ func startDebugLocked(openBrowserTab bool) {
 			logger.Errorf("menubar: 写入 Cursor 调试代理失败: %v", err)
 			closeDebugServer(server)
 			updateStatus("状态: 调试写代理失败", isServiceRunning(), false)
-			return
+			return false
 		}
 		debugState.prevProxyURL = prevProxy
 		debugState.wroteCursorProxy = true
@@ -110,6 +110,7 @@ func startDebugLocked(openBrowserTab bool) {
 		_ = browser.OpenURL(server.UIURL())
 	}
 	updateStatus("状态: 调试中 "+server.UIURL(), isServiceRunning(), false)
+	return true
 }
 
 func ensureDebugCATrusted() error {
@@ -145,6 +146,12 @@ func stopDebugLocked(restoreProxy bool) {
 		}
 		debugState.wroteCursorProxy = false
 		debugState.prevProxyURL = ""
+		// 本地模式未运行时清掉调试写入的 NODE_EXTRA_CA_CERTS，避免退出后仍信任内置 CA。
+		if !isServiceRunning() {
+			if err := cursor.ClearSystemNodeExtraCACerts(); err != nil {
+				logger.Errorf("menubar: 清理调试 CA env 失败: %v", err)
+			}
+		}
 	}
 
 	if debugState.enabled {
@@ -164,20 +171,37 @@ func stopDebugLocked(restoreProxy bool) {
 
 // restoreCursorProxyAfterDebug 在关闭调试后恢复代理：
 // - 本地模式仍在跑 → 写回 18080
-// - 开启调试前是本地 MITM → 写回 18080（支持 install 热重启保活）
-// - 否则恢复用户原代理；若为空/调试地址则清除注入项
+// - 否则恢复用户原代理；空/调试地址/已失效的本地 MITM 则清除注入项
 func restoreCursorProxyAfterDebug(prevProxyURL string) error {
-	if isServiceRunning() {
-		return cursor.WriteUserProxySettings(localModeProxyURL)
+	action, value := decideProxyRestoreAfterDebug(isServiceRunning(), prevProxyURL)
+	switch action {
+	case proxyRestoreWrite:
+		return cursor.WriteUserProxySettings(value)
+	case proxyRestoreClear:
+		return cursor.ClearUserProxySettings()
+	default:
+		return nil
+	}
+}
+
+type proxyRestoreAction int
+
+const (
+	proxyRestoreNone proxyRestoreAction = iota
+	proxyRestoreWrite
+	proxyRestoreClear
+)
+
+func decideProxyRestoreAfterDebug(localRunning bool, prevProxyURL string) (proxyRestoreAction, string) {
+	if localRunning {
+		return proxyRestoreWrite, localModeProxyURL
 	}
 	prev := strings.TrimSpace(prevProxyURL)
-	if cursor.IsLocalAssistantProxyURL(prev) {
-		return cursor.WriteUserProxySettings(localModeProxyURL)
+	// 本地模式已停：不要写回无监听的 18080。
+	if prev == "" || cursor.IsDebugProxyURL(prev) || cursor.IsLocalAssistantProxyURL(prev) {
+		return proxyRestoreClear, ""
 	}
-	if prev == "" || cursor.IsDebugProxyURL(prev) {
-		return cursor.ClearUserProxySettings()
-	}
-	return cursor.WriteUserProxySettings(prev)
+	return proxyRestoreWrite, prev
 }
 
 // stopDebug 供 quit 等外部路径调用，带锁。
@@ -194,6 +218,17 @@ func isDebugEnabled() bool {
 	return debugState.enabled
 }
 
+// restartDebugLocked 停掉再启调试代理；失败时完整恢复 Cursor 代理，避免悬空指向 9092。
+func restartDebugLocked(openBrowserTab bool) {
+	logger.Infof("menubar: 重启调试代理以更新 upstream")
+	stopDebugLocked(false)
+	if startDebugLocked(openBrowserTab) {
+		return
+	}
+	logger.Errorf("menubar: 调试代理重启失败，恢复 Cursor 代理设置")
+	stopDebugLocked(true)
+}
+
 // refreshDebugUpstream 在本地模式启停后重启调试代理，更新 upstream；不重复弹浏览器。
 func refreshDebugUpstream() {
 	debugMu.Lock()
@@ -201,25 +236,23 @@ func refreshDebugUpstream() {
 	if !debugState.enabled && !debugState.wroteCursorProxy {
 		return
 	}
-	logger.Infof("menubar: 本地模式变化，重启调试代理以更新 upstream")
-	stopDebugLocked(false)
-	startDebugLocked(false)
+	restartDebugLocked(false)
 }
 
 // ensureDebugProxyAfterLocalStop 关闭本地模式并完成账号恢复后，若调试仍开则继续指向 9092。
 func ensureDebugProxyAfterLocalStop() {
 	debugMu.Lock()
 	defer debugMu.Unlock()
-	if !debugState.enabled {
+	if !debugState.enabled && !debugState.wroteCursorProxy {
 		return
 	}
 	// 本地模式已完整清理，停调试时不应再写回 18080。
 	debugState.prevProxyURL = ""
 	if err := cursor.WriteUserProxySettings(debugProxyURL); err != nil {
 		logger.Errorf("menubar: 本地模式关闭后重写调试代理失败: %v", err)
+		stopDebugLocked(true)
 		return
 	}
 	debugState.wroteCursorProxy = true
-	stopDebugLocked(false)
-	startDebugLocked(false)
+	restartDebugLocked(false)
 }

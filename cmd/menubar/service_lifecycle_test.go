@@ -127,6 +127,56 @@ func TestDebugListenConstants(t *testing.T) {
 	}
 }
 
+func TestDecideProxyRestoreAfterDebug(t *testing.T) {
+	action, value := decideProxyRestoreAfterDebug(true, "http://example:1")
+	if action != proxyRestoreWrite || value != localModeProxyURL {
+		t.Fatalf("local running should write 18080, got action=%d value=%q", action, value)
+	}
+
+	action, value = decideProxyRestoreAfterDebug(false, localModeProxyURL)
+	if action != proxyRestoreClear {
+		t.Fatalf("dead local proxy should clear, got action=%d value=%q", action, value)
+	}
+
+	action, value = decideProxyRestoreAfterDebug(false, debugProxyURL)
+	if action != proxyRestoreClear {
+		t.Fatalf("debug proxy should clear, got action=%d value=%q", action, value)
+	}
+
+	action, value = decideProxyRestoreAfterDebug(false, "http://127.0.0.1:7890")
+	if action != proxyRestoreWrite || value != "http://127.0.0.1:7890" {
+		t.Fatalf("user proxy should restore, got action=%d value=%q", action, value)
+	}
+
+	action, value = decideProxyRestoreAfterDebug(false, "")
+	if action != proxyRestoreClear {
+		t.Fatalf("empty prev should clear, got action=%d value=%q", action, value)
+	}
+}
+
+func TestRestartDebugLockedRestoresOnStartFailure(t *testing.T) {
+	resetDebugState()
+	debugMu.Lock()
+	defer debugMu.Unlock()
+	debugState.enabled = true
+	debugState.wroteCursorProxy = true
+	debugState.prevProxyURL = "http://127.0.0.1:7890"
+	stopDebugLocked(false)
+	if debugState.enabled {
+		t.Fatal("stopDebugLocked(false) should clear enabled")
+	}
+	if !debugState.wroteCursorProxy {
+		t.Fatal("stopDebugLocked(false) should keep wroteCursorProxy for restart")
+	}
+	// 不触发真实 WriteUserProxySettings：只验证失败收口会清标记。
+	debugState.wroteCursorProxy = false
+	debugState.prevProxyURL = ""
+	stopDebugLocked(true)
+	if debugState.enabled || debugState.wroteCursorProxy {
+		t.Fatal("stopDebugLocked(true) should clear enabled/wroteCursorProxy")
+	}
+}
+
 func TestQuitOnceSafe(t *testing.T) {
 	quitOnce = sync.Once{}
 	var wg sync.WaitGroup

@@ -22,11 +22,14 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"syscall"
+	"time"
 	"unsafe"
 
 	"cursor/internal/appdata"
+	"cursor/internal/cursor"
 	"cursor/internal/logger"
 )
 
@@ -79,7 +82,11 @@ func main() {
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
 		for sig := range sigChan {
-			if sig == syscall.SIGTERM {
+			switch sig {
+			case syscall.SIGTERM:
+				// ./dev.sh install 用 SIGTERM 热重启，需保活 Cursor 代理。
+				quitAppPreserveSettings()
+			case syscall.SIGINT:
 				quitApp()
 			}
 		}
@@ -124,8 +131,8 @@ func toggleProxy() {
 
 	C.setProxyMenuItemEnabled(boolToInt(proxyEnabled))
 
-	// 如果服务正在运行，热重启以应用新的代理设置。
-	if isServiceRunning() {
+	// 运行中或启动中都需要热重启，否则 busy 期间改的出站代理要等下次手动开关才生效。
+	if isServiceRunning() || isServiceBusy() {
 		logger.Infof("restarting service to apply proxy change")
 		restartService()
 	}
@@ -133,9 +140,47 @@ func toggleProxy() {
 
 func quitApp() {
 	quitOnce.Do(func() {
-		logger.Infof("menubar: shutting down")
-		shutdownService()
+		logger.Infof("menubar: shutting down (full cleanup)")
+		// 用户从菜单退出：完整恢复 Cursor 设置/账号，避免留下无监听的 18080/9092。
+		stopService(true)
+		_ = waitForServiceStop(10 * time.Second)
 		stopDebug()
+		C.stopEventLoop()
+	})
+}
+
+// quitAppPreserveSettings 供 install/SIGTERM 热重启：保活本地 MITM 代理，新进程可 maybeAutoStart。
+func quitAppPreserveSettings() {
+	quitOnce.Do(func() {
+		logger.Infof("menubar: shutting down (preserve cursor proxy for hot restart)")
+		localWasActive := isServiceRunning() || isServiceBusy()
+		shutdownService()
+
+		debugMu.Lock()
+		if debugState.server != nil {
+			closeDebugServer(debugState.server)
+			debugState.server = nil
+		}
+		debugState.enabled = false
+		// 热重启优先保活 18080；纯调试则清掉 9092，避免新进程未开调试时悬空。
+		if localWasActive || cursor.IsLocalAssistantProxyURL(debugState.prevProxyURL) {
+			if err := cursor.WriteUserProxySettings(localModeProxyURL); err != nil {
+				logger.Errorf("menubar: preserve local proxy failed: %v", err)
+			}
+		} else if debugState.wroteCursorProxy {
+			prev := strings.TrimSpace(debugState.prevProxyURL)
+			if prev != "" && !cursor.IsDebugProxyURL(prev) && !cursor.IsLocalAssistantProxyURL(prev) {
+				if err := cursor.WriteUserProxySettings(prev); err != nil {
+					logger.Errorf("menubar: restore user proxy on preserve quit failed: %v", err)
+				}
+			} else if err := cursor.ClearUserProxySettings(); err != nil {
+				logger.Errorf("menubar: clear debug proxy on preserve quit failed: %v", err)
+			}
+		}
+		debugState.wroteCursorProxy = false
+		debugState.prevProxyURL = ""
+		debugMu.Unlock()
+
 		C.stopEventLoop()
 	})
 }
