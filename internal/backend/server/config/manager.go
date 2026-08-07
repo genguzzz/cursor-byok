@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"cursor/internal/logger"
 	legacyruntime "cursor/internal/runtime"
 )
 
@@ -179,6 +180,22 @@ func (manager *Manager) LegacyRuntimeSnapshot(_ context.Context) (legacyruntime.
 func (manager *Manager) setCurrent(cfg Config) {
 	next := cfg
 	manager.current.Store(&next)
+	logger.SetDebugEnabled(next.Log)
+}
+
+// SetObservabilityLogEnabled 持久化并热切换 debug 日志开关（config.log）。
+func (manager *Manager) SetObservabilityLogEnabled(ctx context.Context, enabled bool) error {
+	if manager == nil {
+		return fmt.Errorf("config manager is not initialized")
+	}
+	current := manager.Current()
+	if current.Log == enabled {
+		logger.SetDebugEnabled(enabled)
+		return nil
+	}
+	current.Log = enabled
+	_, err := manager.Save(ctx, current)
+	return err
 }
 
 func (manager *Manager) reloadIfChanged(ctx context.Context) {

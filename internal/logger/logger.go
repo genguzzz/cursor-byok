@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"cursor/internal/appdata"
@@ -26,16 +27,25 @@ const (
 )
 
 var (
-	initOnce    sync.Once
-	logFile     *os.File
-	logFilePath string
+	initOnce     sync.Once
+	logFile      *os.File
+	logFilePath  string
+	logLevel     = newLevelVar(slog.LevelInfo)
+	debugEnabled atomic.Bool
 )
+
+func newLevelVar(level slog.Level) *slog.LevelVar {
+	v := new(slog.LevelVar)
+	v.Set(level)
+	return v
+}
 
 // Init 配置默认 slog logger，并把标准库 log 接到同一输出。
 func Init() {
 	initOnce.Do(func() {
+		applyDebugLevelLocked()
 		handlers := []slog.Handler{tint.NewHandler(colorable.NewColorableStdout(), &tint.Options{
-			Level:      slog.LevelInfo,
+			Level:      logLevel,
 			TimeFormat: "15:04:05.000",
 			NoColor:    disableColor(),
 		})}
@@ -56,6 +66,26 @@ func Init() {
 			slog.Info("应用日志已写入文件", "path", logFilePath, "pid", os.Getpid())
 		}
 	})
+}
+
+// SetDebugEnabled 开关 debug 级日志（含 shell/协议刷屏日志）。默认关闭。
+// 与 config.yaml 的 log 字段对齐；菜单栏与热加载都应走此接口。
+func SetDebugEnabled(enabled bool) {
+	debugEnabled.Store(enabled)
+	applyDebugLevelLocked()
+}
+
+// DebugEnabled 返回当前是否开启 debug 日志。
+func DebugEnabled() bool {
+	return debugEnabled.Load()
+}
+
+func applyDebugLevelLocked() {
+	if debugEnabled.Load() {
+		logLevel.Set(slog.LevelDebug)
+		return
+	}
+	logLevel.Set(slog.LevelInfo)
 }
 
 // Info 输出 info 级日志。
@@ -80,6 +110,25 @@ func Infof(format string, args ...any) {
 func Errorf(format string, args ...any) {
 	Init()
 	slog.Error(formatMessage(format, args...))
+}
+
+// Debug 输出 debug 级结构化日志；未开启 debug 时为空操作。
+func Debug(msg string, args ...any) {
+	if !DebugEnabled() {
+		return
+	}
+	Init()
+	slog.Debug(msg, args...)
+}
+
+// Debugf 输出格式化的 debug 级日志；未开启 debug 时为空操作。
+// 业务侧刷屏类诊断（如 shell 流式）统一走此接口，勿再直接 log.Printf。
+func Debugf(format string, args ...any) {
+	if !DebugEnabled() {
+		return
+	}
+	Init()
+	slog.Debug(formatMessage(format, args...))
 }
 
 func formatMessage(format string, args ...any) string {
@@ -111,7 +160,7 @@ func buildFileHandler() (slog.Handler, string, error) {
 	}
 	logFile = writer.file
 	return tint.NewHandler(writer, &tint.Options{
-		Level:      slog.LevelInfo,
+		Level:      logLevel,
 		TimeFormat: time.RFC3339,
 		NoColor:    true,
 	}), path, nil

@@ -14,6 +14,7 @@ extern void stopEventLoop();
 extern void updateMenubarStatus(const char *status, int running, int busy);
 extern void setProxyMenuItemEnabled(int enabled);
 extern void setDebugMenuItemEnabled(int enabled);
+extern void setDebugLogMenuItemEnabled(int enabled);
 */
 import "C"
 
@@ -78,6 +79,10 @@ func main() {
 	proxyEnabled = readProxyEnabled()
 	C.setProxyMenuItemEnabled(boolToInt(proxyEnabled))
 
+	debugLogEnabled := readDebugLogEnabled()
+	logger.SetDebugEnabled(debugLogEnabled)
+	C.setDebugLogMenuItemEnabled(boolToInt(debugLogEnabled))
+
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
@@ -115,6 +120,8 @@ func handleActions() {
 		case 6:
 			toggleDebug()
 			C.setDebugMenuItemEnabled(boolToInt(isDebugEnabled()))
+		case 7:
+			toggleDebugLog()
 		}
 	}
 }
@@ -135,6 +142,30 @@ func toggleProxy() {
 	if isServiceRunning() || isServiceBusy() {
 		logger.Infof("restarting service to apply proxy change")
 		restartService()
+	}
+}
+
+func readDebugLogEnabled() bool {
+	enabled, err := readDebugLogEnabledFromFile(configPath())
+	if err != nil {
+		logger.Errorf("read debug log config failed: %v", err)
+		return false
+	}
+	return enabled
+}
+
+func toggleDebugLog() {
+	next := !logger.DebugEnabled()
+	if err := writeDebugLogEnabledToFile(configPath(), next); err != nil {
+		logger.Errorf("write debug log config failed: %v", err)
+		return
+	}
+	logger.SetDebugEnabled(next)
+	C.setDebugLogMenuItemEnabled(boolToInt(next))
+	if next {
+		logger.Infof("调试日志已开启（写入 app.log；含 shell 流式诊断）")
+	} else {
+		logger.Infof("调试日志已关闭")
 	}
 }
 

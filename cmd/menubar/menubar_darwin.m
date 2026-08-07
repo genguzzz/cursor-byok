@@ -11,6 +11,7 @@
 - (void)toggleProxyAction:(id)sender { menuCallback(4); }
 - (void)restoreAuthAction:(id)sender { menuCallback(5); }
 - (void)toggleDebugAction:(id)sender { menuCallback(6); }
+- (void)toggleDebugLogAction:(id)sender { menuCallback(7); }
 @end
 
 static NSStatusItem   *g_statusItem    = nil;
@@ -18,6 +19,7 @@ static NSMenuItem     *g_localModeItem = nil;
 static NSMenuItem     *g_statusDisplay = nil;
 static NSMenuItem     *g_proxyItem     = nil;
 static NSMenuItem     *g_debugItem     = nil;
+static NSMenuItem     *g_debugLogItem  = nil;
 static MenuHandler    *g_handler       = nil;
 
 void setupMenubar() {
@@ -73,6 +75,12 @@ void setupMenubar() {
     [g_debugItem setTarget:g_handler];
     [g_debugItem setState:NSControlStateValueOff];
 
+    g_debugLogItem = [menu addItemWithTitle:@"调试日志 (app.log)"
+                                     action:@selector(toggleDebugLogAction:)
+                              keyEquivalent:@""];
+    [g_debugLogItem setTarget:g_handler];
+    [g_debugLogItem setState:NSControlStateValueOff];
+
     [menu addItem:[NSMenuItem separatorItem]];
 
     NSMenuItem *quitItem = [menu addItemWithTitle:@"退出"
@@ -127,6 +135,14 @@ void setDebugMenuItemEnabled(int enabled) {
     dispatch_async(dispatch_get_main_queue(), ^{
         if (g_debugItem) {
             [g_debugItem setState:(enabled ? NSControlStateValueOn : NSControlStateValueOff)];
+        }
+    });
+}
+
+void setDebugLogMenuItemEnabled(int enabled) {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        if (g_debugLogItem) {
+            [g_debugLogItem setState:(enabled ? NSControlStateValueOn : NSControlStateValueOff)];
         }
     });
 }

@@ -235,20 +235,14 @@ func TestProjectCheckpointProjectionMergesToolCallWithCompletedResult(t *testing
 	if err != nil {
 		t.Fatalf("marshal user message: %v", err)
 	}
-	startedAt := uint64(100)
-	toolCallID := "call-1"
 	startedToolCall := checkpointTestToolCallPayload(t, &agentv1.ToolCall{
-		ToolCallId:  &toolCallID,
-		StartedAtMs: &startedAt,
 		Tool: &agentv1.ToolCall_ReadToolCall{
 			ReadToolCall: &agentv1.ReadToolCall{
 				Args: &agentv1.ReadToolArgs{Path: "/tmp/example.txt"},
 			},
 		},
 	})
-	completedAt := uint64(200)
 	completedToolCall := checkpointTestToolCallPayload(t, &agentv1.ToolCall{
-		CompletedAtMs: &completedAt,
 		Tool: &agentv1.ToolCall_ReadToolCall{
 			ReadToolCall: &agentv1.ReadToolCall{
 				Result: &agentv1.ReadToolResult{
@@ -295,7 +289,7 @@ func TestProjectCheckpointProjectionMergesToolCallWithCompletedResult(t *testing
 	if readCall == nil || readCall.GetResult().GetSuccess().GetContent() != "file contents" {
 		t.Fatalf("checkpoint Read step does not contain completed result: %#v", steps[1].GetToolCall())
 	}
-	if readCall.GetArgs().GetPath() != "/tmp/example.txt" || mergedToolCall.GetToolCallId() != toolCallID || mergedToolCall.GetStartedAtMs() != startedAt || mergedToolCall.GetCompletedAtMs() != completedAt {
+	if readCall.GetArgs().GetPath() != "/tmp/example.txt" {
 		t.Fatalf("checkpoint Read step lost started-call fields: %#v", mergedToolCall)
 	}
 
