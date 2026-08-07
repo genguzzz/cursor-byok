@@ -17,6 +17,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"cursor/internal/netproxy"
@@ -338,6 +339,7 @@ type CodeBuddyConfigData struct {
 
 // CodeBuddyModelDiscovery 用于从 copilot.tencent.com/v3/config 获取可用模型列表。
 type CodeBuddyModelDiscovery struct {
+	mu       sync.Mutex
 	timeout  time.Duration
 	cacheTTL time.Duration
 	cachedAt time.Time
@@ -384,6 +386,9 @@ func discoveryClientForProxy(proxyURL string, timeout time.Duration) *http.Clien
 
 // FetchModels 从 /v3/config 获取可用模型列表（带缓存）。
 func (d *CodeBuddyModelDiscovery) FetchModels(ctx context.Context, apiKey string, xUserID string, proxyURL string) ([]CodeBuddyModelInfo, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
 	if time.Since(d.cachedAt) < d.cacheTTL && len(d.cached) > 0 {
 		return d.cached, nil
 	}

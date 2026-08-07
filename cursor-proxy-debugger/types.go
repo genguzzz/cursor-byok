@@ -3,7 +3,8 @@ package proxydebugger
 import "time"
 
 const (
-	defaultProxyAddr       = "127.0.0.1:9090"
+	// 默认代理端口 9092，避开本机 Proxyman 常用的 9090。
+	defaultProxyAddr       = "127.0.0.1:9092"
 	defaultUIAddr          = "127.0.0.1:9091"
 	defaultTargetHost      = "api2.cursor.sh"
 	defaultMaxExchanges    = 200
@@ -16,6 +17,9 @@ type Config struct {
 	ProxyAddr       string
 	UIAddr          string
 	TargetHost      string
+	// UpstreamProxy 可选。例如本地模式 MITM `http://127.0.0.1:18080`，
+	// 用于 Cursor → 调试代理 → 本地 MITM → backend 的抓包链路。
+	UpstreamProxy   string
 	MaxExchanges    int
 	MaxCaptureBytes int
 	MaxFrames       int

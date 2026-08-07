@@ -3,12 +3,14 @@ package proxydebugger
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"io"
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -129,14 +131,19 @@ func (server *Server) newProxyHandler() (*goproxy.ProxyHttpServer, error) {
 			exchange.DurationMS = elapsedMS(exchange.StartedAt)
 		})
 	}
+	proxyFunc, tlsConfig, err := server.upstreamTransportOptions()
+	if err != nil {
+		return nil, err
+	}
 	proxy.Tr = &http.Transport{
-		Proxy:                 nil,
+		Proxy:                 proxyFunc,
 		DialContext:           (&net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
 		ForceAttemptHTTP2:     true,
 		MaxIdleConns:          200,
 		IdleConnTimeout:       90 * time.Second,
 		TLSHandshakeTimeout:   10 * time.Second,
 		ExpectContinueTimeout: 1 * time.Second,
+		TLSClientConfig:       tlsConfig,
 	}
 
 	caCertificate, err := server.certManager.CATLSCertificate()
@@ -407,6 +414,30 @@ func (server *Server) matchesTargetHost(host string) bool {
 	}
 	target := strings.TrimSpace(strings.ToLower(server.config.TargetHost))
 	return host == target
+}
+
+// upstreamTransportOptions 配置出站：可选上游代理，并在走本地 MITM 时信任内置 CA。
+func (server *Server) upstreamTransportOptions() (func(*http.Request) (*url.URL, error), *tls.Config, error) {
+	upstream := strings.TrimSpace(server.config.UpstreamProxy)
+	if upstream == "" {
+		return nil, nil, nil
+	}
+	parsed, err := url.Parse(upstream)
+	if err != nil {
+		return nil, nil, fmt.Errorf("解析 UpstreamProxy 失败：%w", err)
+	}
+	if parsed.Scheme == "" || parsed.Host == "" {
+		return nil, nil, fmt.Errorf("UpstreamProxy 无效：%q", upstream)
+	}
+
+	rootCAs, err := x509.SystemCertPool()
+	if err != nil || rootCAs == nil {
+		rootCAs = x509.NewCertPool()
+	}
+	if ok := rootCAs.AppendCertsFromPEM(certs.EmbeddedCACertPEM()); !ok {
+		return nil, nil, errors.New("加载内置 CA 到信任池失败")
+	}
+	return http.ProxyURL(parsed), &tls.Config{RootCAs: rootCAs, MinVersion: tls.VersionTLS12}, nil
 }
 
 func exchangeID(context *goproxy.ProxyCtx) string {

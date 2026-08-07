@@ -112,6 +112,7 @@ type StreamEvent struct {
 	End                  bool
 	TerminalErrorCode    string
 	TerminalErrorMessage string
+	PublishedAt          time.Time // broker Publish 时打的时间戳
 }
 
 type StreamSubscriber struct {

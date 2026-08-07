@@ -10,12 +10,14 @@
 - (void)quitAction:(id)sender       { menuCallback(3); }
 - (void)toggleProxyAction:(id)sender { menuCallback(4); }
 - (void)restoreAuthAction:(id)sender { menuCallback(5); }
+- (void)toggleDebugAction:(id)sender { menuCallback(6); }
 @end
 
 static NSStatusItem   *g_statusItem    = nil;
 static NSMenuItem     *g_localModeItem = nil;
 static NSMenuItem     *g_statusDisplay = nil;
 static NSMenuItem     *g_proxyItem     = nil;
+static NSMenuItem     *g_debugItem     = nil;
 static MenuHandler    *g_handler       = nil;
 
 void setupMenubar() {
@@ -58,10 +60,18 @@ void setupMenubar() {
                                keyEquivalent:@""];
     [g_statusDisplay setEnabled:NO];
 
-    NSMenuItem *restoreItem = [menu addItemWithTitle:@"恢复 Cursor 账号"
+    NSMenuItem *restoreItem = [menu addItemWithTitle:@"强制恢复账号与设置"
                                               action:@selector(restoreAuthAction:)
                                        keyEquivalent:@""];
     [restoreItem setTarget:g_handler];
+
+    [menu addItem:[NSMenuItem separatorItem]];
+
+    g_debugItem = [menu addItemWithTitle:@"🪲 调试模式 (9092→9091)"
+                                  action:@selector(toggleDebugAction:)
+                           keyEquivalent:@""];
+    [g_debugItem setTarget:g_handler];
+    [g_debugItem setState:NSControlStateValueOff];
 
     [menu addItem:[NSMenuItem separatorItem]];
 
@@ -109,6 +119,14 @@ void setProxyMenuItemEnabled(int enabled) {
     dispatch_async(dispatch_get_main_queue(), ^{
         if (g_proxyItem) {
             [g_proxyItem setState:(enabled ? NSControlStateValueOn : NSControlStateValueOff)];
+        }
+    });
+}
+
+void setDebugMenuItemEnabled(int enabled) {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        if (g_debugItem) {
+            [g_debugItem setState:(enabled ? NSControlStateValueOn : NSControlStateValueOff)];
         }
     });
 }

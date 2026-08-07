@@ -69,8 +69,11 @@ func main() {
 	<-sig
 
 	fmt.Println("\nShutting down...")
-	service.ShutdownForQuit()
-	fmt.Println("Stopped.")
+	// 保留 Cursor 代理设置，便于 ./dev.sh install 热重启后继续拦截；
+	// 需要完整恢复账号/设置时请运行: cursor-local-assistant off
+	service.ShutdownForQuitPreserveSettings()
+	fmt.Println("Stopped (Cursor proxy settings preserved).")
+	fmt.Println("Run 'cursor-local-assistant off' to restore Cursor account/settings.")
 }
 
 func status(running bool) string {
@@ -102,6 +105,10 @@ func runDebugMode() {
 		os.Exit(1)
 	}
 
+	// 保存原始端口，退出时恢复。
+	origProxyListen := cfg.ProxyListenAddr
+	origBackendListen := cfg.BackendListenAddr
+
 	// 应用端口覆盖
 	if *debugProxyListen != "" {
 		cfg.ProxyListenAddr = *debugProxyListen
@@ -120,10 +127,9 @@ func runDebugMode() {
 		}
 	}
 
-	// 如果指定了 --config，则使用自定义配置文件
+	// 如果指定了 --config，提示功能暂不支持（debug 模式应使用 menubar）。
 	if *debugConfigPath != "" {
-		fmt.Printf("[debug] Using custom config: %s\n", *debugConfigPath)
-		// config path 在 NewProxyService 时已固定，这里通过重新加载覆盖
+		fmt.Printf("[debug] --config flag is not supported in standalone mode. Use menubar instead.\n")
 	}
 
 	fmt.Println("Starting cursor-byok local assistant (debug mode)...")
@@ -158,10 +164,10 @@ func runDebugMode() {
 			return
 		}
 		if *debugProxyListen != "" {
-			cfg.ProxyListenAddr = "127.0.0.1:18080"
+			cfg.ProxyListenAddr = origProxyListen
 		}
 		if *debugBackendListen != "" {
-			cfg.BackendListenAddr = "127.0.0.1:18090"
+			cfg.BackendListenAddr = origBackendListen
 		}
 		if err := service.SaveUserConfig(cfg); err != nil {
 			fmt.Fprintf(os.Stderr, "Failed to restore original ports: %v\n", err)

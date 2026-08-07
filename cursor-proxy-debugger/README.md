@@ -14,17 +14,18 @@ go run ./cmd/cursor-proxy-debugger
 
 默认监听：
 
-- HTTP/HTTPS 代理：`127.0.0.1:9090`
+- HTTP/HTTPS 代理：`127.0.0.1:9092`（避开 Proxyman 常用的 9090）
 - 调试界面：`http://127.0.0.1:9091`
 - MITM 目标：`api2.cursor.sh`
+- 可选上游：`-upstream-proxy http://127.0.0.1:18080`（本地模式抓包）
 
 启动后会自动打开调试界面。
 
 ## 配置 Cursor
 
-工具不会自动修改 Cursor。启动后需要手动完成以下配置：
+工具不会自动修改 Cursor（菜单栏「调试模式」会一键完成）。独立启动后需要手动完成以下配置：
 
-1. 打开 Cursor 的代理设置，将代理地址修改为工具启动时显示的地址，默认是 `http://127.0.0.1:9090`。
+1. 打开 Cursor 的代理设置，将代理地址修改为工具启动时显示的地址，默认是 `http://127.0.0.1:9092`。
 2. 打开 Cursor 的 Network 设置，启用 HTTP/1.1。
 3. 从 `http://127.0.0.1:9091/api/ca.crt` 下载代理 CA 证书，并确保 Cursor 信任该证书。
 
@@ -39,9 +40,10 @@ go build -o bin/cursor-proxy-debugger ./cmd/cursor-proxy-debugger
 ## 参数
 
 ```text
--proxy-addr       代理监听地址，默认 127.0.0.1:9090
+-proxy-addr       代理监听地址，默认 127.0.0.1:9092
 -ui-addr          调试界面监听地址，默认 127.0.0.1:9091
 -target-host      需要解密的目标主机，默认 api2.cursor.sh
+-upstream-proxy   可选上游代理，例如本地模式 http://127.0.0.1:18080
 -max-exchanges    内存中保留的最大请求数，默认 200
 -open             启动后是否打开浏览器，默认 true
 ```

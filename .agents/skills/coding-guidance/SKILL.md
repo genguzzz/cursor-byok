@@ -31,16 +31,18 @@ description: 本地模式实现指南
 go run ./cmd/cursor-proxy-debugger
 ```
 
-默认代理地址是 `http://127.0.0.1:9090`，调试界面是 `http://127.0.0.1:9091`。该工具可以辅助查看：
+默认代理地址是 `http://127.0.0.1:9092`（避开 Proxyman 常用的 9090），调试界面是 `http://127.0.0.1:9091`。该工具可以辅助查看：
 
 - `agent.v1.AgentService/RunSSE`
 - `aiserver.v1.BidiService/BidiAppend`
 - Connect 帧、gzip 压缩内容、Protobuf 解码结果和原始二进制数据
 - 同一 `request_id` 对应的上下行消息
 
-开发者启动工具后，需要自行完成以下配置：
+**菜单栏一键调试**：勾选「🪲 调试模式 (9092→9091)」会自动启动该代理、写入 Cursor 代理、信任 CA，并打开调试 UI。本地模式开启时 upstream 指向 `18080` 以抓本地协议。
 
-1. 在 Cursor 的代理设置中，将代理修改为工具启动时显示的代理地址，默认是 `http://127.0.0.1:9090`。
+独立手动启动时，开发者需要自行完成以下配置：
+
+1. 在 Cursor 的代理设置中，将代理修改为工具启动时显示的代理地址，默认是 `http://127.0.0.1:9092`。
 2. 在 Cursor 的 Network 设置中开启 HTTP/1.1。
 3. 从 `http://127.0.0.1:9091/api/ca.crt` 下载代理 CA 证书，并确保 Cursor 信任该证书。
 

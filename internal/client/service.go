@@ -24,7 +24,7 @@ const (
 	// backendReadyTimeout 表示等待嵌入式 backend 就绪的最长时间。
 	backendReadyTimeout = 15 * time.Second
 	// backendHealthCheckInterval 表示轮询 backend 健康检查的间隔。
-	backendHealthCheckInterval = 1 * time.Second
+	backendHealthCheckInterval = 200 * time.Millisecond
 	// backendHealthCheckAttemptTimeout 限制单次健康检查耗时，避免一次阻塞吃掉全部启动预算。
 	backendHealthCheckAttemptTimeout = 1 * time.Second
 )
@@ -152,17 +152,20 @@ func (s *ProxyService) waitForBackend(ctx context.Context) error {
 	if s == nil || s.backendHost == nil {
 		return nil
 	}
+	var lastErr error
+	check := func() error {
+		healthCtx, healthCancel := context.WithTimeout(ctx, backendHealthCheckAttemptTimeout)
+		defer healthCancel()
+		return s.backendHost.HealthCheck(healthCtx)
+	}
+	if err := check(); err == nil {
+		return nil
+	} else {
+		lastErr = err
+	}
 	ticker := time.NewTicker(backendHealthCheckInterval)
 	defer ticker.Stop()
-	var lastErr error
 	for {
-		healthCtx, healthCancel := context.WithTimeout(ctx, backendHealthCheckAttemptTimeout)
-		err := s.backendHost.HealthCheck(healthCtx)
-		healthCancel()
-		if err == nil {
-			return nil
-		}
-		lastErr = err
 		select {
 		case <-ctx.Done():
 			if lastErr != nil {
@@ -170,6 +173,11 @@ func (s *ProxyService) waitForBackend(ctx context.Context) error {
 			}
 			return ctx.Err()
 		case <-ticker.C:
+			if err := check(); err == nil {
+				return nil
+			} else {
+				lastErr = err
+			}
 		}
 	}
 }

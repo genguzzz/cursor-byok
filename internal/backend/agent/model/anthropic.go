@@ -179,13 +179,25 @@ func anthropicAdapterClientForRequest(adapter *AnthropicAdapter, req StreamReque
 	if err != nil {
 		return adapter.client
 	}
-	return &http.Client{
-		Transport: &http.Transport{
-			Proxy:       http.ProxyURL(parsed),
-			DialContext: adapter.client.Transport.(*http.Transport).DialContext,
-		},
-		Timeout: adapter.client.Timeout,
+	transport := &http.Transport{
+		Proxy: http.ProxyURL(parsed),
 	}
+	copyDialContextFromTransport(transport, adapter.client.Transport)
+	return &http.Client{
+		Transport: transport,
+		Timeout:   adapter.client.Timeout,
+	}
+}
+
+func copyDialContextFromTransport(dst *http.Transport, src http.RoundTripper) {
+	if src == nil {
+		return
+	}
+	baseTransport, ok := src.(*http.Transport)
+	if !ok || baseTransport == nil {
+		return
+	}
+	dst.DialContext = baseTransport.DialContext
 }
 
 // setRawHeader 直接操作 http.Header map 写入指定大小写的 header，绕过 Go 的
@@ -267,14 +279,18 @@ func applyAnthropicTclaudeBody(body map[string]any) {
 	if len(body) == 0 {
 		return
 	}
-	body["metadata"] = map[string]any{
-		"user_id": buildAnthropicMetadataUserID(),
+	if _, hasMetadata := body["metadata"]; !hasMetadata {
+		body["metadata"] = map[string]any{
+			"user_id": buildAnthropicMetadataUserID(),
+		}
 	}
-	body["context_management"] = map[string]any{
-		"edits": []map[string]any{{
-			"type": "clear_thinking_20251015",
-			"keep": "all",
-		}},
+	if _, hasContextMgmt := body["context_management"]; !hasContextMgmt {
+		body["context_management"] = map[string]any{
+			"edits": []map[string]any{{
+				"type": "clear_thinking_20251015",
+				"keep": "all",
+			}},
+		}
 	}
 }
 

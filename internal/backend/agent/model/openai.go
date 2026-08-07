@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -865,6 +866,8 @@ func (adapter *OpenAIAdapter) streamChatCompletions(ctx context.Context, req Str
 			fc := chunk.Choices[0].Delta.FunctionCall
 			if strings.TrimSpace(fc.Name) != "" || fc.Arguments != "" {
 				chunk.Choices[0].Delta.ToolCalls = []openAIToolCallDelta{{
+					Index: 0,
+					ID:    fmt.Sprintf("call_legacy_%s", fc.Name),
 					Function: struct {
 						Name      string `json:"name"`
 						Arguments string `json:"arguments"`
@@ -969,6 +972,8 @@ func (adapter *OpenAIAdapter) streamChatCompletions(ctx context.Context, req Str
 	for _, accumulator := range pendingTools {
 		if err := emitCompletedOpenAITool(sink, currentModel, accumulator); err != nil {
 			// 无 finish_reason 时跳过残缺 tool，避免整轮失败；非法参数不会写入 history。
+			log.Printf("[WARN] openai: skip incomplete tool call id=%s name=%s: %v",
+				accumulator.CallID, accumulator.Name, err)
 			continue
 		}
 		streamIdle.MarkEffectiveContent()

@@ -33,8 +33,8 @@ func main() {
 
 	// 探测一下 proxy 实际可达性
 	if pu != nil {
-		conn, err := http.DefaultTransport.(*http.Transport).DialContext == nil
-		fmt.Printf("default transport dial: %v\n", conn)
+		_ = http.DefaultTransport.(*http.Transport).DialContext
+		fmt.Println("default transport dial: ok")
 	}
 	_ = url.Parse
 }

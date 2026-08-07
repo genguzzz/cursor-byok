@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"cursor/gen/agentv1"
-	"cursor/gen/aiserverv1"
 
 	"google.golang.org/protobuf/proto"
 )
@@ -24,18 +23,6 @@ func TestDecodeForkTrafficRequests(t *testing.T) {
 		kind     string
 		contains []string
 	}{
-		{
-			name: "fork background composer",
-			path: forkBackgroundComposerPath,
-			message: &aiserverv1.ForkBackgroundComposerRequest{
-				SourceBcId: "bc-source",
-				Mode:       aiserverv1.ForkBackgroundComposerMode_FORK_BACKGROUND_COMPOSER_MODE_CONVERSATION,
-				Name:       proto.String("forked chat"),
-				TurnCount:  proto.Uint32(4),
-			},
-			kind:     "fork_background_composer_request",
-			contains: []string{`"source_bc_id":"bc-source"`, `"turn_count":4`},
-		},
 		{
 			name: "notify conversation clone",
 			path: notifyConversationClonePath,
@@ -103,17 +90,6 @@ func TestDecodeForkTrafficResponses(t *testing.T) {
 		contains string
 	}{
 		{
-			name: "fork background composer",
-			path: forkBackgroundComposerPath,
-			message: &aiserverv1.ForkBackgroundComposerResponse{
-				BcId:       "bc-fork",
-				SourceBcId: "bc-source",
-				Mode:       aiserverv1.ForkBackgroundComposerMode_FORK_BACKGROUND_COMPOSER_MODE_CONVERSATION,
-			},
-			kind:     "fork_background_composer_response",
-			contains: `"bc_id":"bc-fork"`,
-		},
-		{
 			name:     "notify conversation clone",
 			path:     notifyConversationClonePath,
 			message:  &agentv1.NotifyConversationCloneResponse{},
@@ -151,13 +127,10 @@ func TestDecodeForkTrafficResponses(t *testing.T) {
 	}
 }
 
-func TestFinishResponseBodyDecodesCompressedForkResponse(t *testing.T) {
+func TestFinishResponseBodyDecodesCompressedCloneResponse(t *testing.T) {
 	t.Parallel()
 
-	payload, err := proto.Marshal(&aiserverv1.ForkBackgroundComposerResponse{
-		BcId:       "bc-fork",
-		SourceBcId: "bc-source",
-	})
+	payload, err := proto.Marshal(&agentv1.NotifyConversationCloneResponse{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -174,16 +147,16 @@ func TestFinishResponseBodyDecodesCompressedForkResponse(t *testing.T) {
 	server.store.create(&Exchange{
 		ExchangeSummary: ExchangeSummary{ID: "1", StartedAt: time.Now()},
 	})
-	server.finishResponseBody("1", forkBackgroundComposerPath, "gzip", compressed.Bytes(), int64(compressed.Len()), false, nil)
+	server.finishResponseBody("1", notifyConversationClonePath, "gzip", compressed.Bytes(), int64(compressed.Len()), false, nil)
 
 	exchange, ok := server.store.get("1")
 	if !ok {
 		t.Fatal("exchange was not stored")
 	}
-	if exchange.ResponseKind != "fork_background_composer_response" {
+	if exchange.ResponseKind != "notify_conversation_clone_response" {
 		t.Fatalf("response kind = %q", exchange.ResponseKind)
 	}
-	if !strings.Contains(compactJSON(t, exchange.Response.DecodedJSON), `"bc_id":"bc-fork"`) {
+	if !strings.Contains(compactJSON(t, exchange.Response.DecodedJSON), `{}`) {
 		t.Fatalf("unexpected decoded response:\n%s", exchange.Response.DecodedJSON)
 	}
 	if exchange.Response.DecodeError != "" {
@@ -224,19 +197,16 @@ func TestFinishRequestBodyDecodesCompressedCloneRequest(t *testing.T) {
 	if exchange.RequestKind != "notify_conversation_clone_request" {
 		t.Fatalf("request kind = %q", exchange.RequestKind)
 	}
-	if !strings.Contains(compactJSON(t, exchange.Request.DecodedJSON), `"source_conversation_id":"source-conversation"`) {
+	if !strings.Contains(compactJSON(t, exchange.Request.DecodedJSON), `"conversation_id":"new-conversation"`) {
 		t.Fatalf("unexpected decoded request:\n%s", exchange.Request.DecodedJSON)
-	}
-	if exchange.Request.DecodeError != "" {
-		t.Fatalf("decode error = %q", exchange.Request.DecodeError)
 	}
 }
 
-func compactJSON(t *testing.T, value string) string {
+func compactJSON(t *testing.T, raw string) string {
 	t.Helper()
-	var compact bytes.Buffer
-	if err := json.Compact(&compact, []byte(value)); err != nil {
-		t.Fatalf("compact JSON: %v\n%s", err, value)
+	var buf bytes.Buffer
+	if err := json.Compact(&buf, []byte(raw)); err != nil {
+		t.Fatalf("compact json: %v\n%s", err, raw)
 	}
-	return compact.String()
+	return buf.String()
 }

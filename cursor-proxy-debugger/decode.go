@@ -22,7 +22,6 @@ const maxConnectFrameBytes = 64 << 20
 
 const (
 	bidiAppendPath              = "/aiserver.v1.BidiService/BidiAppend"
-	forkBackgroundComposerPath  = "/aiserver.v1.BackgroundComposerService/ForkBackgroundComposer"
 	notifyConversationClonePath = "/agent.v1.AgentService/NotifyConversationClone"
 	uploadConversationBlobsPath = "/agent.v1.AgentService/UploadConversationBlobs"
 )
@@ -195,8 +194,6 @@ func decodeUnaryResponse(path string, payload []byte) (decodedJSON string, kind 
 
 func unaryRequestMessage(path string) (proto.Message, string) {
 	switch path {
-	case forkBackgroundComposerPath:
-		return &aiserverv1.ForkBackgroundComposerRequest{}, "fork_background_composer_request"
 	case notifyConversationClonePath:
 		return &agentv1.NotifyConversationCloneRequest{}, "notify_conversation_clone_request"
 	case uploadConversationBlobsPath:
@@ -208,8 +205,6 @@ func unaryRequestMessage(path string) (proto.Message, string) {
 
 func unaryResponseMessage(path string) (proto.Message, string) {
 	switch path {
-	case forkBackgroundComposerPath:
-		return &aiserverv1.ForkBackgroundComposerResponse{}, "fork_background_composer_response"
 	case notifyConversationClonePath:
 		return &agentv1.NotifyConversationCloneResponse{}, "notify_conversation_clone_response"
 	case uploadConversationBlobsPath:

@@ -33,12 +33,19 @@ fail()  { echo -e "${RED}    ✗ $1${NC}"; }
 kill_existing() {
     info "清理已有进程..."
     local killed=0
-    if pgrep -f "$APP_NAME" >/dev/null 2>&1; then
-        pkill -f "$APP_NAME" 2>/dev/null || true
+    # 精确匹配安装路径下的二进制，避免误杀 Cursor 扩展宿主或其他进程
+    local menubar_path="$INSTALL_PATH/Contents/MacOS/$APP_NAME"
+    local cli_path="$INSTALL_PATH/Contents/MacOS/$CLI_NAME"
+    local local_menubar="$PROJECT_ROOT/$APP_NAME"
+    local local_cli="$PROJECT_ROOT/$CLI_NAME"
+    if pgrep -f "$menubar_path" >/dev/null 2>&1 || pgrep -f "$local_menubar" >/dev/null 2>&1; then
+        pkill -f "$menubar_path" 2>/dev/null || true
+        pkill -f "$local_menubar" 2>/dev/null || true
         killed=1
     fi
-    if pgrep -f "$CLI_NAME" | grep -v $$ >/dev/null 2>&1; then
-        pkill -f "$CLI_NAME" 2>/dev/null || true
+    if pgrep -f "$cli_path" >/dev/null 2>&1 || pgrep -f "$local_cli" >/dev/null 2>&1; then
+        pkill -f "$cli_path" 2>/dev/null || true
+        pkill -f "$local_cli" 2>/dev/null || true
         killed=1
     fi
     if [ "$killed" = "1" ]; then
@@ -151,7 +158,9 @@ PLIST
     echo "  启动:  open '$INSTALL_PATH'"
     echo "  卸载:  rm -rf '$INSTALL_PATH'"
     echo ""
-    info "提示: 首次运行可能需要在系统设置中允许运行"
+    info "正在启动菜单栏程序（保留 Cursor 代理设置，无需重启 Cursor）..."
+    open "$INSTALL_PATH"
+    ok "已启动。若之前本地模式开着，将自动重新拦截流量"
 }
 
 # ── 恢复账号 ──────────────────────────────────────────────────────────────

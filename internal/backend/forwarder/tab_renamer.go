@@ -250,6 +250,8 @@ func (service *Service) lookupTabRenamerChannelIDByModelField(target string) str
 		if strings.TrimSpace(adapter.ID) == "" {
 			normalized, err := serverconfig.NormalizeModelAdapterConfigs([]serverconfig.ModelAdapterConfig{adapter})
 			if err != nil || len(normalized) == 0 {
+				log.Printf("forwarder tab_renamer: skip adapter with empty ID modelID=%s: normalize error=%v",
+					adapter.ModelID, err)
 				continue
 			}
 			return strings.TrimSpace(normalized[0].ID)

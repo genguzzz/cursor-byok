@@ -138,8 +138,11 @@ func (host *Host) Start() error {
 	if host.httpServer != nil {
 		return fmt.Errorf("backend is already running")
 	}
-	if err := host.rebuildLocked(cfg); err != nil {
-		return err
+	// NewHost 已构建 mux；Stop 后复用 Host 时不重复 rebuild（避免重复扫描 history）。
+	if host.mux == nil || host.listenAddr != cfg.BackendListenAddr {
+		if err := host.rebuildLocked(cfg); err != nil {
+			return err
+		}
 	}
 
 	httpServer := &http.Server{
@@ -194,6 +197,11 @@ func (host *Host) HealthCheck(ctx context.Context) error {
 	}
 	if runErr := host.LastRunError(); runErr != nil {
 		return runErr
+	}
+	if host.IsRunning() {
+		if err := host.InProcessHealthCheck(); err == nil {
+			return nil
+		}
 	}
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, host.BaseURL()+healthPath, nil)
 	if err != nil {

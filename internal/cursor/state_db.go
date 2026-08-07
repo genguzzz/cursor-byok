@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -96,6 +97,8 @@ func BackupCursorAuthState() error {
 	err = db.QueryRow("SELECT value FROM ItemTable WHERE key = ?", cursorStateStatsigBootstrapKey).Scan(&statsigRaw)
 	if err == nil {
 		backup.StatsigBootstrap = base64.StdEncoding.EncodeToString(statsigRaw)
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		logger.Errorf("读取 cursorAuth/statsigBootstrap 失败: %v，备份将不含此字段", err)
 	}
 
 	data, err := json.MarshalIndent(backup, "", "  ")

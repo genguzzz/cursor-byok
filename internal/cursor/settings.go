@@ -180,6 +180,52 @@ func WriteUserProxySettings(proxyURL string) error {
 	return nil
 }
 
+// ReadUserProxyURL 读取 Cursor settings.json 中的 http.proxy；缺失时返回空字符串。
+func ReadUserProxyURL() (string, error) {
+	settingsPath, err := resolveCursorSettingsPath()
+	if err != nil {
+		return "", err
+	}
+	data, err := os.ReadFile(settingsPath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return "", nil
+		}
+		return "", fmt.Errorf("读取 Cursor 配置失败: %w", err)
+	}
+	if len(bytes.TrimSpace(data)) == 0 {
+		return "", nil
+	}
+	settings, err := decodeCursorSettingsJSONC(data)
+	if err != nil {
+		return "", fmt.Errorf("解析 Cursor 配置失败: %w", err)
+	}
+	raw, _ := settings["http.proxy"].(string)
+	return strings.TrimSpace(raw), nil
+}
+
+// IsLocalAssistantProxyURL 判断是否为本仓库本地模式 MITM 代理地址。
+func IsLocalAssistantProxyURL(proxyURL string) bool {
+	proxyURL = strings.ToLower(strings.TrimSpace(proxyURL))
+	if proxyURL == "" {
+		return false
+	}
+	return strings.Contains(proxyURL, "127.0.0.1:18080") ||
+		strings.Contains(proxyURL, "localhost:18080") ||
+		strings.Contains(proxyURL, "[::1]:18080")
+}
+
+// IsDebugProxyURL 判断是否为 menubar 调试代理地址（9092）。
+func IsDebugProxyURL(proxyURL string) bool {
+	proxyURL = strings.ToLower(strings.TrimSpace(proxyURL))
+	if proxyURL == "" {
+		return false
+	}
+	return strings.Contains(proxyURL, "127.0.0.1:9092") ||
+		strings.Contains(proxyURL, "localhost:9092") ||
+		strings.Contains(proxyURL, "[::1]:9092")
+}
+
 // ClearUserProxySettings 用于处理与 ClearUserProxySettings 相关的逻辑。
 func ClearUserProxySettings() error {
 	settingsPath, err := resolveCursorSettingsPath()

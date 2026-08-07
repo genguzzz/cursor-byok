@@ -156,6 +156,17 @@ func (broker *StreamBroker) Subscribe(requestID string) (string, <-chan struct{}
 	return subscriberID, subscriber.Signal, nil
 }
 
+// SubscriberCount 返回指定 request 当前的订阅者数量。
+func (broker *StreamBroker) SubscriberCount(requestID string) int {
+	stream, ok := broker.Get(requestID)
+	if !ok || stream == nil {
+		return 0
+	}
+	stream.mu.Lock()
+	defer stream.mu.Unlock()
+	return len(stream.Subscribers)
+}
+
 func (broker *StreamBroker) stopTerminalCleanupTimerLocked(stream *ActiveStream) {
 	if stream == nil {
 		return
@@ -318,6 +329,7 @@ func (broker *StreamBroker) Publish(requestID string, event StreamEvent) error {
 		stream.mu.Unlock()
 		return nil
 	}
+	event.PublishedAt = time.Now().UTC()
 	stream.Backlog = append(stream.Backlog, event)
 	stream.UpdatedAt = time.Now().UTC()
 	subscribers := make([]*StreamSubscriber, 0, len(stream.Subscribers))

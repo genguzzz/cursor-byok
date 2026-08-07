@@ -264,8 +264,6 @@ type Service struct {
 	execBridge                execbridge.ExecBridge
 	interactionBridge         interactionbridge.InteractionBridge
 	appendSeq                 *appendSequenceTracker
-	checkpointBlobMu          sync.Mutex
-	checkpointBlobs           map[string]*checkpointBlobCacheEntry
 	tabRenamerConfigLoader    TabRenamerConfigLoader
 	tabRenamerFullConfigLoader func() serverconfig.Config
 }
@@ -309,7 +307,7 @@ func NewService(historyRoot string, resolver modeladapter.ChannelResolver) *Serv
 		appendSeq:          newAppendSequenceTracker(),
 	}
 	service.startHistoryMaintenance()
-	store.SyncAllCursorTranscriptsBestEffort()
+	go store.SyncAllCursorTranscriptsBestEffort()
 	return service
 }
 
@@ -381,6 +379,34 @@ func (service *Service) BidiAppend(ctx context.Context, req *connect.Request[ais
 		"client_kind": strings.TrimSpace(clientKind),
 	})
 	service.debug.LogBidiDecoded(ctx, requestID, intent.ConversationID, appendSeqno, clientKind, message, intent, nil)
+	// [shell-debug] 上行：exec client message 到达 BidiAppend 时的详情
+	if strings.TrimSpace(clientKind) == "exec_client_message" && intent.ExecClientMessage != nil {
+		ecm := intent.ExecClientMessage
+		shellStream := ecm.GetShellStream()
+		if shellStream != nil {
+			streamKind := shellStreamEventKind(shellStream)
+			contentTail := ""
+			switch streamKind {
+			case "stdout":
+				if s := shellStream.GetStdout(); s != nil {
+					contentTail = truncateForLog(s.GetData(), 500)
+				}
+			case "stderr":
+				if s := shellStream.GetStderr(); s != nil {
+					contentTail = truncateForLog(s.GetData(), 500)
+				}
+			}
+			mark := ""
+			if contentTail != "" {
+				mark = fmt.Sprintf(" content=%q", contentTail)
+			}
+			log.Printf("[shell-debug] BidiAppend shell_result request_id=%s exec_id=%s kind=%s append_seqno=%d%s",
+				requestID, strings.TrimSpace(ecm.GetExecId()), streamKind, appendSeqno, mark)
+		} else {
+			log.Printf("[shell-debug] BidiAppend exec_client_message request_id=%s exec_id=%s message_id=%d non_shell exec_kind=%s append_seqno=%d",
+				requestID, strings.TrimSpace(ecm.GetExecId()), ecm.GetId(), detectExecClientMessageKind(ecm), appendSeqno)
+		}
+	}
 	if err := service.dispatchInboundIntent(intent); err != nil {
 		if shouldAcknowledgeInterruptedInboundIntent(intent, err) {
 			service.debug.LogRuntime(ctx, requestID, intent.ConversationID, "dispatch_interrupted_ignored", map[string]any{
@@ -455,6 +481,7 @@ func (service *Service) RunSSE(ctx context.Context, req *connect.Request[aiserve
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
 	cursor := 0
+	isReconnect := service.broker.SubscriberCount(requestID) > 1
 	for {
 		backlog, err := service.broker.ReadFromCursor(requestID, cursor)
 		if err != nil {
@@ -467,6 +494,28 @@ func (service *Service) RunSSE(ctx context.Context, req *connect.Request[aiserve
 		if len(backlog) > 0 {
 			for _, event := range backlog {
 				if event.Message != nil {
+					// 重连时跳过 InteractionUpdate（thinking/text delta），
+					// 避免已发送的思考文字重复显示。exec、checkpoint 等正常重放。
+					if isReconnect && isTransientReplaySafeEvent(event.Message) {
+						cursor++
+						continue
+					}
+					msgCase := agentServerMessageCase(event.Message)
+					// 仅 Shell exec 派发 (下行) + Shell 结果回传 (上行) 打印详细 payload
+					if msgCase == "exec_server_message" {
+						isShell := event.Message.GetExecServerMessage() != nil &&
+							event.Message.GetExecServerMessage().GetShellStreamArgs() != nil
+						if isShell {
+							payload := protoJSONDebugPayload(event.Message)
+							log.Printf("[shell-debug] RunSSE send request_id=%s cursor=%d case=%s end=%v payload=%s",
+								requestID, cursor, msgCase, event.End, truncateSSELogPayload(msgCase, payload))
+						}
+					}
+					if shellDelta := getShellOutputDeltaFromMessage(event.Message); shellDelta != nil {
+						deltaKind := shellOutputDeltaEventKind(shellDelta)
+						log.Printf("[shell-debug] RunSSE send shell_result request_id=%s cursor=%d kind=%s subscriber_outbound=true",
+							requestID, cursor, deltaKind)
+					}
 					if err := stream.Send(event.Message); err != nil {
 						service.debug.LogRunSSE(ctx, requestID, "", "send_error", map[string]any{
 							"cursor":       cursor,
@@ -492,6 +541,7 @@ func (service *Service) RunSSE(ctx context.Context, req *connect.Request[aiserve
 					return buildTerminalStreamError(event)
 				}
 			}
+			isReconnect = false
 			continue
 		}
 		select {
@@ -976,6 +1026,18 @@ func (service *Service) handleExecResult(intent InboundIntent) error {
 	if intent.ExecClientMessage == nil {
 		return fmt.Errorf("exec client message is required")
 	}
+	execID := strings.TrimSpace(intent.ExecClientMessage.GetExecId())
+	msgID := intent.ExecClientMessage.GetId()
+	shellStreamKind := ""
+	if ss := intent.ExecClientMessage.GetShellStream(); ss != nil {
+		shellStreamKind = shellStreamEventKind(ss)
+	}
+	log.Printf("[shell-debug] handleExecResult entry request_id=%s exec_id=%s message_id=%d shell_stream=%v bg_spawn=%v force_bg=%v stream_kind=%s",
+		strings.TrimSpace(intent.RequestID), execID, msgID,
+		intent.ExecClientMessage.GetShellStream() != nil,
+		intent.ExecClientMessage.GetBackgroundShellSpawnResult() != nil,
+		intent.ExecClientMessage.GetForceBackgroundShellResult() != nil,
+		shellStreamKind)
 	pending, found := selectPendingExec(intent.ExecClientMessage.GetExecId(), intent.ExecClientMessage.GetId(), stream)
 	if !found {
 		if service.observeMissingBackgroundShellExecClientMessage(stream, intent.ExecClientMessage) {
@@ -1000,9 +1062,17 @@ func (service *Service) handleExecResult(intent InboundIntent) error {
 	}
 	result, err := service.execBridge.ApplyExecClientMessage(intent.ExecClientMessage, pending)
 	if err != nil {
+		log.Printf("[shell-debug] handleExecResult ApplyExecClientMessage error request_id=%s exec_id=%s exec_kind=%s err=%v",
+			strings.TrimSpace(intent.RequestID), execID, pending.ExecKind, err)
 		return err
 	}
 	if result.ShellOutputDelta != nil {
+		deltaKind := shellOutputDeltaEventKind(result.ShellOutputDelta)
+		log.Printf("[shell-debug] handleExecResult ShellOutputDelta publish request_id=%s exec_id=%s exec_kind=%s tool_call_id=%s is_terminal=%v delta_kind=%s payload_tail=%q",
+			strings.TrimSpace(intent.RequestID), execID, pending.ExecKind,
+			strings.TrimSpace(result.ToolCallID), result.IsTerminal,
+			deltaKind,
+			truncateForLog(result.ToolResultPayload, 500))
 		if err := service.broker.Publish(intent.RequestID, StreamEvent{
 			Message: buildShellOutputDeltaMessage(result.ShellOutputDelta),
 		}); err != nil {
@@ -1010,8 +1080,14 @@ func (service *Service) handleExecResult(intent InboundIntent) error {
 		}
 	}
 	if !result.IsTerminal {
+		log.Printf("[shell-debug] handleExecResult non_terminal return request_id=%s exec_id=%s exec_kind=%s stream_state=%s",
+			strings.TrimSpace(intent.RequestID), execID, pending.ExecKind, pending.StreamState)
 		return nil
 	}
+	log.Printf("[shell-debug] handleExecResult terminal request_id=%s exec_id=%s exec_kind=%s tool_call_id=%s payload_len=%d payload_tail=%q",
+		strings.TrimSpace(intent.RequestID), execID, pending.ExecKind,
+		strings.TrimSpace(result.ToolCallID), len(result.ToolResultPayload),
+		truncateForLog(result.ToolResultPayload, 500))
 	markExecCompleted(stream, pending)
 	backgroundShellToolCallID := ""
 	if strings.TrimSpace(pending.ExecKind) == "shell" && shellToolCallIsBackgrounded(result.ToolCall) {
@@ -1859,6 +1935,17 @@ func (service *Service) handleToolInvocation(stream *ActiveStream, invocation ru
 		pendingExec.ReasoningSignature = invocation.ReasoningSignature
 		pendingExec.ReasoningSignatureSource = invocation.ReasoningSignatureSource
 		pendingExec = initializePendingExecForTracking(pendingExec)
+		// [shell-debug] 下行：shell_stream_args 将要下发给客户端
+		if pendingExec.ExecKind == "shell" {
+			cmd := ""
+			if em := serverMessage.GetExecServerMessage(); em != nil {
+				if sa := em.GetShellStreamArgs(); sa != nil {
+					cmd = strings.TrimSpace(sa.GetCommand())
+				}
+			}
+			log.Printf("[shell-debug] OpenExec shell_stream_args dispatch request_id=%s exec_id=%s tool_call_id=%s command=%s",
+				stream.RequestID, strings.TrimSpace(pendingExec.ExecID), strings.TrimSpace(pendingExec.ToolCallID), cmd)
+		}
 		stream.mu.Lock()
 		pendingExec.ProviderPass = stream.ProviderPassCount
 		stream.PendingExecs[pendingExec.ExecID] = pendingExec
@@ -3744,4 +3831,157 @@ func buildRunSSEStructuredErrorWithDetail(code connect.Code, title string, detai
 		result.AddDetail(detail)
 	}
 	return result
+}
+
+func truncateSSELogPayload(msgCase string, payload any) string {
+	const maxLen = 500
+	if payload == nil {
+		return "{}"
+	}
+	var text string
+	switch typed := payload.(type) {
+	case string:
+		text = typed
+	case map[string]any:
+		// 提取 Shell 相关的关键字段做简短摘要
+		if msgCase == "exec_server_message" {
+			if execMsg, ok := typed["exec_server_message"].(map[string]any); ok {
+				if shellArgs, ok := execMsg["shell_stream_args"].(map[string]any); ok {
+					return fmt.Sprintf("{shell command=%q}", shellArgs["command"])
+				}
+				if readArgs, ok := execMsg["read_args"].(map[string]any); ok {
+					return fmt.Sprintf("{read path=%q}", readArgs["path"])
+				}
+				if writeArgs, ok := execMsg["write_args"].(map[string]any); ok {
+					return fmt.Sprintf("{write path=%q}", writeArgs["path"])
+				}
+				if grepArgs, ok := execMsg["grep_args"].(map[string]any); ok {
+					return fmt.Sprintf("{grep pattern=%q}", grepArgs["pattern"])
+				}
+				return fmt.Sprintf("{exec kind=%v}", execMsg)
+			}
+		}
+		raw, err := json.Marshal(typed)
+		if err != nil {
+			text = fmt.Sprintf("%v", typed)
+		} else {
+			text = string(raw)
+		}
+	default:
+		text = fmt.Sprintf("%v", typed)
+	}
+	if len(text) <= maxLen {
+		return text
+	}
+	return text[:maxLen] + fmt.Sprintf("...(+%d bytes)", len(text)-maxLen)
+}
+
+// [shell-debug helpers]
+
+// shellStreamEventKind 返回 shell_stream 事件的类型名称。
+func shellStreamEventKind(ss *agentv1.ShellStream) string {
+	if ss == nil {
+		return "nil"
+	}
+	switch ss.GetEvent().(type) {
+	case *agentv1.ShellStream_Stdout:
+		return "stdout"
+	case *agentv1.ShellStream_Stderr:
+		return "stderr"
+	case *agentv1.ShellStream_Exit:
+		return "exit"
+	case *agentv1.ShellStream_Start:
+		return "start"
+	case *agentv1.ShellStream_Backgrounded:
+		return "backgrounded"
+	case *agentv1.ShellStream_Rejected:
+		return "rejected"
+	case *agentv1.ShellStream_PermissionDenied:
+		return "permission_denied"
+	default:
+		return "unknown"
+	}
+}
+
+// shellOutputDeltaEventKind 返回 ShellOutputDelta 事件的类型名称。
+func shellOutputDeltaEventKind(delta *agentv1.ShellOutputDeltaUpdate) string {
+	if delta == nil {
+		return "nil"
+	}
+	switch delta.GetEvent().(type) {
+	case *agentv1.ShellOutputDeltaUpdate_Stdout:
+		return "stdout"
+	case *agentv1.ShellOutputDeltaUpdate_Stderr:
+		return "stderr"
+	case *agentv1.ShellOutputDeltaUpdate_Start:
+		return "start"
+	case *agentv1.ShellOutputDeltaUpdate_Exit:
+		return "exit"
+	default:
+		return "unknown"
+	}
+}
+
+// detectExecClientMessageKind 返回 ExecClientMessage 中 oneof message 分支的名称。
+func detectExecClientMessageKind(msg *agentv1.ExecClientMessage) string {
+	if msg == nil || msg.Message == nil {
+		return "nil"
+	}
+	switch msg.Message.(type) {
+	case *agentv1.ExecClientMessage_ShellStream:
+		return "shell_stream"
+	case *agentv1.ExecClientMessage_ShellResult:
+		return "shell_result"
+	case *agentv1.ExecClientMessage_WriteResult:
+		return "write_result"
+	case *agentv1.ExecClientMessage_DeleteResult:
+		return "delete_result"
+	case *agentv1.ExecClientMessage_GrepResult:
+		return "grep_result"
+	case *agentv1.ExecClientMessage_ReadResult:
+		return "read_result"
+	case *agentv1.ExecClientMessage_LsResult:
+		return "ls_result"
+	case *agentv1.ExecClientMessage_DiagnosticsResult:
+		return "diagnostics"
+	case *agentv1.ExecClientMessage_McpResult:
+		return "mcp"
+	case *agentv1.ExecClientMessage_BackgroundShellSpawnResult:
+		return "bg_shell_spawn"
+	case *agentv1.ExecClientMessage_ForceBackgroundShellResult:
+		return "force_bg_shell"
+	default:
+		return "unknown"
+	}
+}
+
+// getShellOutputDeltaFromMessage 从 AgentServerMessage 中提取 ShellOutputDelta，
+// 用于 RunSSE 日志中识别 Shell 结果回传事件。
+func getShellOutputDeltaFromMessage(msg *agentv1.AgentServerMessage) *agentv1.ShellOutputDeltaUpdate {
+	if msg == nil {
+		return nil
+	}
+	iu := msg.GetInteractionUpdate()
+	if iu == nil {
+		return nil
+	}
+	return iu.GetShellOutputDelta()
+}
+
+// isTransientReplaySafeEvent 判断消息是否属于重连时不应重放的暂态 UI 事件。
+// 重连时 InteractionUpdate（thinking delta、text delta、tool_call_started 等）
+// 已在首次连接时发送过，跳过以避免重复显示。exec、checkpoint、kv 等需重放。
+func isTransientReplaySafeEvent(msg *agentv1.AgentServerMessage) bool {
+	if msg == nil {
+		return false
+	}
+	iu := msg.GetInteractionUpdate()
+	if iu == nil {
+		return false
+	}
+	// ShellOutputDelta 不属于暂态事件，需要实时重放
+	if iu.GetShellOutputDelta() != nil {
+		return false
+	}
+	return true
 }

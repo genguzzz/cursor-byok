@@ -3,6 +3,7 @@ package forwarder
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -119,6 +120,7 @@ func (service *Service) awaitShellSnapshot(stream *ActiveStream, args awaitShell
 	state, ok := stream.BackgroundShells[shellID]
 	if !ok || state == nil {
 		stream.mu.Unlock()
+		log.Printf("[shell-debug] AwaitShell unknown_shell request_id=%s shell_id=%s", strings.TrimSpace(stream.RequestID), shellID)
 		return awaitShellResult{
 			ShellID:  shellID,
 			Status:   backgroundShellStatusUnknown,
@@ -149,6 +151,12 @@ func (service *Service) awaitShellSnapshot(stream *ActiveStream, args awaitShell
 	stream.UpdatedAt = time.Now().UTC()
 	stream.mu.Unlock()
 
+	log.Printf("[shell-debug] AwaitShell request_id=%s shell_id=%s status=%s block_until_ms=%d stdout_offset=%d->%d stderr_offset=%d->%d new_stdout_len=%d new_stderr_len=%d total_stdout_len=%d total_stderr_len=%d stdout_tail=%q",
+		strings.TrimSpace(stream.RequestID), shellID, status, blockUntilMS,
+		stdoutStart, stdoutEnd, stderrStart, stderrEnd,
+		len(stdout), len(stderr), stdoutEnd, stderrEnd,
+		truncateForLog(stdout, 500))
+
 	matched, matchText, patternErr := awaitShellPatternMatched(args.Pattern, combinedOutput)
 	message := ""
 	if patternErr != nil {
@@ -157,6 +165,13 @@ func (service *Service) awaitShellSnapshot(stream *ActiveStream, args awaitShell
 	timedOut := blockUntilMS > 0 && !matched && !isBackgroundShellTerminalStatus(status)
 	stdout = truncateAwaitShellOutput(stdout)
 	stderr = truncateAwaitShellOutput(stderr)
+
+	if len(stdout) > 0 || len(stderr) > 0 || isBackgroundShellTerminalStatus(status) {
+		log.Printf("[shell-debug] AwaitShell result request_id=%s shell_id=%s status=%s matched=%v timed_out=%v exit_code=%v stdout_returned=%d stderr_returned=%d stdout_tail=%q",
+			strings.TrimSpace(stream.RequestID), shellID, status, matched, timedOut, exitCode,
+			len(stdout), len(stderr), truncateForLog(stdout, 500))
+	}
+
 	return awaitShellResult{
 		ShellID:        shellID,
 		Status:         status,
@@ -294,11 +309,18 @@ func (service *Service) refreshBackgroundShellFromTerminalFile(stream *ActiveStr
 	}
 	stream.mu.Lock()
 	terminalsFolder := strings.TrimSpace(stream.TerminalsFolder)
+	requestID := strings.TrimSpace(stream.RequestID)
 	stream.mu.Unlock()
 	terminalSnapshot, ok := readTerminalShellFileSnapshot(terminalsFolder, shellID)
 	if !ok {
+		log.Printf("[shell-debug] TerminalFileReadFail request_id=%s shell_id=%s terminals_folder=%q",
+			requestID, shellID, terminalsFolder)
 		return
 	}
+	log.Printf("[shell-debug] TerminalFileRead request_id=%s shell_id=%s file_output_len=%d command=%q exit_code=%v output_tail=%q",
+		requestID, shellID, len(terminalSnapshot.Output),
+		strings.TrimSpace(terminalSnapshot.Command), terminalSnapshot.ExitCode,
+		truncateForLog(terminalSnapshot.Output, 500))
 	now := time.Now().UTC()
 	stream.mu.Lock()
 	defer stream.mu.Unlock()
@@ -339,19 +361,31 @@ func (service *Service) refreshBackgroundShellFromTerminalFile(stream *ActiveStr
 	if state.LastActivityAt.IsZero() {
 		state.LastActivityAt = now
 	}
+	log.Printf("[shell-debug] TerminalFileMerged request_id=%s shell_id=%s status=%s stdout_len=%d stderr_len=%d exit_code=%v",
+		strings.TrimSpace(stream.RequestID), shellID, state.Status,
+		len(state.StdoutBuffer), len(state.StderrBuffer), state.ExitCode)
 	stream.UpdatedAt = now
 }
 
 func readTerminalShellFileSnapshot(terminalsFolder string, shellID string) (terminalShellFileSnapshot, bool) {
 	path, ok := terminalShellFilePath(terminalsFolder, shellID)
 	if !ok {
+		log.Printf("[shell-debug] TerminalFilePathInvalid terminals_folder=%q shell_id=%q", terminalsFolder, shellID)
 		return terminalShellFileSnapshot{}, false
 	}
 	data, err := os.ReadFile(path)
-	if err != nil || len(data) == 0 {
+	if err != nil {
+		log.Printf("[shell-debug] TerminalFileReadError path=%q err=%v", path, err)
 		return terminalShellFileSnapshot{}, false
 	}
-	return parseTerminalShellFileSnapshot(string(data)), true
+	if len(data) == 0 {
+		log.Printf("[shell-debug] TerminalFileEmpty path=%q", path)
+		return terminalShellFileSnapshot{}, false
+	}
+	snapshot := parseTerminalShellFileSnapshot(string(data))
+	log.Printf("[shell-debug] TerminalFileParsed path=%q raw_len=%d output_len=%d output_tail=%q",
+		path, len(data), len(snapshot.Output), truncateForLog(snapshot.Output, 300))
+	return snapshot, true
 }
 
 func terminalShellFilePath(terminalsFolder string, shellID string) (string, bool) {
@@ -672,25 +706,45 @@ func (service *Service) observeShellStreamLocked(stream *ActiveStream, pending r
 		if strings.TrimSpace(pending.ExecID) != "" {
 			stream.BackgroundShellsByExecID[strings.TrimSpace(pending.ExecID)] = shellID
 		}
+		log.Printf("[shell-debug] Backgrounded request_id=%s shell_id=%s exec_id=%s command=%q cwd=%q pid=%v",
+			strings.TrimSpace(stream.RequestID), shellID, strings.TrimSpace(pending.ExecID),
+			strings.TrimSpace(event.Backgrounded.GetCommand()),
+			strings.TrimSpace(event.Backgrounded.GetWorkingDirectory()), event.Backgrounded.GetPid())
 	case *agentv1.ShellStream_Stdout:
 		state := ensureBackgroundShellStateLocked(stream, shellID, pending, now)
 		if state == nil {
+			log.Printf("[shell-debug] Stdout state_nil_drop request_id=%s shell_id=%s exec_id=%s",
+				strings.TrimSpace(stream.RequestID), shellID, strings.TrimSpace(pending.ExecID))
 			return
 		}
-		state.StdoutBuffer += execbridge.DecodeShellStdout(event.Stdout)
+		decodedStdout := execbridge.DecodeShellStdout(event.Stdout)
+		state.StdoutBuffer += decodedStdout
 		state.Status = backgroundShellStatusRunning
 		state.LastActivityAt = now
+		log.Printf("[shell-debug] Stdout request_id=%s shell_id=%s exec_id=%s delta_len=%d total_stdout_len=%d delta_content=%q",
+			strings.TrimSpace(stream.RequestID), shellID, strings.TrimSpace(pending.ExecID),
+			len(decodedStdout), len(state.StdoutBuffer),
+			truncateForLog(decodedStdout, 500))
 	case *agentv1.ShellStream_Stderr:
 		state := ensureBackgroundShellStateLocked(stream, shellID, pending, now)
 		if state == nil {
+			log.Printf("[shell-debug] Stderr state_nil_drop request_id=%s shell_id=%s exec_id=%s",
+				strings.TrimSpace(stream.RequestID), shellID, strings.TrimSpace(pending.ExecID))
 			return
 		}
-		state.StderrBuffer += event.Stderr.GetData()
+		stderrData := event.Stderr.GetData()
+		state.StderrBuffer += stderrData
 		state.Status = backgroundShellStatusRunning
 		state.LastActivityAt = now
+		log.Printf("[shell-debug] Stderr request_id=%s shell_id=%s exec_id=%s delta_len=%d total_stderr_len=%d delta_content=%q",
+			strings.TrimSpace(stream.RequestID), shellID, strings.TrimSpace(pending.ExecID),
+			len(stderrData), len(state.StderrBuffer),
+			truncateForLog(stderrData, 500))
 	case *agentv1.ShellStream_Exit:
 		state := ensureBackgroundShellStateLocked(stream, shellID, pending, now)
 		if state == nil {
+			log.Printf("[shell-debug] Exit state_nil_drop request_id=%s shell_id=%s exec_id=%s",
+				strings.TrimSpace(stream.RequestID), shellID, strings.TrimSpace(pending.ExecID))
 			return
 		}
 		exitCode := int32(event.Exit.GetCode())
@@ -699,6 +753,10 @@ func (service *Service) observeShellStreamLocked(stream *ActiveStream, pending r
 		state.Status = backgroundShellStatusCompleted
 		state.LastActivityAt = now
 		state.CompletedAt = now
+		log.Printf("[shell-debug] Exit request_id=%s shell_id=%s exec_id=%s exit_code=%d stdout_total=%d stderr_total=%d stdout_tail=%q",
+			strings.TrimSpace(stream.RequestID), shellID, strings.TrimSpace(pending.ExecID),
+			exitCode, len(state.StdoutBuffer), len(state.StderrBuffer),
+			truncateForLog(state.StdoutBuffer, 500))
 	case *agentv1.ShellStream_Rejected:
 		state := ensureBackgroundShellStateLocked(stream, shellID, pending, now)
 		if state == nil {
@@ -708,6 +766,9 @@ func (service *Service) observeShellStreamLocked(stream *ActiveStream, pending r
 		state.StderrBuffer += strings.TrimSpace(event.Rejected.GetReason())
 		state.LastActivityAt = now
 		state.CompletedAt = now
+		log.Printf("[shell-debug] Rejected request_id=%s shell_id=%s exec_id=%s reason=%q",
+			strings.TrimSpace(stream.RequestID), shellID, strings.TrimSpace(pending.ExecID),
+			strings.TrimSpace(event.Rejected.GetReason()))
 	case *agentv1.ShellStream_PermissionDenied:
 		state := ensureBackgroundShellStateLocked(stream, shellID, pending, now)
 		if state == nil {
@@ -717,6 +778,12 @@ func (service *Service) observeShellStreamLocked(stream *ActiveStream, pending r
 		state.StderrBuffer += strings.TrimSpace(event.PermissionDenied.GetError())
 		state.LastActivityAt = now
 		state.CompletedAt = now
+		log.Printf("[shell-debug] PermissionDenied request_id=%s shell_id=%s exec_id=%s error=%q",
+			strings.TrimSpace(stream.RequestID), shellID, strings.TrimSpace(pending.ExecID),
+			strings.TrimSpace(event.PermissionDenied.GetError()))
+	default:
+		log.Printf("[shell-debug] UnknownShellEvent request_id=%s shell_id=%s exec_id=%s event_type=%T",
+			strings.TrimSpace(stream.RequestID), shellID, strings.TrimSpace(pending.ExecID), event)
 	}
 	stream.UpdatedAt = now
 }
@@ -951,4 +1018,11 @@ func backgroundShellIDForMessageLocked(stream *ActiveStream, messageID uint32, e
 		return strings.TrimSpace(stream.BackgroundShellsByMessageID[messageID])
 	}
 	return ""
+}
+
+func truncateForLog(text string, maxLen int) string {
+	if maxLen <= 0 || len(text) <= maxLen {
+		return text
+	}
+	return text[:maxLen] + fmt.Sprintf("...(+%d bytes)", len(text)-maxLen)
 }
