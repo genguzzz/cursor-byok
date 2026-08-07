@@ -37,6 +37,7 @@ func main() {
 	}
 
 	logger.Init()
+	logger.ApplyDebugLogFromConfig()
 	netproxy.InstallDefaultTransport()
 
 	certManager, err := certs.NewEmbeddedManager()
@@ -87,6 +88,7 @@ func status(running bool) string {
 // 支持 --proxy-listen / --backend-listen 端口覆盖或 --config 自定义配置文件。
 func runDebugMode() {
 	logger.Init()
+	logger.ApplyDebugLogFromConfig()
 	netproxy.InstallDefaultTransport()
 
 	certManager, err := certs.NewEmbeddedManager()
@@ -181,6 +183,7 @@ func restoreDebugPortOverrides(service *client.ProxyService, restoreProxy bool, 
 // runOff 清除 Cursor 代理设置并恢复原始账号鉴权，无需启动代理。
 func runOff() {
 	logger.Init()
+	logger.ApplyDebugLogFromConfig()
 	fmt.Println("Turning off cursor-local-assistant...")
 
 	hasErr := false

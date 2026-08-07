@@ -80,6 +80,18 @@ func DebugEnabled() bool {
 	return debugEnabled.Load()
 }
 
+// ApplyDebugLogFromConfig 读取 config.yaml 的 log 字段并设置 debug 级别。
+// 文件不存在或未配置时默认 false（仅输出 Info 及以上级别），与 menubar 行为一致。
+// 调用方应在 logger.Init() 之后调用，以便 Init 输出的"应用日志已写入文件"也能符合当前级别。
+func ApplyDebugLogFromConfig() {
+	debugLogEnabled, err := readDebugLogFromConfigFile()
+	if err != nil {
+		// 读取失败不回退已启用的 debug，也不报错；保守按 false 处理。
+		debugLogEnabled = false
+	}
+	SetDebugEnabled(debugLogEnabled)
+}
+
 func applyDebugLevelLocked() {
 	if debugEnabled.Load() {
 		logLevel.Set(slog.LevelDebug)

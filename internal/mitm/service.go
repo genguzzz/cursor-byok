@@ -174,7 +174,7 @@ func logSuppressedProxyMessages(prefix string, suppressed int) {
 	if suppressed <= 0 {
 		return
 	}
-	logger.Infof("%s: suppressed %d repeated messages in last %s", prefix, suppressed, proxyLogRateLimitWindow)
+	logger.Debugf("%s: suppressed %d repeated messages in last %s", prefix, suppressed, proxyLogRateLimitWindow)
 }
 
 // NewProxyServer 用于处理与 NewProxyServer 相关的逻辑。
@@ -778,7 +778,7 @@ func (l *goproxyLogAdapter) Printf(format string, args ...interface{}) {
 	}
 	if suppressed, ok := proxyLogLimiter.ShouldLog("goproxy|" + goproxyMessageRateLimitKey(msg)); ok {
 		logSuppressedProxyMessages("goproxy", suppressed)
-		logger.Infof("goproxy: %s", msg)
+		logger.Debugf("goproxy: %s", msg)
 	}
 }
 

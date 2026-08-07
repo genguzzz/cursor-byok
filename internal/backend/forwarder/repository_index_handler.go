@@ -106,7 +106,7 @@ func (service *Service) FastRepoInitHandshakeV2(_ context.Context, req *connect.
 	if err := service.ensureRepositoryCodebase(codebaseID, repo); err != nil {
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
-	logger.Infof("RepositoryService FastRepoInitHandshakeV2 ready codebase_id=%s repo=%s root_hash_present=%t", codebaseID, repositoryLogName(repo), strings.TrimSpace(req.Msg.GetRootHash()) != "")
+	logger.Debugf("RepositoryService FastRepoInitHandshakeV2 ready codebase_id=%s repo=%s root_hash_present=%t", codebaseID, repositoryLogName(repo), strings.TrimSpace(req.Msg.GetRootHash()) != "")
 	return connect.NewResponse(&aiserverv1.FastRepoInitHandshakeV2Response{
 		Status: aiserverv1.FastRepoInitHandshakeV2Response_STATUS_SUCCESS,
 		Codebases: []*aiserverv1.RepositoryCodebaseInfo{
@@ -146,12 +146,12 @@ func (service *Service) FastRepoSyncComplete(_ context.Context, req *connect.Req
 			return nil, connect.NewError(connect.CodeInternal, err)
 		}
 	}
-	logger.Infof("RepositoryService FastRepoSyncComplete acknowledged codebase_count=%d", len(req.Msg.GetCodebases()))
+	logger.Debugf("RepositoryService FastRepoSyncComplete acknowledged codebase_count=%d", len(req.Msg.GetCodebases()))
 	return connect.NewResponse(&aiserverv1.FastRepoSyncCompleteResponse{}), nil
 }
 
 func (service *Service) SyncMerkleSubtreeV2(_ context.Context, req *connect.Request[aiserverv1.SyncMerkleSubtreeV2Request]) (*connect.Response[aiserverv1.SyncMerkleSubtreeV2Response], error) {
-	logger.Infof("RepositoryService SyncMerkleSubtreeV2 matched codebase_id=%s partial_paths=%d", strings.TrimSpace(req.Msg.GetCodebaseId()), len(req.Msg.GetLocalPartialPaths()))
+	logger.Debugf("RepositoryService SyncMerkleSubtreeV2 matched codebase_id=%s partial_paths=%d", strings.TrimSpace(req.Msg.GetCodebaseId()), len(req.Msg.GetLocalPartialPaths()))
 	return connect.NewResponse(&aiserverv1.SyncMerkleSubtreeV2Response{
 		Result:  &aiserverv1.SyncMerkleSubtreeV2Response_Match{Match: true},
 		Results: repositoryPartialPathMatchResults(len(req.Msg.GetLocalPartialPaths())),
