@@ -15,6 +15,10 @@ const ReadToolImageReplayLimit = 384 * 1024
 
 const readToolImageMaxSide = 2048
 
+// anthropicVisionMinSide：过窄/过矮截图（如 714×82）直接送 tclaude 时模型常只读到尺寸文案；
+// 放大到最小边后再送，接近 CLI 常见识图尺寸。
+const anthropicVisionMinSide = 256
+
 // CompressReadImageForReplay 把超限图片压缩为 JPEG，模拟 CodeBuddy「38MB → ~267KB」行为。
 // 若本身已是可识别图片且不超过 limit，则原样返回。
 func CompressReadImageForReplay(path string, payload []byte, limit int) ([]byte, error) {
@@ -84,13 +88,39 @@ func scaleImageMaxSide(src image.Image, maxSide int) image.Image {
 	if h > w {
 		scale = float64(maxSide) / float64(h)
 	}
-	nw := int(float64(w) * scale)
-	nh := int(float64(h) * scale)
+	return scaleImageToSize(src, int(float64(w)*scale), int(float64(h)*scale))
+}
+
+func scaleImageMinSide(src image.Image, minSide int) image.Image {
+	if minSide <= 0 {
+		return src
+	}
+	bounds := src.Bounds()
+	w, h := bounds.Dx(), bounds.Dy()
+	if w <= 0 || h <= 0 {
+		return src
+	}
+	if w >= minSide && h >= minSide {
+		return src
+	}
+	scale := float64(minSide) / float64(w)
+	if float64(minSide)/float64(h) > scale {
+		scale = float64(minSide) / float64(h)
+	}
+	return scaleImageToSize(src, int(float64(w)*scale+0.5), int(float64(h)*scale+0.5))
+}
+
+func scaleImageToSize(src image.Image, nw, nh int) image.Image {
 	if nw < 1 {
 		nw = 1
 	}
 	if nh < 1 {
 		nh = 1
+	}
+	bounds := src.Bounds()
+	w, h := bounds.Dx(), bounds.Dy()
+	if w == nw && h == nh {
+		return src
 	}
 	dst := image.NewRGBA(image.Rect(0, 0, nw, nh))
 	for y := 0; y < nh; y++ {

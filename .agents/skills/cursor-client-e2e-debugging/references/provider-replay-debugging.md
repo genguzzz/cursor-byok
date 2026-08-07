@@ -2,6 +2,10 @@
 
 当现象是 provider 返回错误、SSE 里只有 `event: error`、需要确认最终出站 provider body 是否能被独立复现时，优先读这份参考。
 
+若现象是「识图失败 / 只能看到尺寸 / Unsupported Image / 粘贴图 CodeBuddy·tclaude 行为不一致」，先读仓库方案文档：
+
+- [`docs/provider-image-encoding.md`](../../../../docs/provider-image-encoding.md)
+
 这套流程只用于还原“后端最终发给 provider 的请求形状”和“provider 对该请求的真实响应”。它不是语义 history，也不是客户端输入事实源。
 
 ## 证据边界

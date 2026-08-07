@@ -129,6 +129,7 @@ func anthropicContentBlocks(message Message) ([]map[string]any, error) {
 		}}, nil
 	}
 
+	role := strings.TrimSpace(message.Role)
 	blocks := make([]map[string]any, 0, len(message.ContentParts))
 	for _, part := range message.ContentParts {
 		switch normalizeContentPartType(part.Type) {
@@ -145,14 +146,24 @@ func anthropicContentBlocks(message Message) ([]map[string]any, error) {
 			if err != nil {
 				return nil, err
 			}
+			// 字段顺序对齐 tclaude CLI nested image source：type → data → media_type
 			blocks = append(blocks, map[string]any{
 				"type": contentPartTypeImage,
-				"source": map[string]any{
-					"type":       "base64",
-					"media_type": mediaType,
-					"data":       base64.StdEncoding.EncodeToString(payload),
+				"source": anthropicBase64ImageSource{
+					Type:      "base64",
+					Data:      base64.StdEncoding.EncodeToString(payload),
+					MediaType: mediaType,
 				},
 			})
+			// 粘贴图：CLI 在顶层 image 后追加 "[Image: source: path]"（Proxyman 41570）
+			if role == "user" {
+				if path := strings.TrimSpace(part.Image.Path); path != "" {
+					blocks = append(blocks, map[string]any{
+						"type": contentPartTypeText,
+						"text": "[Image: source: " + path + "]",
+					})
+				}
+			}
 		default:
 			return nil, fmt.Errorf("unsupported anthropic content part type: %s", strings.TrimSpace(part.Type))
 		}
@@ -164,6 +175,13 @@ func anthropicContentBlocks(message Message) ([]map[string]any, error) {
 		})
 	}
 	return blocks, nil
+}
+
+// anthropicBase64ImageSource 固定 JSON 字段顺序，贴近 tclaude CLI。
+type anthropicBase64ImageSource struct {
+	Type      string `json:"type"`
+	Data      string `json:"data"`
+	MediaType string `json:"media_type"`
 }
 
 func imageContentDataURL(image *ImageContent) (string, error) {

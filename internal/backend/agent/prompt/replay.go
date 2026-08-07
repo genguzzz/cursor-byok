@@ -26,7 +26,7 @@ func BuildUserMessageReplayMessage(userMessage *agentv1.UserMessage) (Message, b
 
 func buildUserReplayMessage(text string, selectedContext *agentv1.SelectedContext) (Message, bool) {
 	images := buildSelectedImageContentParts(selectedContext)
-	sections := make([]string, 0, 4)
+	sections := make([]string, 0, 5)
 	if text != "" {
 		sections = append(sections, formatMessageText(fmt.Sprintf("<user_query>\n%s\n</user_query>", text)))
 	}
@@ -35,6 +35,11 @@ func buildUserReplayMessage(text string, selectedContext *agentv1.SelectedContex
 	}
 	if selectedFiles := buildSelectedFilesPromptSection(selectedContext); selectedFiles != "" {
 		sections = append(sections, selectedFiles)
+	}
+	// 路径文本与 multimodal ContentParts 并存：上游若丢弃/替换 image block，
+	// 模型仍可凭 path 调用 Read（复用已有 read_tool_image 出站适配）。
+	if selectedImages := buildSelectedImagesPromptSection(selectedContext); selectedImages != "" {
+		sections = append(sections, selectedImages)
 	}
 	content := strings.TrimSpace(strings.Join(sections, "\n\n"))
 	if content == "" && len(images) == 0 {
@@ -189,23 +194,63 @@ func buildSelectedImageContentParts(selectedContext *agentv1.SelectedContext) []
 		if image == nil {
 			continue
 		}
-		data := image.GetData()
-		if len(data) == 0 {
-			data = image.GetBlobIdWithData().GetData()
-		}
-		if len(data) == 0 && strings.TrimSpace(image.GetPath()) == "" {
+		data := selectedImageBytes(image)
+		path := strings.TrimSpace(image.GetPath())
+		if len(data) == 0 && path == "" {
 			continue
 		}
 		parts = append(parts, ContentPart{
 			Type: "image",
 			Image: &ImageContent{
 				MIMEType: strings.TrimSpace(image.GetMimeType()),
-				Path:     strings.TrimSpace(image.GetPath()),
+				Path:     path,
 				Data:     data,
 			},
 		})
 	}
 	return parts
+}
+
+func buildSelectedImagesPromptSection(selectedContext *agentv1.SelectedContext) string {
+	if selectedContext == nil || len(selectedContext.GetSelectedImages()) == 0 {
+		return ""
+	}
+	entries := make([]string, 0, len(selectedContext.GetSelectedImages()))
+	seen := make(map[string]struct{}, len(selectedContext.GetSelectedImages()))
+	for _, image := range selectedContext.GetSelectedImages() {
+		if image == nil {
+			continue
+		}
+		path := strings.TrimSpace(image.GetPath())
+		if path == "" {
+			continue
+		}
+		if _, ok := seen[path]; ok {
+			continue
+		}
+		seen[path] = struct{}{}
+		attrs := []string{fmt.Sprintf(`path="%s"`, escapePromptXML(path))}
+		if mime := strings.TrimSpace(image.GetMimeType()); mime != "" {
+			attrs = append(attrs, fmt.Sprintf(`mime_type="%s"`, escapePromptXML(mime)))
+		}
+		entries = append(entries, "<image "+strings.Join(attrs, " ")+" />")
+	}
+	if len(entries) == 0 {
+		return ""
+	}
+	// 历史安全表述：不写 "currently"；上游丢弃 inline vision 时模型应 Read path。
+	return "<selected_images>\n" + strings.Join(entries, "\n") + "\n</selected_images>\n" +
+		"If image bytes are not available inline, call the Read tool on each path above before answering about the image."
+}
+
+func selectedImageBytes(image *agentv1.SelectedImage) []byte {
+	if image == nil {
+		return nil
+	}
+	if data := image.GetData(); len(data) > 0 {
+		return data
+	}
+	return image.GetBlobIdWithData().GetData()
 }
 
 // EncodeReplayMessages 把 canonical replay message 编码为 root_prompt_messages_json。

@@ -9,6 +9,9 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"image"
+	"image/jpeg"
+	_ "image/png"
 	"net/http"
 	"net/url"
 	"runtime"
@@ -375,6 +378,8 @@ func (adapter *AnthropicAdapter) Stream(ctx context.Context, req StreamRequest, 
 	if len(body) == 0 {
 		thinkingConfig := buildAnthropicThinkingConfig(req)
 		relocateImages := shouldRelocateAnthropicImages(baseURL)
+		// 粘贴图对齐 tclaude CLI：保留 user 顶层 image（见 Proxyman 41570），不再 strip。
+		// CodeBuddy 仍走 rewriteUserInlineImagesToPathFallback；此处勿套用。
 		stableMessageCount := anthropicStableProviderMessageCount(req.Messages, req.StableMessageCount, thinkingConfig != nil)
 		systemParts, messages, err := normalizeAnthropicProviderMessages(req.Messages, thinkingConfig != nil, relocateImages)
 		if err != nil {
@@ -1287,15 +1292,21 @@ func normalizeAnthropicProviderMessages(input []Message, thinkingEnabled bool, r
 	systemParts := make([]string, 0, len(input))
 	messages := make([]anthropicMessage, 0, len(input))
 	pendingToolResults := make([]map[string]any, 0, 2)
+	// tclaude CLI：image 嵌在 tool_result.content[]，其后可跟说明文本（非顶层 image sibling）。
+	pendingTrailingBlocks := make([]map[string]any, 0, 2)
 	flushToolResults := func() {
-		if len(pendingToolResults) == 0 {
+		if len(pendingToolResults) == 0 && len(pendingTrailingBlocks) == 0 {
 			return
 		}
+		content := make([]map[string]any, 0, len(pendingToolResults)+len(pendingTrailingBlocks))
+		content = append(content, pendingToolResults...)
+		content = append(content, pendingTrailingBlocks...)
 		messages = append(messages, anthropicMessage{
 			Role:    "user",
-			Content: append([]map[string]any(nil), pendingToolResults...),
+			Content: content,
 		})
 		pendingToolResults = pendingToolResults[:0]
+		pendingTrailingBlocks = pendingTrailingBlocks[:0]
 	}
 
 	for _, message := range input {
@@ -1317,13 +1328,22 @@ func normalizeAnthropicProviderMessages(input []Message, thinkingEnabled bool, r
 			if toolUseID == "" {
 				return nil, nil, fmt.Errorf("anthropic tool message requires tool_call_id")
 			}
+			toolContent, trailing, err := anthropicToolResultContent(message)
+			if err != nil {
+				return nil, nil, err
+			}
 			pendingToolResults = append(pendingToolResults, map[string]any{
 				"type":        "tool_result",
 				"tool_use_id": toolUseID,
-				"content":     message.Content,
+				"content":     toolContent,
 			})
+			pendingTrailingBlocks = append(pendingTrailingBlocks, trailing...)
 		case "user", "assistant":
 			flushToolResults()
+			// 粘贴图等 user ContentParts 也要真实 JPEG，避免 media_type/bytes 不一致。
+			if role == "user" {
+				message = ensureAnthropicMessageImagesJPEG(message)
+			}
 			contentBlocks, err := anthropicProviderContentBlocks(message, thinkingEnabled)
 			if err != nil {
 				return nil, nil, err
@@ -1362,7 +1382,7 @@ func normalizeAnthropicProviderMessages(input []Message, thinkingEnabled bool, r
 			messages = append(messages, anthropicMessage{
 				Role: "user",
 				Content: []map[string]any{{
-					"type": "text",
+					"type": contentPartTypeText,
 					"text": message.Content,
 				}},
 			})
@@ -1375,11 +1395,13 @@ func normalizeAnthropicProviderMessages(input []Message, thinkingEnabled bool, r
 	return systemParts, messages, nil
 }
 
-// relocateAnthropicImagesToLastUserMessage 把所有 user 消息里的 image 块搬运到最后一条 user 消息的末尾。
+// relocateAnthropicImagesToLastUserMessage 把所有 user 消息里的顶层 image 块搬运到最后一条 user 消息的末尾。
 //
 // 背景：部分第三方中转站（如 Bedrock 代理）在 Anthropic→上游 的消息转换中，
 // 会丢弃「后面还跟着大量文本/消息」的非末尾图片块。将图片统一移动到末条 user 消息
 // 可规避该问题，同时保留图片信息本身。
+//
+// 注意：不要把 tool_result.content 里的嵌套 image 提出来——tclaude CLI 正是嵌套格式。
 //
 // 数据流演变：
 //
@@ -1431,6 +1453,164 @@ func relocateAnthropicImagesToLastUserMessage(messages []anthropicMessage) []ant
 
 func isAnthropicImageBlock(block map[string]any) bool {
 	return strings.TrimSpace(anthropicStringField(block, "type")) == "image"
+}
+
+// anthropicToolResultContent 构造 tool_result.content，并对齐 tclaude CLI 的 Read 图格式：
+//
+//	tool_result.content = [{type:image, source:{type:base64, media_type, data}}]
+//	同条 user 消息随后可跟 "[Image: original WxH...]" 文本。
+func anthropicToolResultContent(message Message) (any, []map[string]any, error) {
+	imageMessage := message
+	if !hasImageContentParts(message.ContentParts) && strings.TrimSpace(message.Name) == "Read" {
+		if part, ok := ReadToolResultImageContentPart(message.Content); ok {
+			imageMessage = Message{
+				Role:         "tool",
+				ContentParts: []ContentPart{part},
+			}
+		}
+	}
+	if !hasImageContentParts(imageMessage.ContentParts) {
+		return message.Content, nil, nil
+	}
+
+	// trailing 必须基于「编码前」原图像素，才能写出 original vs displayed（对齐 CLI）。
+	trailingNote := anthropicReadImageTrailingText(imageMessage.ContentParts)
+
+	// tclaude CLI 对 Read 图使用真正的 JPEG base64；仅改 media_type 而保留 PNG 字节会触发 [Unsupported Image]。
+	imageMessage = ensureAnthropicMessageImagesJPEG(imageMessage)
+
+	blocks, err := anthropicContentBlocks(imageMessage)
+	if err != nil {
+		return nil, nil, err
+	}
+	images := make([]map[string]any, 0, len(blocks))
+	for _, block := range blocks {
+		if isAnthropicImageBlock(block) {
+			images = append(images, block)
+		}
+	}
+	if len(images) == 0 {
+		return message.Content, nil, nil
+	}
+	trailing := make([]map[string]any, 0, 1)
+	if trailingNote != "" {
+		trailing = append(trailing, map[string]any{
+			"type": contentPartTypeText,
+			"text": trailingNote,
+		})
+	}
+	return images, trailing, nil
+}
+
+// ensureAnthropicMessageImagesJPEG 把消息里的图片 ContentPart 真正转成 JPEG 字节，并同步 media_type。
+// 过小图会放大到 anthropicVisionMinSide，避免 tclaude 只吞尺寸文案。
+func ensureAnthropicMessageImagesJPEG(message Message) Message {
+	if len(message.ContentParts) == 0 {
+		return message
+	}
+	cloned := message
+	cloned.ContentParts = append([]ContentPart(nil), message.ContentParts...)
+	for index := range cloned.ContentParts {
+		part := &cloned.ContentParts[index]
+		if normalizeContentPartType(part.Type) != contentPartTypeImage || part.Image == nil || len(part.Image.Data) == 0 {
+			continue
+		}
+		jpegBytes, _, _, _, _, err := encodeAnthropicVisionJPEG(part.Image.Data)
+		if err != nil || len(jpegBytes) == 0 {
+			continue
+		}
+		part.Image = &ImageContent{
+			MIMEType: "image/jpeg",
+			Path:     part.Image.Path,
+			Data:     jpegBytes,
+		}
+	}
+	return cloned
+}
+
+func isJPEGPayload(payload []byte) bool {
+	return len(payload) >= 3 && payload[0] == 0xff && payload[1] == 0xd8 && payload[2] == 0xff
+}
+
+// encodeAnthropicVisionJPEG 解码原图并输出带 JFIF APP0 的 JPEG（对齐 tclaude CLI：magic ffd8ffe0）。
+// Go 默认 jpeg.Encode 产出 ffd8ffdb（无 JFIF），tclaude 网关常把这类图当成不可见，模型只剩尺寸文案。
+func encodeAnthropicVisionJPEG(payload []byte) (jpegBytes []byte, origW, origH, dispW, dispH int, err error) {
+	img, _, err := image.Decode(bytes.NewReader(payload))
+	if err != nil {
+		return nil, 0, 0, 0, 0, err
+	}
+	bounds := img.Bounds()
+	origW, origH = bounds.Dx(), bounds.Dy()
+	scaled := scaleImageMaxSide(img, readToolImageMaxSide)
+	scaled = scaleImageMinSide(scaled, anthropicVisionMinSide)
+	dispBounds := scaled.Bounds()
+	dispW, dispH = dispBounds.Dx(), dispBounds.Dy()
+	if isJFIFJPEGPayload(payload) && origW == dispW && origH == dispH {
+		return payload, origW, origH, dispW, dispH, nil
+	}
+	var buf bytes.Buffer
+	if err := jpeg.Encode(&buf, scaled, &jpeg.Options{Quality: 85}); err != nil {
+		return nil, 0, 0, 0, 0, err
+	}
+	return ensureJPEGJFIFHeader(buf.Bytes()), origW, origH, dispW, dispH, nil
+}
+
+func isJFIFJPEGPayload(payload []byte) bool {
+	// SOI + APP0 + length + "JFIF\0"
+	return len(payload) >= 10 &&
+		payload[0] == 0xff && payload[1] == 0xd8 &&
+		payload[2] == 0xff && payload[3] == 0xe0 &&
+		payload[6] == 'J' && payload[7] == 'F' && payload[8] == 'I' && payload[9] == 'F'
+}
+
+// ensureJPEGJFIFHeader 在 SOI 后插入与 tclaude CLI 一致的 JFIF APP0（version 1.2）。
+func ensureJPEGJFIFHeader(payload []byte) []byte {
+	if len(payload) < 2 || payload[0] != 0xff || payload[1] != 0xd8 {
+		return payload
+	}
+	if isJFIFJPEGPayload(payload) {
+		return payload
+	}
+	// ffd8 ffe0 0010 4a46494600 0102 00 0001 0001 0000
+	jfif := []byte{
+		0xff, 0xe0, 0x00, 0x10,
+		'J', 'F', 'I', 'F', 0x00,
+		0x01, 0x02, 0x00,
+		0x00, 0x01, 0x00, 0x01,
+		0x00, 0x00,
+	}
+	out := make([]byte, 0, 2+len(jfif)+len(payload)-2)
+	out = append(out, 0xff, 0xd8)
+	out = append(out, jfif...)
+	out = append(out, payload[2:]...)
+	return out
+}
+
+func anthropicReadImageTrailingText(parts []ContentPart) string {
+	for _, part := range parts {
+		if normalizeContentPartType(part.Type) != contentPartTypeImage || part.Image == nil || len(part.Image.Data) == 0 {
+			continue
+		}
+		_, origW, origH, dispW, dispH, encErr := encodeAnthropicVisionJPEG(part.Image.Data)
+		if encErr == nil && origW > 0 && origH > 0 && dispW > 0 && dispH > 0 {
+			return formatAnthropicImageTrailingText(origW, origH, dispW, dispH)
+		}
+		cfg, _, err := image.DecodeConfig(bytes.NewReader(part.Image.Data))
+		if err == nil && cfg.Width > 0 && cfg.Height > 0 {
+			return formatAnthropicImageTrailingText(cfg.Width, cfg.Height, cfg.Width, cfg.Height)
+		}
+		return "[Image attached via Read tool.]"
+	}
+	return ""
+}
+
+func formatAnthropicImageTrailingText(origW, origH, dispW, dispH int) string {
+	scale := 1.0
+	if dispW > 0 {
+		scale = float64(origW) / float64(dispW)
+	}
+	return fmt.Sprintf("[Image: original %dx%d, displayed at %dx%d. Multiply coordinates by %.2f to map to original image.]",
+		origW, origH, dispW, dispH, scale)
 }
 
 func anthropicProviderContentBlocks(message Message, thinkingEnabled bool) ([]map[string]any, error) {

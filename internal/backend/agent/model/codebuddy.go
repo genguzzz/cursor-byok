@@ -174,7 +174,103 @@ func (a *CodeBuddyAdapter) Stream(ctx context.Context, req StreamRequest, sink f
 	req.OpenAIExtraParamsEnabled = true
 	req.GzipRequestBody = true
 
+	// hy3 等会过滤 user 角色 image_url，但接受 Read tool 结果里的 image_url。
+	// 粘贴图改为 path 文本，复用 72c8272 已验证的 Read→image_url 通路。
+	req.Messages = rewriteUserInlineImagesToPathFallback(req.Messages)
+
 	return a.openai.Stream(ctx, req, sink)
+}
+
+const selectedImagesReadHint = "If image bytes are not available inline, call the Read tool on each path in <selected_images> before answering about the image content. Do not claim image input is unsupported when a local path is listed."
+
+// rewriteUserInlineImagesToPathFallback 去掉 user 消息 inline 图片，只保留本地 path 文本。
+// CodeBuddy / tclaude 等中转对 user 顶层 image 支持差，统一走 Read→tool 图。
+func rewriteUserInlineImagesToPathFallback(messages []Message) []Message {
+	if len(messages) == 0 {
+		return messages
+	}
+	out := append([]Message(nil), messages...)
+	for index := range out {
+		if strings.TrimSpace(out[index].Role) != "user" {
+			continue
+		}
+		paths, stripped := stripUserImageContentParts(&out[index])
+		if !stripped {
+			continue
+		}
+		content := strings.TrimSpace(out[index].Content)
+		if content == "" {
+			content = collapseTextContentParts(out[index].ContentParts)
+		}
+		content = ensureSelectedImagesPathSection(content, paths)
+		if !strings.Contains(content, "call the Read tool on each path") {
+			content = strings.TrimSpace(content) + "\n\n" + selectedImagesReadHint
+		}
+		out[index].Content = content
+		if len(out[index].ContentParts) == 0 {
+			continue
+		}
+		// 出站只保留纯文本，避免再带上 image ContentPart。
+		out[index].ContentParts = []ContentPart{{
+			Type: contentPartTypeText,
+			Text: content,
+		}}
+	}
+	return out
+}
+
+func stripUserImageContentParts(message *Message) (paths []string, stripped bool) {
+	if message == nil || len(message.ContentParts) == 0 {
+		return nil, false
+	}
+	kept := make([]ContentPart, 0, len(message.ContentParts))
+	seen := make(map[string]struct{}, len(message.ContentParts))
+	for _, part := range message.ContentParts {
+		if normalizeContentPartType(part.Type) == contentPartTypeImage {
+			stripped = true
+			if part.Image != nil {
+				if path := strings.TrimSpace(part.Image.Path); path != "" {
+					if _, ok := seen[path]; !ok {
+						seen[path] = struct{}{}
+						paths = append(paths, path)
+					}
+				}
+			}
+			continue
+		}
+		kept = append(kept, part)
+	}
+	if !stripped {
+		return nil, false
+	}
+	message.ContentParts = kept
+	return paths, true
+}
+
+func ensureSelectedImagesPathSection(content string, paths []string) string {
+	if len(paths) == 0 {
+		return strings.TrimSpace(content)
+	}
+	trimmed := strings.TrimSpace(content)
+	missing := make([]string, 0, len(paths))
+	for _, path := range paths {
+		if path == "" || strings.Contains(trimmed, path) {
+			continue
+		}
+		missing = append(missing, path)
+	}
+	if len(missing) == 0 {
+		return trimmed
+	}
+	entries := make([]string, 0, len(missing))
+	for _, path := range missing {
+		entries = append(entries, `<image path="`+path+`" />`)
+	}
+	section := "<selected_images>\n" + strings.Join(entries, "\n") + "\n</selected_images>"
+	if trimmed == "" {
+		return section
+	}
+	return trimmed + "\n\n" + section
 }
 
 func mergeCodeBuddyExtraParamsJSON(userEnabled bool, userJSON string, reasoningEffort string) string {
