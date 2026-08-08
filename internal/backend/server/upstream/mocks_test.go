@@ -20,8 +20,28 @@ func TestBuildCLIModelDetailsPreservesChannelCredentials(t *testing.T) {
 
 	got := buildCLIModelDetails(adapters)
 	want := []map[string]any{
-		{"modelId": "channel-a", "displayModelId": "channel-a", "apiKeyCredentials": map[string]any{"apiKey": "provider-secret-a", "baseUrl": "https://provider-a.example/v1"}},
-		{"modelId": "channel-b", "displayModelId": "channel-b", "apiKeyCredentials": map[string]any{"apiKey": "", "baseUrl": ""}},
+		{
+			"modelId":          "channel-a",
+			"displayModelId":   "model-a",
+			"displayName":      "model-a",
+			"displayNameShort": "model-a",
+			"aliases":          []string{"model-a"},
+			"apiKeyCredentials": map[string]any{
+				"apiKey":  "provider-secret-a",
+				"baseUrl": "https://provider-a.example/v1",
+			},
+		},
+		{
+			"modelId":          "channel-b",
+			"displayModelId":   "model-a",
+			"displayName":      "model-a",
+			"displayNameShort": "model-a",
+			"aliases":          []string{"model-a"},
+			"apiKeyCredentials": map[string]any{
+				"apiKey":  "",
+				"baseUrl": "",
+			},
+		},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("build CLI model details: got %v, want %v", got, want)
@@ -29,7 +49,9 @@ func TestBuildCLIModelDetailsPreservesChannelCredentials(t *testing.T) {
 }
 
 func TestEncodeCLIModelsUsesAgentModelDetailsWireFormat(t *testing.T) {
-	payload := map[string]any{"models": buildCLIModelDetails([]legacyruntime.ModelAdapterConfig{{ID: "channel-a", APIKey: "provider-secret", BaseURL: "https://provider.example/v1"}})}
+	payload := map[string]any{"models": buildCLIModelDetails([]legacyruntime.ModelAdapterConfig{
+		{ID: "channel-a", ModelID: "composer-2.5", DisplayName: "Local Composer", APIKey: "provider-secret", BaseURL: "https://provider.example/v1"},
+	})}
 	encoded, err := encodeMockProto("aiserver.v1.GetUsableModelsResponse", payload)
 	if err != nil {
 		t.Fatalf("encode CLI models: %v", err)
@@ -43,8 +65,14 @@ func TestEncodeCLIModelsUsesAgentModelDetailsWireFormat(t *testing.T) {
 		t.Fatalf("decoded model count: got %d, want 1", len(response.Models))
 	}
 	model := response.Models[0]
-	if model.GetModelId() != "channel-a" || model.GetDisplayModelId() != "channel-a" {
+	if model.GetModelId() != "channel-a" || model.GetDisplayModelId() != "Local Composer" {
 		t.Fatalf("decoded channel IDs: model=%q display=%q", model.GetModelId(), model.GetDisplayModelId())
+	}
+	if model.GetDisplayName() != "Local Composer" {
+		t.Fatalf("decoded display name: %q", model.GetDisplayName())
+	}
+	if got := model.GetAliases(); len(got) != 2 || got[0] != "composer-2.5" || got[1] != "Local Composer" {
+		t.Fatalf("decoded aliases: %#v", got)
 	}
 	if credentials := model.GetApiKeyCredentials(); credentials == nil || credentials.GetApiKey() != "provider-secret" || credentials.GetBaseUrl() != "https://provider.example/v1" {
 		t.Fatalf("decoded relay credentials: %#v", credentials)

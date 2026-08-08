@@ -53,8 +53,9 @@ type RequestContext struct {
 }
 
 type ForwardOptions struct {
-	BodyOverride []byte
-	PatchHeaders func(headers http.Header)
+	BodyOverride       []byte
+	PatchHeaders       func(headers http.Header)
+	PreserveClientAuth bool
 }
 
 type ForwardMeta struct {

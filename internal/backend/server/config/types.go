@@ -72,9 +72,25 @@ type TabRenamerConfig struct {
 	TimeoutSeconds int `json:"timeoutSeconds,omitempty" yaml:"timeoutSeconds,omitempty"`
 }
 
+// MixedModelRoutingConfig 控制桌面端官方模型与注入模型混用。
+// 缺省开启：保留真实 Cursor 登录，模型列表合并，Agent 按渠道分流。
+type MixedModelRoutingConfig struct {
+	// Enabled 为 nil 或未配置时视为 true。显式 false 回到旧的全本地 mock。
+	Enabled *bool `json:"enabled" yaml:"enabled"`
+}
+
+// IsEnabled 返回混合分流是否开启；未配置时默认 true。
+func (cfg MixedModelRoutingConfig) IsEnabled() bool {
+	if cfg.Enabled == nil {
+		return true
+	}
+	return *cfg.Enabled
+}
+
 // FeaturesConfig 收纳所有 opt-in / 灰度特性的配置。
 type FeaturesConfig struct {
-	TabRenamer TabRenamerConfig `json:"tabRenamer" yaml:"tabRenamer"`
+	TabRenamer        TabRenamerConfig        `json:"tabRenamer" yaml:"tabRenamer"`
+	MixedModelRouting MixedModelRoutingConfig `json:"mixedModelRouting" yaml:"mixedModelRouting"`
 }
 
 type Config struct {
@@ -95,6 +111,9 @@ func DefaultConfig() Config {
 		BackendListenAddr:         DefaultBackendListenAddr,
 		ProxyListenAddr:           DefaultProxyListenAddr,
 		ModelAdapters:             []ModelAdapterConfig{},
+		Features: FeaturesConfig{
+			MixedModelRouting: MixedModelRoutingConfig{Enabled: boolPtr(true)},
+		},
 	}
 }
 
@@ -115,6 +134,7 @@ func NormalizeConfig(input Config) (Config, error) {
 	output.HomeMetrics.IncludeCacheWriteInHitRate = input.HomeMetrics.IncludeCacheWriteInHitRate
 	output.LastAgentModelHash = strings.TrimSpace(input.LastAgentModelHash)
 	output.Features.TabRenamer = normalizeTabRenamerConfig(input.Features.TabRenamer)
+	output.Features.MixedModelRouting = normalizeMixedModelRoutingConfig(input.Features.MixedModelRouting)
 	adapters, err := NormalizeModelAdapterConfigs(input.ModelAdapters)
 	if err != nil {
 		return Config{}, err
@@ -132,6 +152,18 @@ func normalizeTabRenamerConfig(input TabRenamerConfig) TabRenamerConfig {
 		MaxNameChars:    normalizeNonNegative(input.MaxNameChars, 50),
 		TimeoutSeconds:  normalizeNonNegative(input.TimeoutSeconds, 8),
 	}
+}
+
+func normalizeMixedModelRoutingConfig(input MixedModelRoutingConfig) MixedModelRoutingConfig {
+	enabled := true
+	if input.Enabled != nil {
+		enabled = *input.Enabled
+	}
+	return MixedModelRoutingConfig{Enabled: &enabled}
+}
+
+func boolPtr(value bool) *bool {
+	return &value
 }
 
 func normalizeNonNegative(value int, fallback int) int {

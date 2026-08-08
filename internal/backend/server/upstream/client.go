@@ -2,6 +2,7 @@ package upstream
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
@@ -72,8 +73,46 @@ func ForwardToUpstream(reqCtx *RequestContext, options ForwardOptions) (*Forward
 	return meta, nil
 }
 
+// FetchUpstream 回源并读取完整响应，不写入客户端。用于模型目录 merge。
+func FetchUpstream(reqCtx *RequestContext, options ForwardOptions) (int, http.Header, []byte, error) {
+	if reqCtx == nil {
+		return 0, nil, nil, fmt.Errorf("request context is nil")
+	}
+	requestBody := reqCtx.RequestBody
+	if options.BodyOverride != nil {
+		requestBody = options.BodyOverride
+	}
+	if !shouldRequestCarryBody(reqCtx.Method) {
+		requestBody = []byte{}
+	}
+	upstreamRequest, upstreamClient, err := buildUpstreamRequest(reqCtx, requestBody, options)
+	if err != nil {
+		return 0, nil, nil, err
+	}
+	upstreamResponse, err := upstreamClient.Do(upstreamRequest)
+	if err != nil {
+		return 0, nil, nil, err
+	}
+	defer upstreamResponse.Body.Close()
+	body, err := io.ReadAll(upstreamResponse.Body)
+	if err != nil {
+		return upstreamResponse.StatusCode, upstreamResponse.Header.Clone(), nil, err
+	}
+	return upstreamResponse.StatusCode, upstreamResponse.Header.Clone(), body, nil
+}
+
+const defaultCursorAPI2Host = "api2.cursor.sh"
+
 func buildUpstreamRequest(reqCtx *RequestContext, body []byte, options ForwardOptions) (*http.Request, HTTPClient, error) {
-	upstreamRequest, err := http.NewRequestWithContext(reqCtx.Request.Context(), reqCtx.Method, reqCtx.TargetURL.String(), bytes.NewReader(body))
+	reqCtxBackground := context.Background()
+	if reqCtx != nil && reqCtx.Request != nil {
+		reqCtxBackground = reqCtx.Request.Context()
+	}
+	targetURL, err := resolveForwardTargetURL(reqCtx, options)
+	if err != nil {
+		return nil, nil, err
+	}
+	upstreamRequest, err := http.NewRequestWithContext(reqCtxBackground, reqCtx.Method, targetURL.String(), bytes.NewReader(body))
 	if err != nil {
 		return nil, nil, fmt.Errorf("create upstream request failed: %w", err)
 	}
@@ -85,9 +124,9 @@ func buildUpstreamRequest(reqCtx *RequestContext, body []byte, options ForwardOp
 	} else {
 		upstreamRequest.Header.Set("content-length", strconv.Itoa(len(body)))
 	}
-	upstreamRequest.Host = reqCtx.TargetURL.Host
+	upstreamRequest.Host = targetURL.Host
 
-	if shouldRewriteHost(reqCtx.TargetURL.Hostname()) {
+	if !options.PreserveClientAuth && shouldRewriteHost(targetURL.Hostname()) {
 		auth := formatBearerAuthorization(legacyruntime.LocalRelayToken)
 		if auth == "" {
 			return nil, nil, legacyruntime.ErrInvalidSystemSetting
@@ -99,12 +138,63 @@ func buildUpstreamRequest(reqCtx *RequestContext, body []byte, options ForwardOp
 		options.PatchHeaders(upstreamRequest.Header)
 	}
 
-	upstreamClient := reqCtx.Deps.HTTPClient
+	var upstreamClient HTTPClient
+	if reqCtx.Deps != nil {
+		upstreamClient = reqCtx.Deps.HTTPClient
+	}
 	if upstreamClient == nil {
 		upstreamClient = netproxy.NewHTTPClient(0)
 	}
 
 	return upstreamRequest, upstreamClient, nil
+}
+
+// resolveForwardTargetURL 在混合分流回源时补全 CLI 直连 18090 丢失的 api2 主机。
+// MITM 带来的 X-Server-Upstream-URL（api2 / api5 等）原样保留。
+func resolveForwardTargetURL(reqCtx *RequestContext, options ForwardOptions) (*url.URL, error) {
+	if reqCtx == nil {
+		return nil, fmt.Errorf("request context is nil")
+	}
+	var copied url.URL
+	switch {
+	case reqCtx.TargetURL != nil:
+		copied = *reqCtx.TargetURL
+	case reqCtx.Request != nil && reqCtx.Request.URL != nil:
+		copied = *reqCtx.Request.URL
+	default:
+		return nil, fmt.Errorf("upstream target url is nil")
+	}
+	if !options.PreserveClientAuth || !isLocalOrMissingUpstream(&copied) {
+		return &copied, nil
+	}
+	path := copied.EscapedPath()
+	if path == "" {
+		path = copied.Path
+	}
+	rewritten := &url.URL{
+		Scheme:   "https",
+		Host:     defaultCursorAPI2Host,
+		Path:     path,
+		RawPath:  copied.RawPath,
+		RawQuery: copied.RawQuery,
+	}
+	logger.Infof("mixed upstream rewrite local target -> %s", rewritten.String())
+	return rewritten, nil
+}
+
+func isLocalOrMissingUpstream(target *url.URL) bool {
+	if target == nil {
+		return true
+	}
+	if strings.TrimSpace(target.Scheme) == "" || strings.TrimSpace(target.Host) == "" {
+		return true
+	}
+	switch strings.ToLower(strings.TrimSpace(target.Hostname())) {
+	case "", "127.0.0.1", "localhost", "::1":
+		return true
+	default:
+		return false
+	}
 }
 
 func copyResponse(writer io.Writer, reader io.Reader) (int64, error) {

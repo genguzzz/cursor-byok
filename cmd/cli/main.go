@@ -8,6 +8,7 @@ import (
 	"strings"
 	"syscall"
 
+	"cursor/internal/agentcli"
 	"cursor/internal/certs"
 	"cursor/internal/client"
 	"cursor/internal/cursor"
@@ -19,16 +20,26 @@ var (
 	debugConfigPath    = flag.String("config", "", "Path to custom config.yaml (overrides default ~/.cursor-local-assistant-v2/config.yaml)")
 	debugProxyListen   = flag.String("proxy-listen", "", "Override proxy listen address (e.g. 127.0.0.1:19080)")
 	debugBackendListen = flag.String("backend-listen", "", "Override backend listen address (e.g. 127.0.0.1:19090)")
+	backendOnly        = flag.Bool("backend-only", false, "只启动 18090 backend，不启动 MITM、不注入 Cursor settings")
 )
 
 func main() {
-	// off 子命令：清除 Cursor 代理设置并恢复原始账号鉴权
-	if len(os.Args) > 1 && os.Args[1] == "off" {
-		runOff()
-		return
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "off":
+			runOff()
+			return
+		case "agent":
+			os.Exit(agentcli.Run(os.Args[2:], os.Stdout, os.Stderr, os.Stdin))
+		}
 	}
 
 	flag.Parse()
+
+	if *backendOnly {
+		runBackendOnly()
+		return
+	}
 
 	// 如果使用 debug 端口覆盖，创建临时配置
 	if *debugConfigPath != "" || *debugProxyListen != "" || *debugBackendListen != "" {
@@ -63,6 +74,8 @@ func main() {
 		fmt.Printf("  Out Proxy: %s (%s)\n", state.NetProxyDescription, "active")
 	}
 	fmt.Println(strings.Repeat("-", 50))
+	fmt.Println(agentcli.UsageBanner(state.BackendListenAddr))
+	fmt.Println(strings.Repeat("-", 50))
 	fmt.Println("Press Ctrl+C to stop")
 
 	sig := make(chan os.Signal, 1)
@@ -75,6 +88,41 @@ func main() {
 	service.ShutdownForQuitPreserveSettings()
 	fmt.Println("Stopped (Cursor proxy settings preserved).")
 	fmt.Println("Run 'cursor-local-assistant off' to restore Cursor account/settings.")
+}
+
+func runBackendOnly() {
+	logger.Init()
+	logger.ApplyDebugLogFromConfig()
+	netproxy.InstallDefaultTransport()
+
+	certManager, err := certs.NewEmbeddedManager()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to create cert manager: %v\n", err)
+		os.Exit(1)
+	}
+	service := client.NewProxyService(nil, certManager, certs.EmbeddedCACertPEM())
+
+	fmt.Println("Starting cursor-byok backend-only (no MITM, no Cursor settings inject)...")
+	state, err := service.Start(client.StartOptions{})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to start backend: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Println(strings.Repeat("-", 50))
+	fmt.Printf("  Backend:   http://%s (%s)\n", state.BackendListenAddr, status(state.BackendRunning))
+	fmt.Printf("  Proxy:     skipped\n")
+	fmt.Println(strings.Repeat("-", 50))
+	fmt.Println(agentcli.UsageBanner(state.BackendListenAddr))
+	fmt.Println(strings.Repeat("-", 50))
+	fmt.Println("Press Ctrl+C to stop")
+
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
+	<-sig
+
+	fmt.Println("\nShutting down...")
+	service.ShutdownForQuitPreserveSettings()
+	fmt.Println("Stopped (Cursor settings untouched).")
 }
 
 func status(running bool) string {
@@ -145,6 +193,8 @@ func runDebugMode() {
 	if state.NetProxyActive {
 		fmt.Printf("  Out Proxy: %s (%s)\n", state.NetProxyDescription, "active")
 	}
+	fmt.Println(strings.Repeat("-", 50))
+	fmt.Println(agentcli.UsageBanner(state.BackendListenAddr))
 	fmt.Println(strings.Repeat("-", 50))
 	fmt.Println("[debug mode] Press Ctrl+C to stop")
 

@@ -423,7 +423,8 @@ func (s *ProxyServer) newGoproxyHandler() *goproxy.ProxyHttpServer {
 		return mitmAction, host
 	}))
 
-	// MITM 解密后：Cursor 白名单域名转发到 backend server，其余请求由 goproxy 直连回源。
+	// MITM 解密后：白名单 *.cursor.sh 全部交给 backend。
+	// 官方 vs 注入模型的分流在 backend mixed 包（解密后可见 protobuf），不在 CONNECT 层。
 	proxy.OnRequest().DoFunc(func(req *http.Request, _ *goproxy.ProxyCtx) (*http.Request, *http.Response) {
 		req.Header.Del(HeaderServerUpstreamURL)
 

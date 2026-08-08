@@ -30,3 +30,6 @@ cursor-tab-server/cursor-tab-server-linux-amd64.tar
 /menubar
 .cursor/
 .DS_Store
+h2-agent-proxy/captures/
+h2-agent-proxy/h2-proxy
+cmd/h2-agent-proxy/h2-agent-proxy

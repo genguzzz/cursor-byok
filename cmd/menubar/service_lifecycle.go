@@ -126,9 +126,9 @@ func startService() {
 		serviceState.running = true
 		serviceState.busy = false
 		serviceMu.Unlock()
-		logger.Infof("menubar: proxy running on %s, backend on %s",
+		logger.Infof("menubar: proxy running on %s, backend on %s, agent_cli=cursor-local-assistant agent -- …",
 			state.ProxyListenAddr, state.BackendListenAddr)
-		updateStatus("状态: 运行中", true, false)
+		updateStatus("状态: 运行中 (含 Agent CLI)", true, false)
 		refreshDebugUpstream()
 
 		<-stopCh

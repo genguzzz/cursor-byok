@@ -50,9 +50,21 @@ type ProxyState struct {
 	LastError string `json:"lastError"`
 }
 
-// StartProxy 用于处理与 StartProxy 相关的逻辑。
+// StartOptions 控制本地服务启动时是否碰 Cursor 客户端。
+// 零值 = 只起 backend，不启动 MITM、不写 settings / 假账号。
+type StartOptions struct {
+	InjectCursor bool
+	StartMITM    bool
+}
+
+// StartProxy 菜单栏/默认 CLI：backend + MITM + 注入 Cursor 代理设置。
 func (s *ProxyService) StartProxy() (ProxyState, error) {
-	logger.Infof("start service requested config_path=%s logs_root=%s", s.configPath, s.logsRoot)
+	return s.Start(StartOptions{InjectCursor: true, StartMITM: true})
+}
+
+// Start 按选项启动。CLI `--backend-only` 使用零值，避免打断桌面官方模型。
+func (s *ProxyService) Start(opts StartOptions) (ProxyState, error) {
+	logger.Infof("start service requested config_path=%s logs_root=%s inject_cursor=%t start_mitm=%t", s.configPath, s.logsRoot, opts.InjectCursor, opts.StartMITM)
 	fail := func(step string, err error) (ProxyState, error) {
 		logger.Errorf("start service failed step=%s err=%v", step, err)
 		s.setLastError(err)
@@ -80,48 +92,62 @@ func (s *ProxyService) StartProxy() (ProxyState, error) {
 		return fail("wait_backend_ready", err)
 	}
 	logger.Infof("embedded backend ready listen_addr=%s", s.backendHost.ListenAddr())
-	if err := s.ensureProxy(cfg); err != nil {
-		return fail("ensure_proxy", err)
+	if opts.StartMITM {
+		if err := s.ensureProxy(cfg); err != nil {
+			return fail("ensure_proxy", err)
+		}
 	}
 
-	// 启动时注入账号信息
-	if err := cursor.BackupCursorAuthState(); err != nil {
-		logger.Errorf("backupCursorAuthState failed: %v", err)
-	}
-	if err := cursor.InjectCursorUserInfo(localruntime.InjectAccountEmail, localruntime.InjectAuthToken); err != nil {
-		logger.Errorf("injectCursorUserInfo failed: %v", err)
-		// 不阻断启动，仅记录日志
+	if opts.InjectCursor {
+		if cfg.Features.MixedModelRouting.IsEnabled() {
+			logger.Infof("mixed model routing enabled: keep real Cursor login")
+			if err := cursor.PatchCursorStatsigGates(); err != nil {
+				logger.Errorf("patchCursorStatsigGates failed: %v", err)
+			}
+		} else {
+			if err := cursor.BackupCursorAuthState(); err != nil {
+				logger.Errorf("backupCursorAuthState failed: %v", err)
+			}
+			if err := cursor.InjectCursorUserInfo(localruntime.InjectAccountEmail, localruntime.InjectAuthToken); err != nil {
+				logger.Errorf("injectCursorUserInfo failed: %v", err)
+			}
+		}
+	} else {
+		logger.Infof("backend-only mode: skip cursor settings/auth inject")
 	}
 
-	if s.proxy != nil && !s.proxy.IsRunning() {
+	if opts.StartMITM && s.proxy != nil && !s.proxy.IsRunning() {
 		logger.Infof("starting mitm proxy listen_addr=%s", s.proxy.Snapshot().ListenAddr)
 		if err := s.proxy.Start(); err != nil {
 			return fail("start_mitm_proxy", err)
 		}
 	}
 
-	if err := s.ApplyCursorSettings(); err != nil {
-		stopCtx, stopCancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer stopCancel()
-		if s.proxy != nil {
-			_ = s.proxy.Stop(stopCtx)
+	if opts.InjectCursor {
+		if err := s.ApplyCursorSettings(); err != nil {
+			stopCtx, stopCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer stopCancel()
+			if s.proxy != nil {
+				_ = s.proxy.Stop(stopCtx)
+			}
+			_ = s.backendHost.Stop(stopCtx)
+			startErr := fmt.Errorf("服务已启动，但注入 Cursor 配置失败: %w", err)
+			logger.Errorf("start service failed step=apply_cursor_settings err=%v", startErr)
+			s.setLastError(startErr)
+			s.emitState()
+			return s.GetState(), startErr
 		}
-		_ = s.backendHost.Stop(stopCtx)
-		startErr := fmt.Errorf("服务已启动，但注入 Cursor 配置失败: %w", err)
-		logger.Errorf("start service failed step=apply_cursor_settings err=%v", startErr)
-		s.setLastError(startErr)
-		s.emitState()
-		return s.GetState(), startErr
 	}
 
 	s.setLastError(nil)
 	s.emitState()
 	state := s.GetState()
 	logger.Infof(
-		"start service completed backend_listen_addr=%s proxy_listen_addr=%s cursor_settings_applied=%t",
+		"start service completed backend_listen_addr=%s proxy_listen_addr=%s cursor_settings_applied=%t agent_cli_endpoint=http://%s",
 		state.BackendListenAddr,
 		state.ProxyListenAddr,
 		state.CursorSettingsApplied,
+		state.BackendListenAddr,
 	)
 	return state, nil
 }

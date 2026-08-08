@@ -54,7 +54,7 @@ func cursorAuthBackupPath() string {
 // cursorAuthBackupFile 对应备份文件的 JSON 结构。
 type cursorAuthBackupFile struct {
 	Keys             map[string]string `json:"keys"`
-	StatsigBootstrap string             `json:"statsig_bootstrap,omitempty"`
+	StatsigBootstrap string            `json:"statsig_bootstrap,omitempty"`
 }
 
 // BackupCursorAuthState 读取当前 state.vscdb 中的 cursorAuth/* 和 statsigBootstrap 值，
@@ -203,6 +203,49 @@ func RestoreCursorAuthState() error {
 	// 删除备份文件
 	_ = os.Remove(backupPath)
 	logger.Infof("cursor auth restored from backup and backup file removed")
+	return nil
+}
+
+// PatchCursorStatsigGates disables a small always-local stability gate set in
+// state.vscdb without rewriting the user's access/refresh tokens.
+func PatchCursorStatsigGates() error {
+	stateDBPath, err := resolveCursorStateDBPath()
+	if err != nil {
+		return err
+	}
+	db, err := sql.Open("sqlite", stateDBPath)
+	if err != nil {
+		return fmt.Errorf("打开 state.vscdb 失败: %w", err)
+	}
+	defer db.Close()
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
+
+	ctx := context.Background()
+	if _, err := db.ExecContext(ctx, fmt.Sprintf("PRAGMA busy_timeout = %d", cursorStateSQLiteBusyTimeoutMS)); err != nil {
+		return err
+	}
+	if _, err := db.ExecContext(ctx, "CREATE TABLE IF NOT EXISTS ItemTable (key TEXT UNIQUE ON CONFLICT REPLACE, value BLOB)"); err != nil {
+		return err
+	}
+	tx, err := db.BeginTx(ctx, &sql.TxOptions{})
+	if err != nil {
+		return err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+	if err := disableCursorStatsigGates(ctx, tx); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	committed = true
+	logger.Infof("patched Cursor statsig gates without rewriting auth path=%s gates=%s", stateDBPath, strings.Join(cursorStateDisabledStatsigGates, ","))
 	return nil
 }
 

@@ -48,6 +48,20 @@ go run ./cmd/cursor-proxy-debugger
 
 这只是供开发者手动使用的辅助工具，不属于自动化 Debug 流程。不要因为加载此指南就自动启动代理、修改 Cursor 或系统设置、安装证书，或操作 Cursor 发起请求。只有开发者明确表示已经启用抓包时，才把调试界面中的数据作为当前运行证据。调试结束后，提醒开发者恢复原来的 Cursor 代理和 Network 设置。
 
+## Cursor CLI（agent）本地模式与流量拦截
+
+本地模式 backend（`127.0.0.1:18090`）默认同时服务桌面客户端和官方 `agent` CLI。`GetServerConfig` 返回 `HTTP2_CONFIG_FORCE_ALL_DISABLED` 后，CLI 把 `AgentService/Run` remap 成现有的 `RunSSE` + `BidiAppend`，**不走官方 api5**。不要修改已安装的 `agent` 二进制。
+
+```bash
+# 本地模式开启后
+cursor-local-assistant agent -- models
+cursor-local-assistant agent -- -p "Reply with exactly: LOCAL-OK" --mode ask --output-format json
+```
+
+包装命令会注入 `-e` / `--agent-endpoint` / `--trust`，并清掉 `HTTPS_PROXY` 等以免 localhost 被拐走。手写时 endpoint 必须是 `http://127.0.0.1:18090`（不是桌面 MITM `18080`，也不是 https）。细节见 `h2-agent-proxy/LOCAL-INTERCEPT.md`。
+
+若要 **抓官方云端 api5**（对照协议，不是本地模式），另开调试工具 `h2-agent-proxy`，默认 `https://127.0.0.1:8443`，upstream 仍是 Cloudflare。这和 `:18090` 不是同一个服务。`--agent-endpoint` / `-k` 在这条路上指向 8443 只为 MITM 抓包。mitmproxy / Surge / `cursor-proxy-debugger` 的 CONNECT 抓不到官方 H2。见 `h2-agent-proxy/README.md`。
+
 ## Cursor 客户端格式化快照
 
 - 如果用户要求提取、格式化、刷新或规范化 Cursor.app 快照流程，使用 `cursor-app-formatted` skill。

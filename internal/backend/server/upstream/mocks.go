@@ -727,16 +727,56 @@ func buildCLIModelDetails(adapters []legacyruntime.ModelAdapterConfig) []map[str
 		if channelID == "" {
 			continue
 		}
-		models = append(models, map[string]any{
-			"modelId":        channelID,
-			"displayModelId": channelID,
+		providerModelID := strings.TrimSpace(adapter.ModelID)
+		displayName := strings.TrimSpace(adapter.DisplayName)
+		displayModelID := displayName
+		if displayModelID == "" {
+			displayModelID = firstNonEmptyCLIString(providerModelID, channelID)
+		}
+		// modelId 用渠道 hash，与桌面 AvailableModels / AgentRouter 分流一致，
+		// 避免 provider 名（如 composer-2.5）与官方模型撞车。
+		entry := map[string]any{
+			"modelId":          channelID,
+			"displayModelId":   displayModelID,
+			"displayName":      firstNonEmptyCLIString(displayName, providerModelID, channelID),
+			"displayNameShort": firstNonEmptyCLIString(displayName, providerModelID, channelID),
 			"apiKeyCredentials": map[string]any{
 				"apiKey":  strings.TrimSpace(adapter.APIKey),
 				"baseUrl": strings.TrimSpace(adapter.BaseURL),
 			},
-		})
+		}
+		if aliases := cliModelAliases(channelID, providerModelID, displayName); len(aliases) > 0 {
+			entry["aliases"] = aliases
+		}
+		models = append(models, entry)
 	}
 	return models
+}
+
+func cliModelAliases(primary string, extras ...string) []string {
+	seen := map[string]struct{}{strings.TrimSpace(primary): {}}
+	out := make([]string, 0, len(extras))
+	for _, candidate := range extras {
+		name := strings.TrimSpace(candidate)
+		if name == "" {
+			continue
+		}
+		if _, exists := seen[name]; exists {
+			continue
+		}
+		seen[name] = struct{}{}
+		out = append(out, name)
+	}
+	return out
+}
+
+func firstNonEmptyCLIString(values ...string) string {
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
 }
 
 func buildThinkingEffortParameterDefinitions(adapterType string) []map[string]any {

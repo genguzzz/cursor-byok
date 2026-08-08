@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"cursor/internal/backend/server"
+	"cursor/internal/logger"
 )
 
 type CompatRouteConfig struct {
@@ -28,6 +29,73 @@ func ForwardAction(deps Dependencies, cfg CompatRouteConfig) server.HandlerFunc 
 		}
 		return handleDirect(reqCtx, route)
 	}
+}
+
+// ClientAuthForwardAction 用客户端原始 Authorization 回源，不覆盖为 LocalRelayToken。
+func ClientAuthForwardAction(deps Dependencies, cfg CompatRouteConfig) server.HandlerFunc {
+	return func(ctx *server.Context) error {
+		reqCtx, _, err := newCompatRouteObjects(ctx, deps, cfg)
+		if err != nil {
+			return err
+		}
+		if reqCtx == nil {
+			return fmt.Errorf("Cursor 回源请求上下文无效")
+		}
+		_, err = ForwardToUpstream(reqCtx, ForwardOptions{PreserveClientAuth: true})
+		return err
+	}
+}
+
+// ClientAuthForwardOrMockAction 先带客户端鉴权回源。
+// - 无 Authorization（CLI 纯本地）：上游失败时回落 mock。
+// - 有 Authorization（桌面真实登录）：上游失败时透传错误，禁止回落假 Ultra。
+func ClientAuthForwardOrMockAction(deps Dependencies, cfg CompatRouteConfig) server.HandlerFunc {
+	fallback := MockProtoAction(deps, cfg)
+	return func(ctx *server.Context) error {
+		reqCtx, _, err := newCompatRouteObjects(ctx, deps, cfg)
+		if err != nil {
+			return err
+		}
+		if reqCtx == nil {
+			return fallback(ctx)
+		}
+		status, headers, body, fetchErr := FetchUpstream(reqCtx, ForwardOptions{PreserveClientAuth: true})
+		if fetchErr != nil || status < 200 || status >= 300 {
+			if hasClientAuthorization(reqCtx) {
+				logger.Infof("mixed forward fail-closed name=%s status=%d err=%v", cfg.Name, status, fetchErr)
+				if fetchErr != nil {
+					return fetchErr
+				}
+				if reqCtx.ResponseWriter == nil {
+					return fmt.Errorf("response writer is nil")
+				}
+				copyResponseHeadersToClient(reqCtx.ResponseWriter.Header(), headers)
+				reqCtx.ResponseWriter.WriteHeader(status)
+				_, err = reqCtx.ResponseWriter.Write(body)
+				return err
+			}
+			logger.Infof("mixed forward fallback name=%s status=%d err=%v", cfg.Name, status, fetchErr)
+			return fallback(ctx)
+		}
+		if reqCtx.ResponseWriter == nil {
+			return fmt.Errorf("response writer is nil")
+		}
+		copyResponseHeadersToClient(reqCtx.ResponseWriter.Header(), headers)
+		reqCtx.ResponseWriter.WriteHeader(status)
+		_, err = reqCtx.ResponseWriter.Write(body)
+		return err
+	}
+}
+
+func hasClientAuthorization(reqCtx *RequestContext) bool {
+	if reqCtx == nil {
+		return false
+	}
+	auth := strings.TrimSpace(reqCtx.Headers.Get("Authorization"))
+	if auth == "" && reqCtx.Request != nil {
+		auth = strings.TrimSpace(reqCtx.Request.Header.Get("Authorization"))
+	}
+	return auth != ""
 }
 
 // AuthenticatedForwardAction forwards a Cursor control-plane request with the

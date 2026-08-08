@@ -1,0 +1,21 @@
+schema: spec-driven
+
+context: |
+  Repository: cursor-byok — desktop local assistant that MITMs Cursor traffic
+  and runs a compatible always-local Agent backend (BidiAppend + RunSSE).
+  Language: Go. Do not patch installed Cursor.app. CLI / api5 H2 is out of
+  scope unless a change explicitly says otherwise.
+  Desktop MITM listens on 127.0.0.1:18080 and forces HTTP/1.1.
+  Injected model channel IDs are short SHA-256 hashes; Cursor native model
+  IDs are official names. History truth is state.json + context.json.
+
+rules:
+  proposal:
+    - Always include a Non-goals section
+    - Cite concrete repo file evidence for feasibility claims
+  design:
+    - Every Decision must include an Evidence subsection with file paths
+    - Call out identity/auth and stream-passthrough risks explicitly
+  tasks:
+    - Break work into verifiable implementation + test chunks
+    - Desktop only; do not add CLI/api5 tasks

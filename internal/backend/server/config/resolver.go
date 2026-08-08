@@ -37,6 +37,7 @@ func resolveModelAdapterChannel(adapters []ModelAdapterConfig, requestedModel st
 		func(adapter ModelAdapterConfig) string {
 			return modelchannel.BuildLegacyChannelID(adapter.BaseURL, adapter.ModelID, adapter.APIKey, adapter.DisplayName)
 		},
+		func(adapter ModelAdapterConfig) string { return adapter.DisplayName },
 	)
 	if !ok {
 		return nil, legacyruntime.ErrChannelNotAvailable

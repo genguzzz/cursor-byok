@@ -9,6 +9,8 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -22,14 +24,14 @@ import (
 	"cursor/gen/agentv1"
 	"cursor/gen/aiserverv1"
 	"cursor/internal/appdata"
-	"cursor/internal/logger"
-	serverconfig "cursor/internal/backend/server/config"
 	execbridge "cursor/internal/backend/agent/bridge/exec"
 	interactionbridge "cursor/internal/backend/agent/bridge/interaction"
 	runtimecore "cursor/internal/backend/agent/core"
 	modeladapter "cursor/internal/backend/agent/model"
 	promptengine "cursor/internal/backend/agent/prompt"
 	protocol "cursor/internal/backend/agent/protocol"
+	serverconfig "cursor/internal/backend/server/config"
+	"cursor/internal/logger"
 )
 
 const (
@@ -250,23 +252,23 @@ func subagentModelOverrideSummaries(overrides map[string]runtimecore.SubagentMod
 }
 
 type Service struct {
-	store                     *ConversationFileStore
-	usageStore                *UsageFileStore
-	codebaseIndexStore        *CodebaseIndexStore
-	docsIndexStore            *DocsIndexStore
-	rules                     *UserRuleStore
-	projector                 *HistoryProjector
-	compiler                  PromptCompiler
-	provider                  ProviderGateway
-	resolver                  modeladapter.ChannelResolver
-	modelMemory               agentModelMemory
-	broker                    *StreamBroker
-	recorder                  *artifactRecorder
-	debug                     *debugRecorder
-	execBridge                execbridge.ExecBridge
-	interactionBridge         interactionbridge.InteractionBridge
-	appendSeq                 *appendSequenceTracker
-	tabRenamerConfigLoader    TabRenamerConfigLoader
+	store                      *ConversationFileStore
+	usageStore                 *UsageFileStore
+	codebaseIndexStore         *CodebaseIndexStore
+	docsIndexStore             *DocsIndexStore
+	rules                      *UserRuleStore
+	projector                  *HistoryProjector
+	compiler                   PromptCompiler
+	provider                   ProviderGateway
+	resolver                   modeladapter.ChannelResolver
+	modelMemory                agentModelMemory
+	broker                     *StreamBroker
+	recorder                   *artifactRecorder
+	debug                      *debugRecorder
+	execBridge                 execbridge.ExecBridge
+	interactionBridge          interactionbridge.InteractionBridge
+	appendSeq                  *appendSequenceTracker
+	tabRenamerConfigLoader     TabRenamerConfigLoader
 	tabRenamerFullConfigLoader func() serverconfig.Config
 	// backgroundShellUIPollers 按 requestID\\0shellID 去重，独立于 stream actor 生命周期。
 	backgroundShellUIPollers sync.Map
@@ -3007,6 +3009,39 @@ func extractConversationActionMode(action *agentv1.ConversationAction) (agentv1.
 		}
 	}
 	return agentv1.AgentMode_AGENT_MODE_AGENT, ModeSourceUnknown, false, nil
+}
+
+// ExtractRequestedModelID 导出给混合分流层判断本地/回源。
+func ExtractRequestedModelID(message *agentv1.AgentClientMessage) string {
+	return extractRequestedModelID(message)
+}
+
+// ExtractConversationID 从 run/prewarm 提取 conversation_id。
+func ExtractConversationID(message *agentv1.AgentClientMessage) string {
+	if message == nil {
+		return ""
+	}
+	if runRequest := message.GetRunRequest(); runRequest != nil {
+		return strings.TrimSpace(runRequest.GetConversationId())
+	}
+	if prewarm := message.GetPrewarmRequest(); prewarm != nil {
+		return strings.TrimSpace(prewarm.GetConversationId())
+	}
+	return ""
+}
+
+// LocalHistoryExists 判断本地 history 是否已有该会话。
+func LocalHistoryExists(historyRoot string, conversationID string) bool {
+	conversationID = strings.TrimSpace(conversationID)
+	historyRoot = strings.TrimSpace(historyRoot)
+	if conversationID == "" || historyRoot == "" {
+		return false
+	}
+	if strings.Contains(conversationID, "/") || strings.Contains(conversationID, "\\") || strings.Contains(conversationID, "..") {
+		return false
+	}
+	_, err := os.Stat(filepath.Join(historyRoot, conversationID, "state.json"))
+	return err == nil
 }
 
 // extractRequestedModelID 提取本轮显式请求的模型 ID。

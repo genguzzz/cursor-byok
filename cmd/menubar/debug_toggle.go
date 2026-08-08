@@ -163,7 +163,7 @@ func stopDebugLocked(restoreProxy bool) {
 		return
 	}
 	if isServiceRunning() {
-		updateStatus("状态: 运行中", true, false)
+		updateStatus("状态: 运行中 (含 Agent CLI)", true, false)
 	} else {
 		updateStatus("状态: 已停止", false, false)
 	}

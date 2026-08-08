@@ -414,6 +414,7 @@ func (s *FixedChannelService) SelectChannelForModel(ctx context.Context, modelID
 			func(adapter ModelAdapterConfig) string {
 				return modelchannel.BuildLegacyChannelID(adapter.BaseURL, adapter.ModelID, adapter.APIKey, adapter.DisplayName)
 			},
+			func(adapter ModelAdapterConfig) string { return adapter.DisplayName },
 		)
 		if !ok {
 			return nil, ErrChannelNotAvailable
