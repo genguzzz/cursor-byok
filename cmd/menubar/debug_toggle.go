@@ -18,6 +18,7 @@ import (
 
 	proxydebugger "cursor/cursor-proxy-debugger"
 
+	upstreamcap "cursor/internal/backend/server/upstream"
 	"cursor/internal/certs"
 	"cursor/internal/cursor"
 	"cursor/internal/logger"
@@ -62,7 +63,7 @@ func startDebugLocked(openBrowserTab bool) bool {
 	config := proxydebugger.Config{
 		ProxyAddr:     debugProxyListenAddr,
 		UIAddr:        debugUIListenAddr,
-		TargetHost:    "api2.cursor.sh",
+		TargetHost:    "*.cursor.sh",
 		UpstreamProxy: upstream,
 		MaxExchanges:  200,
 	}
@@ -77,6 +78,7 @@ func startDebugLocked(openBrowserTab bool) bool {
 		updateStatus("状态: 调试启动失败", isServiceRunning(), false)
 		return false
 	}
+	upstreamcap.SetTrafficCapture(&debugUpstreamCapture{server: server})
 
 	if err := ensureDebugCATrusted(); err != nil {
 		logger.Errorf("menubar: 调试 CA 准备失败: %v", err)
@@ -135,6 +137,7 @@ func closeDebugServer(server *proxydebugger.Server) {
 }
 
 func stopDebugLocked(restoreProxy bool) {
+	upstreamcap.SetTrafficCapture(nil)
 	if debugState.server != nil {
 		closeDebugServer(debugState.server)
 		debugState.server = nil
@@ -237,6 +240,31 @@ func refreshDebugUpstream() {
 		return
 	}
 	restartDebugLocked(false)
+}
+
+type debugUpstreamCapture struct {
+	server *proxydebugger.Server
+}
+
+func (c *debugUpstreamCapture) CaptureUpstream(hop upstreamcap.TrafficHop) {
+	if c == nil || c.server == nil {
+		return
+	}
+	c.server.IngestUpstreamHop(proxydebugger.UpstreamHop{
+		StartedAt:      hop.StartedAt,
+		Duration:       hop.Duration,
+		Method:         hop.Method,
+		URL:            hop.URL,
+		Host:           hop.Host,
+		Path:           hop.Path,
+		Status:         hop.Status,
+		RequestID:      hop.RequestID,
+		RequestHeader:  hop.RequestHeader,
+		ResponseHeader: hop.ResponseHeader,
+		RequestBody:    hop.RequestBody,
+		ResponseBody:   hop.ResponseBody,
+		Error:          hop.Error,
+	})
 }
 
 // ensureDebugProxyAfterLocalStop 关闭本地模式并完成账号恢复后，若调试仍开则继续指向 9092。

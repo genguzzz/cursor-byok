@@ -4,25 +4,32 @@ import "time"
 
 const (
 	// 默认代理端口 9092，避开本机 Proxyman 常用的 9090。
-	defaultProxyAddr       = "127.0.0.1:9092"
-	defaultUIAddr          = "127.0.0.1:9091"
-	defaultTargetHost      = "api2.cursor.sh"
+	defaultProxyAddr = "127.0.0.1:9092"
+	defaultUIAddr    = "127.0.0.1:9091"
+	// 默认与桌面 MITM 白名单一致，抓全部 *.cursor.sh（mixed 多 server）。
+	defaultTargetHost      = "*.cursor.sh"
 	defaultMaxExchanges    = 200
 	defaultMaxCaptureBytes = 2 << 20
 	defaultMaxFrames       = 2000
+
+	CaptureSourceClient   = "client"
+	CaptureSourceUpstream = "upstream"
 )
 
 // Config controls the standalone proxy debugger.
 type Config struct {
-	ProxyAddr       string
-	UIAddr          string
-	TargetHost      string
+	ProxyAddr string
+	UIAddr    string
+	// TargetHost 需要解密的主机模式：单个 host、逗号分隔列表，或 `*.cursor.sh`。
+	TargetHost string
 	// UpstreamProxy 可选。例如本地模式 MITM `http://127.0.0.1:18080`，
 	// 用于 Cursor → 调试代理 → 本地 MITM → backend 的抓包链路。
 	UpstreamProxy   string
 	MaxExchanges    int
 	MaxCaptureBytes int
 	MaxFrames       int
+
+	targetHostPatterns []string
 }
 
 func (config Config) normalized() Config {
@@ -35,6 +42,7 @@ func (config Config) normalized() Config {
 	if config.TargetHost == "" {
 		config.TargetHost = defaultTargetHost
 	}
+	config.targetHostPatterns = parseTargetHostPatterns(config.TargetHost)
 	if config.MaxExchanges <= 0 {
 		config.MaxExchanges = defaultMaxExchanges
 	}
@@ -63,6 +71,7 @@ type ExchangeSummary struct {
 	RequestID     string    `json:"requestId,omitempty"`
 	RequestKind   string    `json:"requestKind,omitempty"`
 	ResponseKind  string    `json:"responseKind,omitempty"`
+	CaptureSource string    `json:"captureSource,omitempty"`
 	FrameCount    int       `json:"frameCount"`
 	Error         string    `json:"error,omitempty"`
 }

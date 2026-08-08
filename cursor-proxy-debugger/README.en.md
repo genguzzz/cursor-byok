@@ -16,7 +16,7 @@ Default addresses:
 
 - HTTP/HTTPS proxy: `127.0.0.1:9090`
 - Debugging UI: `http://127.0.0.1:9091`
-- MITM target: `api2.cursor.sh`
+- MITM target: `*.cursor.sh` (multi-server, same whitelist as desktop MITM)
 
 The debugging UI opens automatically after startup.
 
@@ -41,7 +41,7 @@ go build -o bin/cursor-proxy-debugger ./cmd/cursor-proxy-debugger
 ```text
 -proxy-addr       Proxy listen address; default: 127.0.0.1:9090
 -ui-addr          Debugging UI listen address; default: 127.0.0.1:9091
--target-host      Host to decrypt and capture; default: api2.cursor.sh
+-target-host      Hosts to decrypt/capture; default: *.cursor.sh (comma-separated or wildcard)
 -max-exchanges    Maximum number of exchanges retained in memory; default: 200
 -open             Open the browser after startup; default: true
 ```

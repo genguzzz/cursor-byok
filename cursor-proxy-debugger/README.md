@@ -16,8 +16,9 @@ go run ./cmd/cursor-proxy-debugger
 
 - HTTP/HTTPS 代理：`127.0.0.1:9092`（避开 Proxyman 常用的 9090）
 - 调试界面：`http://127.0.0.1:9091`
-- MITM 目标：`api2.cursor.sh`
+- MITM 目标：`*.cursor.sh`（与桌面 MITM 白名单一致，支持多 server）
 - 可选上游：`-upstream-proxy http://127.0.0.1:18080`（本地模式抓包）
+- 菜单栏调试 + 本地模式同进程时，还会显示 backend → 官方的第二跳（来源「官方回源」）
 
 启动后会自动打开调试界面。
 
@@ -42,7 +43,7 @@ go build -o bin/cursor-proxy-debugger ./cmd/cursor-proxy-debugger
 ```text
 -proxy-addr       代理监听地址，默认 127.0.0.1:9092
 -ui-addr          调试界面监听地址，默认 127.0.0.1:9091
--target-host      需要解密的目标主机，默认 api2.cursor.sh
+-target-host      需要解密的目标主机，默认 *.cursor.sh（逗号分隔或通配）
 -upstream-proxy   可选上游代理，例如本地模式 http://127.0.0.1:18080
 -max-exchanges    内存中保留的最大请求数，默认 200
 -open             启动后是否打开浏览器，默认 true
@@ -50,12 +51,13 @@ go build -o bin/cursor-proxy-debugger ./cmd/cursor-proxy-debugger
 
 ## 数据处理
 
-- 仅对 `target-host` 执行 HTTPS MITM，其他 CONNECT 流量直接透传。
+- 对 `target-host` 匹配的主机执行 HTTPS MITM（默认全部 `*.cursor.sh`），其他 CONNECT 流量直接透传。
+- 列表区分来源：`客户端`（Cursor→代理）与 `官方回源`（backend `ForwardToUpstream` 第二跳，仅菜单栏同进程调试时可用）。
 - `RunSSE` 按 5 字节 Connect 帧头增量拆帧，支持逐帧 gzip 解压。
 - `BidiAppendRequest.data` 会继续解码为 `agent.v1.AgentClientMessage`。
 - Fork Chat 相关的 `ForkBackgroundComposer`、`NotifyConversationClone` 和 `UploadConversationBlobs` 会双向解码为 protobuf JSON。
 - 本地 Fork Chat 主要在客户端完成，只有启用克隆 blob 同步且隐私设置允许时才会产生 `NotifyConversationClone` 和 `UploadConversationBlobs` 流量。
-- 请求列表支持按抓包时间正序/倒序排列，并可按协议中的 `request_id` 过滤。
+- 请求列表支持按抓包时间正序/倒序排列，并可按协议中的 `request_id`、CmdK、来源过滤。
 - 调试界面支持简体中文和英文，可跟随浏览器语言并记住手动选择。
 - 抓包只保留在当前进程内存中；关闭进程后消失。
 - `Authorization`、`Cookie`、`Set-Cookie` 等 HTTP 头在界面中默认隐藏。

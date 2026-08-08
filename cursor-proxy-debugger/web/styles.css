@@ -61,7 +61,7 @@ a:focus-visible {
 
 .app-shell {
   display: grid;
-  grid-template-rows: 48px 46px minmax(0, 1fr) 26px;
+  grid-template-rows: 48px auto minmax(0, 1fr) 26px;
   min-width: 760px;
   background: var(--surface-0);
 }
@@ -214,6 +214,7 @@ a:focus-visible {
 }
 
 .filterbar {
+  flex-wrap: wrap;
   gap: 10px;
   padding: 7px 14px;
   border-bottom: 1px solid var(--border);
@@ -374,8 +375,41 @@ a:focus-visible {
   width: 54px;
 }
 
+.source-column {
+  width: 88px;
+}
+
+.host-column {
+  width: 140px;
+}
+
 .request-id-column {
   width: 250px;
+}
+
+.source-badge {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 11px;
+  line-height: 1.4;
+  background: var(--surface-3);
+  color: var(--muted);
+}
+
+.source-badge.client {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.source-badge.upstream {
+  background: #3a2f24;
+  color: var(--orange);
+}
+
+.host-text {
+  font-size: 12px;
+  color: var(--muted);
 }
 
 .kind-column {

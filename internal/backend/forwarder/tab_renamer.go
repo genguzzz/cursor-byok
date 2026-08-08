@@ -2,10 +2,11 @@
 //
 // 目标：让 Cursor 在新建会话后能拿到 AI 生成的短标题，而不是退化成"用第一条消息"。
 // 实现走 service.provider.StartStream 发起一次轻量同步补全，
-// 在 sink 里只收集 text delta，最终用第一行作为标题回给客户端。
+// 在 sink 里只收集 text delta，最终用清洗后的文本作为标题回给客户端。
 //
-// 配置走 yaml 的 features.tabRenamer：默认 disabled，禁用时 NameTab/NameAgent
-// 返回空 name + 200 OK，让 Cursor 客户端走自身降级逻辑，避免 404 破坏。
+// 配置走 yaml 的 features.tabRenamer：默认 disabled。
+// mixed 关闭时禁用会返回空 name + 200 OK（客户端首条消息降级）；
+// mixed 开启时禁用则由 mixed.AIServiceCatchAll 回源官方 NameTab/NameAgent，不会进本 handler。
 package forwarder
 
 import (
@@ -26,8 +27,12 @@ import (
 )
 
 const (
-	tabRenamerSystemPrompt = "你是一个会话标题生成器。根据用户与助手的第一轮对话，输出一行简短的中文标题，" +
-		"长度不超过 40 个字符。只输出标题本身，不要任何前缀、解释、引号、换行或 Markdown 标记。"
+	// tabRenamerSystemPrompt 要求 LLM 只输出标题，禁止任何非标题文字。
+	// 使用强约束语言避免 LLM 输出"好的，标题是：..."等对话式回复。
+	tabRenamerSystemPrompt = "你是一个会话标题生成器。根据下方对话内容，输出一行简短的中文标题，" +
+		"长度不超过 40 个字符。" +
+		"严格只输出标题本身，禁止输出任何前缀、解释、引号、换行或 Markdown 标记。" +
+		"禁止以\"好的\"、\"可以\"、\"这个\"、\"根据\"、\"以下\"等非标题文字开头。"
 
 	tabRenamerDefaultMaxNameChars    = 50
 	tabRenamerDefaultMaxOutputTokens = 64
@@ -261,7 +266,8 @@ func (service *Service) lookupTabRenamerChannelIDByModelField(target string) str
 	return ""
 }
 
-// flattenNameTabConversationMessages 把客户端传入的对话历史压成一段纯文本。
+// flattenNameTabConversationMessages 把客户端传入的对话历史压成一段纯文本，
+// 用分隔线包裹，帮助 LLM 区分"标题生成任务"和"对话内容"，避免产生对话式回复。
 // 超过 maxChars 时只保留尾部 N 字符，保证 prompt 不会撑爆。
 func flattenNameTabConversationMessages(messages []*aiserverv1.ConversationMessage, maxChars int) string {
 	if len(messages) == 0 {
@@ -271,6 +277,7 @@ func flattenNameTabConversationMessages(messages []*aiserverv1.ConversationMessa
 		maxChars = tabRenamerDefaultMaxInputChars
 	}
 	var builder strings.Builder
+	builder.WriteString("对话内容：\n---\n")
 	for _, message := range messages {
 		if message == nil {
 			continue
@@ -280,11 +287,9 @@ func flattenNameTabConversationMessages(messages []*aiserverv1.ConversationMessa
 			continue
 		}
 		role := nameTabRoleLabel(message.GetType())
-		if builder.Len() > 0 {
-			builder.WriteString("\n")
-		}
-		fmt.Fprintf(&builder, "%s: %s", role, text)
+		fmt.Fprintf(&builder, "%s: %s\n", role, text)
 	}
+	builder.WriteString("---")
 	return truncateRunes(strings.TrimSpace(builder.String()), maxChars)
 }
 
@@ -326,17 +331,89 @@ func truncateRunes(value string, maxChars int) string {
 }
 
 // cleanGeneratedTabName 把模型原始输出清洗成单行短标题。
+// 分两阶段：先提取最可能的标题行，再清洗前缀/装饰。
 func cleanGeneratedTabName(raw string, maxChars int) string {
+	if maxChars <= 0 {
+		maxChars = tabRenamerDefaultMaxNameChars
+	}
 	result := strings.TrimSpace(raw)
 	result = stripTabNameCodeFence(result)
-	prefixes := []string{
+	result = extractBestTitleLine(result)
+	result = stripTitlePrefixes(result)
+	result = strings.Trim(result, "\"'`")
+	runes := []rune(result)
+	if len(runes) > maxChars {
+		runes = runes[:maxChars]
+	}
+	return strings.TrimSpace(string(runes))
+}
+
+// extractBestTitleLine 从模型多行输出中选最可能是标题的那一行。
+// 过滤掉对话式前缀行（"好的"、"这是"等），剩余行中取最长。
+func extractBestTitleLine(text string) string {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return ""
+	}
+	lines := strings.Split(text, "\n")
+	filtered := make([]string, 0, len(lines))
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
+		filtered = append(filtered, trimmed)
+	}
+	if len(filtered) == 0 {
+		return ""
+	}
+	if len(filtered) == 1 {
+		return filtered[0]
+	}
+
+	conversationalPrefixes := []string{
+		"好的", "可以", "没问题", "当然",
+		"这是", "这个", "这些", "根据", "以下",
+		"让我", "我来", "我会",
+		"ok", "okay", "sure", "here", "this", "the",
+	}
+	best := ""
+	for _, line := range filtered {
+		if isConversationalLine(line, conversationalPrefixes) {
+			continue
+		}
+		if len([]rune(line)) > len([]rune(best)) {
+			best = line
+		}
+	}
+	if best == "" {
+		best = filtered[len(filtered)-1]
+	}
+	return best
+}
+
+func isConversationalLine(line string, prefixes []string) bool {
+	lower := strings.ToLower(strings.TrimSpace(line))
+	for _, prefix := range prefixes {
+		if strings.HasPrefix(lower, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+// stripTitlePrefixes 去掉 "标题："、"Title:" 等常见标题前缀
+func stripTitlePrefixes(text string) string {
+	text = strings.TrimSpace(text)
+	titlePrefixes := []string{
 		"会话标题：", "会话标题:", "标题：", "标题:",
-		"title:", "title：",
+		"Title:", "title:", "Title：", "title：",
+		"TITLE:", "TITLE：",
 	}
 	for {
-		lower := strings.ToLower(strings.TrimSpace(result))
+		lower := strings.ToLower(text)
 		matched := ""
-		for _, prefix := range prefixes {
+		for _, prefix := range titlePrefixes {
 			if strings.HasPrefix(lower, prefix) {
 				matched = prefix
 				break
@@ -345,21 +422,9 @@ func cleanGeneratedTabName(raw string, maxChars int) string {
 		if matched == "" {
 			break
 		}
-		result = strings.TrimSpace(result[len(matched):])
+		text = strings.TrimSpace(text[len(matched):])
 	}
-	if idx := strings.IndexAny(result, "\n\r"); idx >= 0 {
-		result = result[:idx]
-	}
-	result = strings.TrimSpace(result)
-	result = strings.Trim(result, "\"'`“”‘’")
-	if maxChars <= 0 {
-		maxChars = tabRenamerDefaultMaxNameChars
-	}
-	runes := []rune(result)
-	if len(runes) > maxChars {
-		runes = runes[:maxChars]
-	}
-	return strings.TrimSpace(string(runes))
+	return text
 }
 
 func stripTabNameCodeFence(value string) string {

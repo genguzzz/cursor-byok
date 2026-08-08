@@ -40,11 +40,21 @@ When mixed routing is enabled and a new `request_id` has no model id, the backen
 - **THEN** the backend MUST classify the `request_id` as upstream
 
 ### Requirement: Unknown desktop RPCs pass through
-When mixed model routing is enabled, unmatched `AiService`, `CppService`, `FileSyncService`, `DashboardService`, and `/auth/*` routes that are not explicitly local MUST forward upstream instead of returning 404.
+When mixed model routing is enabled, unmatched `AiService`, `CmdKService`, `ChatService`, `BackgroundComposerService`, `CppService`, `FileSyncService`, `DashboardService`, and `/auth/*` routes that are not explicitly local MUST forward upstream instead of returning 404.
 
 #### Scenario: Unknown AiService procedure
 - **WHEN** the client calls an `aiserver.v1.AiService` procedure that has no dedicated local handler
 - **THEN** the backend MUST forward the request upstream with client auth
+
+#### Scenario: NameTab NameAgent respect tabRenamer opt-in
+- **WHEN** mixed model routing is enabled and `features.tabRenamer.enabled` is false
+- **THEN** `aiserver.v1.AiService/NameTab` and `NameAgent` MUST forward upstream with client auth
+- **WHEN** mixed model routing is enabled and `features.tabRenamer.enabled` is true
+- **THEN** those procedures MUST be handled by the local tab renamer
+
+#### Scenario: CmdKService StreamCmdK
+- **WHEN** the client calls `aiserver.v1.CmdKService/StreamCmdK`
+- **THEN** the backend MUST forward the request upstream with client auth instead of returning 404
 
 ### Requirement: Cross-backend history is not merged
 The local history store MUST remain the source of truth only for locally routed conversations. Upstream Cursor conversations MUST NOT be written into `state.json` / `context.json` as if they were local runs.

@@ -31,10 +31,12 @@ func (server *Server) newUIHandler() http.Handler {
 
 func (server *Server) handleStatus(writer http.ResponseWriter, _ *http.Request) {
 	writeJSON(writer, http.StatusOK, map[string]any{
-		"proxyAddr":  server.config.ProxyAddr,
-		"uiAddr":     server.config.UIAddr,
-		"targetHost": server.config.TargetHost,
-		"running":    true,
+		"proxyAddr":          server.config.ProxyAddr,
+		"uiAddr":             server.config.UIAddr,
+		"targetHost":         server.config.TargetHost,
+		"targetHostPatterns": server.config.targetHostPatterns,
+		"upstreamProxy":      server.config.UpstreamProxy,
+		"running":            true,
 	})
 }
 

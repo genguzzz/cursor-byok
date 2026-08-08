@@ -46,6 +46,7 @@ func ForwardToUpstream(reqCtx *RequestContext, options ForwardOptions) (*Forward
 		requestBody = []byte{}
 	}
 
+	startedAt := time.Now()
 	upstreamRequest, upstreamClient, err := buildUpstreamRequest(reqCtx, requestBody, options)
 	if err != nil {
 		return nil, err
@@ -53,6 +54,18 @@ func ForwardToUpstream(reqCtx *RequestContext, options ForwardOptions) (*Forward
 
 	upstreamResponse, err := upstreamClient.Do(upstreamRequest)
 	if err != nil {
+		emitTrafficCapture(TrafficHop{
+			StartedAt:     startedAt,
+			Duration:      time.Since(startedAt),
+			Method:        upstreamRequest.Method,
+			URL:           upstreamRequest.URL.String(),
+			Host:          upstreamRequest.URL.Host,
+			Path:          upstreamRequest.URL.Path,
+			RequestID:     reqCtx.HTTPRequestID,
+			RequestHeader: upstreamRequest.Header.Clone(),
+			RequestBody:   truncateCaptureBytes(requestBody),
+			Error:         err.Error(),
+		})
 		return nil, err
 	}
 	defer upstreamResponse.Body.Close()
@@ -60,17 +73,68 @@ func ForwardToUpstream(reqCtx *RequestContext, options ForwardOptions) (*Forward
 	copyResponseHeadersToClient(reqCtx.ResponseWriter.Header(), upstreamResponse.Header)
 	reqCtx.ResponseWriter.WriteHeader(upstreamResponse.StatusCode)
 
-	written, copyErr := copyResponse(reqCtx.ResponseWriter, upstreamResponse.Body)
+	captureWriter := &captureLimitWriter{max: defaultTrafficCaptureBytes}
+	bodyReader := io.TeeReader(upstreamResponse.Body, captureWriter)
+	written, copyErr := copyResponse(reqCtx.ResponseWriter, bodyReader)
 	meta := &ForwardMeta{
 		StatusCode:   upstreamResponse.StatusCode,
 		Status:       upstreamResponse.Status,
 		ContentType:  upstreamResponse.Header.Get("content-type"),
 		ResponseSize: written,
 	}
+	hop := TrafficHop{
+		StartedAt:      startedAt,
+		Duration:       time.Since(startedAt),
+		Method:         upstreamRequest.Method,
+		URL:            upstreamRequest.URL.String(),
+		Host:           upstreamRequest.URL.Host,
+		Path:           upstreamRequest.URL.Path,
+		Status:         upstreamResponse.StatusCode,
+		RequestID:      reqCtx.HTTPRequestID,
+		RequestHeader:  upstreamRequest.Header.Clone(),
+		ResponseHeader: upstreamResponse.Header.Clone(),
+		RequestBody:    truncateCaptureBytes(requestBody),
+		ResponseBody:   captureWriter.bytes(),
+	}
 	if copyErr != nil {
+		hop.Error = copyErr.Error()
+		emitTrafficCapture(hop)
 		return meta, copyErr
 	}
+	emitTrafficCapture(hop)
 	return meta, nil
+}
+
+const defaultTrafficCaptureBytes = 2 << 20
+
+type captureLimitWriter struct {
+	buf []byte
+	max int
+}
+
+func (w *captureLimitWriter) Write(p []byte) (int, error) {
+	if w.max > 0 && len(w.buf) < w.max {
+		remain := w.max - len(w.buf)
+		if remain > len(p) {
+			remain = len(p)
+		}
+		w.buf = append(w.buf, p[:remain]...)
+	}
+	return len(p), nil
+}
+
+func (w *captureLimitWriter) bytes() []byte {
+	if w == nil {
+		return nil
+	}
+	return append([]byte(nil), w.buf...)
+}
+
+func truncateCaptureBytes(body []byte) []byte {
+	if len(body) <= defaultTrafficCaptureBytes {
+		return append([]byte(nil), body...)
+	}
+	return append([]byte(nil), body[:defaultTrafficCaptureBytes]...)
 }
 
 // FetchUpstream 回源并读取完整响应，不写入客户端。用于模型目录 merge。

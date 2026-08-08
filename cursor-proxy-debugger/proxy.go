@@ -178,13 +178,14 @@ func (server *Server) captureRequest(request *http.Request, context *goproxy.Pro
 	requestCodec := requestContentCodec(path, request.Header)
 	exchange := &Exchange{
 		ExchangeSummary: ExchangeSummary{
-			ID:        id,
-			StartedAt: time.Now(),
-			Method:    request.Method,
-			URL:       request.URL.String(),
-			Host:      request.URL.Host,
-			Path:      path,
-			State:     "pending",
+			ID:            id,
+			StartedAt:     time.Now(),
+			Method:        request.Method,
+			URL:           request.URL.String(),
+			Host:          request.URL.Host,
+			Path:          path,
+			State:         "pending",
+			CaptureSource: CaptureSourceClient,
 		},
 		Request: Payload{
 			Headers:      sortedHeaders(request.Header),
@@ -408,12 +409,7 @@ func (server *Server) matchesHTTPRequest(request *http.Request) bool {
 }
 
 func (server *Server) matchesTargetHost(host string) bool {
-	host = strings.TrimSpace(strings.ToLower(host))
-	if parsedHost, _, err := net.SplitHostPort(host); err == nil {
-		host = parsedHost
-	}
-	target := strings.TrimSpace(strings.ToLower(server.config.TargetHost))
-	return host == target
+	return hostMatchesPatterns(host, server.config.targetHostPatterns)
 }
 
 // upstreamTransportOptions 配置出站：可选上游代理，并在走本地 MITM 时信任内置 CA。

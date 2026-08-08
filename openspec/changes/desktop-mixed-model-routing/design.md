@@ -168,7 +168,7 @@ Connect unary：兼容 `application/proto` 与 5 字节 envelope（`h2-agent-pro
 | `BootstrapStatsig` / `GetFirstWindowStatsigDecision` | 稳住 always-local |
 | `AvailableModels` 及相关 catalog | merge |
 | `BidiAppend` / `RunSSE` | 分流 |
-| 已实现的 local-only（注入会话的 thought/usage、opt-in NameTab） | 按 request_id / 配置 |
+| 已实现的 local-only（注入会话的 thought/usage；NameTab/NameAgent 仅当 `features.tabRenamer.enabled`） | 按 request_id / 配置；tabRenamer 关则回源官方命名 |
 
 其余 `AiService/*`、`CppService/*` 未点名、`FileSync/*` 未点名、`Dashboard/*`、`/auth/*` → `ForwardAction` 且 **PreserveClientAuth**。
 

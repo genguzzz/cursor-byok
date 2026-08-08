@@ -8,6 +8,7 @@ const state = {
   search: "",
   requestId: "",
   endpoint: "all",
+  source: "all",
   sortOrder: "desc",
   paused: false,
   pendingRefresh: false,
@@ -28,6 +29,7 @@ const elements = {
   searchInput: document.querySelector("#search-input"),
   requestIdInput: document.querySelector("#request-id-input"),
   endpointFilter: document.querySelector("#endpoint-filter"),
+  sourceFilter: document.querySelector("#source-filter"),
   sortOrder: document.querySelector("#sort-order"),
   requestCount: document.querySelector("#request-count"),
   requestList: document.querySelector("#request-list"),
@@ -138,10 +140,12 @@ function filteredExchanges() {
     .filter((item) => {
       if (state.endpoint === "runsse" && !item.path.toLowerCase().includes("runsse")) return false;
       if (state.endpoint === "bidiappend" && !item.path.toLowerCase().includes("bidiappend")) return false;
+      if (state.endpoint === "cmdk" && !item.path.toLowerCase().includes("cmdkservice")) return false;
       if (state.endpoint === "fork" && !isForkTrafficPath(item.path)) return false;
+      if (state.source !== "all" && String(item.captureSource || "client") !== state.source) return false;
       if (requestId && !String(item.requestId || "").toLowerCase().includes(requestId)) return false;
       if (!query) return true;
-      return [item.url, item.requestId, item.requestKind, item.responseKind, item.state, String(item.status)]
+      return [item.url, item.host, item.captureSource, item.requestId, item.requestKind, item.responseKind, item.state, String(item.status)]
         .filter(Boolean)
         .some((value) => String(value).toLowerCase().includes(query));
     })
@@ -168,10 +172,14 @@ function renderList() {
       const selected = item.id === state.selectedId ? " selected" : "";
       const statusClass = item.status >= 400 ? "error" : item.status ? "success" : "";
       const kind = item.responseKind || item.requestKind || "-";
+      const source = item.captureSource || "client";
+      const sourceLabel = source === "upstream" ? t("source.upstream") : t("source.client");
       return `<tr class="${selected.trim()}" data-id="${escapeHTML(item.id)}">
         <td><span class="row-state ${escapeHTML(item.state)}"></span></td>
         <td><code>${escapeHTML(item.id)}</code></td>
-        <td title="${escapeHTML(item.url)}"><code>${escapeHTML(item.url)}</code></td>
+        <td><span class="source-badge ${escapeHTML(source)}">${escapeHTML(sourceLabel)}</span></td>
+        <td title="${escapeHTML(item.host || "")}"><code class="host-text">${escapeHTML(item.host || "-")}</code></td>
+        <td title="${escapeHTML(item.url)}"><code>${escapeHTML(item.path || item.url)}</code></td>
         <td title="${escapeHTML(item.requestId || "")}"><code class="request-id-text">${escapeHTML(item.requestId || "-")}</code></td>
         <td><span class="kind-text">${escapeHTML(kind)}</span></td>
         <td><span class="method-text">${escapeHTML(item.method)}</span></td>
@@ -204,7 +212,9 @@ function renderDetail() {
   }
   const item = state.selected;
   const statusClass = item.status >= 200 && item.status < 400 ? "success" : "";
-  elements.selectionSummary.innerHTML = `<span class="method-badge">${escapeHTML(item.method)}</span><span class="status-badge ${statusClass}">${escapeHTML(item.status || formatState(item.state))}</span><code>${escapeHTML(item.url)}</code>`;
+  const source = item.captureSource || "client";
+  const sourceLabel = source === "upstream" ? t("source.upstream") : t("source.client");
+  elements.selectionSummary.innerHTML = `<span class="method-badge">${escapeHTML(item.method)}</span><span class="source-badge ${escapeHTML(source)}">${escapeHTML(sourceLabel)}</span><span class="status-badge ${statusClass}">${escapeHTML(item.status || formatState(item.state))}</span><code>${escapeHTML(item.url)}</code>`;
   elements.requestContent.innerHTML = renderPayload(item.request, state.tabs.request);
   elements.responseContent.innerHTML = renderPayload(item.response, state.tabs.response);
 }
@@ -347,6 +357,16 @@ elements.endpointFilter.addEventListener("click", (event) => {
   if (!button) return;
   state.endpoint = button.dataset.value;
   for (const item of elements.endpointFilter.querySelectorAll("button")) {
+    item.classList.toggle("active", item === button);
+  }
+  renderList();
+});
+
+elements.sourceFilter.addEventListener("click", (event) => {
+  const button = event.target.closest("button[data-value]");
+  if (!button) return;
+  state.source = button.dataset.value;
+  for (const item of elements.sourceFilter.querySelectorAll("button")) {
     item.classList.toggle("active", item === button);
   }
   renderList();

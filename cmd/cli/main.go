@@ -102,6 +102,23 @@ func runBackendOnly() {
 	}
 	service := client.NewProxyService(nil, certManager, certs.EmbeddedCACertPEM())
 
+	// 允许 --backend-listen 另起端口，避免和 menubar 默认 18090 冲突。
+	if *debugBackendListen != "" {
+		cfg, err := service.LoadUserConfig()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to load config: %v\n", err)
+			os.Exit(1)
+		}
+		origBackend := cfg.BackendListenAddr
+		cfg.BackendListenAddr = *debugBackendListen
+		fmt.Printf("[debug] Overriding backend listen addr: %s\n", cfg.BackendListenAddr)
+		if err := service.SaveUserConfig(cfg); err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to save overridden config: %v\n", err)
+			os.Exit(1)
+		}
+		defer restoreDebugPortOverrides(service, false, "", true, origBackend)
+	}
+
 	fmt.Println("Starting cursor-byok backend-only (no MITM, no Cursor settings inject)...")
 	state, err := service.Start(client.StartOptions{})
 	if err != nil {

@@ -54,13 +54,18 @@ type HomeMetricsConfig struct {
 // 用一个轻量模型把会话首轮消息压缩成单行短标题。
 //
 // opt-in 特性：默认 disabled，避免在没看到该配置的用户机器上默默多打一次模型。
-// 当 disabled 时，Service.NameTab / NameAgent 会返回空 name + 200 OK，
-// Cursor 客户端自动降级到"用第一条消息"作为标题，不会再出现 404 退化。
+//
+// 路由语义：
+//   - mixed 关闭：请求始终进本地 handler；disabled 时返回空 name + 200 OK，
+//     Cursor 客户端降级到"用第一条消息"作为标题。
+//   - mixed 开启：enabled 时走本地生成；disabled 时 AIServiceCatchAll 回源官方命名服务，
+//     不再拦截为空标题。
 type TabRenamerConfig struct {
-	// Enabled 是否接管 NameTab / NameAgent。
+	// Enabled 是否由本地接管 NameTab / NameAgent。
+	// mixed 开启且为 false 时，这两条 RPC 回源官方。
 	Enabled bool `json:"enabled" yaml:"enabled"`
 	// ModelID 可选：指定一个模型 ID（用户配置在 modelAdapters 里的）。
-	// 为空时退到"上次 Agent 使用的模型"，再退到 default_fallback（任一可用 channel）。
+	// 为空时退到"上次 Agent 使用的模型"，再退到 default_fallback（报错后上层空名降级）。
 	ModelID string `json:"modelID,omitempty" yaml:"modelID,omitempty"`
 	// MaxInputChars 输入侧拼接消息时的最大字符数；超过会被截断到末尾 N 字符。
 	MaxInputChars int `json:"maxInputChars,omitempty" yaml:"maxInputChars,omitempty"`

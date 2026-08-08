@@ -86,9 +86,15 @@ func ForwardOrFixed(enabled bool, deps upstream.Dependencies, cfg upstream.Compa
 	return upstream.FixedStatusAction(deps, cfg)
 }
 
-func AIServiceCatchAll(enabled bool, local http.Handler, deps upstream.Dependencies) server.HandlerFunc {
+// AIServiceCatchAll mixed 开启时：白名单本地，其余 ClientAuth 回源。
+// tabRenamerEnabled 热读 features.tabRenamer.enabled；nil 视为 false。
+// NameTab/NameAgent 仅在本地 tabRenamer 开启时走 local，否则回源官方命名服务。
+func AIServiceCatchAll(enabled bool, local http.Handler, deps upstream.Dependencies, tabRenamerEnabled func() bool) server.HandlerFunc {
 	if !enabled {
 		return server.HTTPHandlerAction(local)
+	}
+	if tabRenamerEnabled == nil {
+		tabRenamerEnabled = func() bool { return false }
 	}
 	forward := upstream.ClientAuthForwardAction(deps, upstream.CompatRouteConfig{Name: "ai_service_passthrough"})
 	return func(ctx *server.Context) error {
@@ -96,14 +102,16 @@ func AIServiceCatchAll(enabled bool, local http.Handler, deps upstream.Dependenc
 		if ctx != nil && ctx.Request != nil && ctx.Request.URL != nil {
 			path = ctx.Request.URL.Path
 		}
-		if IsLocalAiServicePath(path) {
+		if IsLocalAiServicePath(path, tabRenamerEnabled()) {
 			return server.HTTPHandlerAction(local)(ctx)
 		}
 		return forward(ctx)
 	}
 }
 
-func IsLocalAiServicePath(path string) bool {
+// IsLocalAiServicePath 判断 AiService catch-all 是否应留在本地。
+// tabRenamerEnabled 为 false 时，NameTab/NameAgent 不视为本地，交给 upstream。
+func IsLocalAiServicePath(path string, tabRenamerEnabled bool) bool {
 	switch strings.TrimSpace(path) {
 	case "/aiserver.v1.AiService/CountTokens",
 		"/aiserver.v1.AiService/GetThoughtAnnotation",
@@ -120,10 +128,11 @@ func IsLocalAiServicePath(path string) bool {
 		"/aiserver.v1.AiService/KnowledgeBaseList",
 		"/aiserver.v1.AiService/KnowledgeBaseRemove",
 		"/aiserver.v1.AiService/KnowledgeBaseUpdate",
-		"/aiserver.v1.AiService/FetchRelevantKnowledgeForConversation",
-		"/aiserver.v1.AiService/NameTab",
-		"/aiserver.v1.AiService/NameAgent":
+		"/aiserver.v1.AiService/FetchRelevantKnowledgeForConversation":
 		return true
+	case "/aiserver.v1.AiService/NameTab",
+		"/aiserver.v1.AiService/NameAgent":
+		return tabRenamerEnabled
 	default:
 		return false
 	}

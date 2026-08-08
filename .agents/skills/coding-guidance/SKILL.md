@@ -38,7 +38,7 @@ go run ./cmd/cursor-proxy-debugger
 - Connect 帧、gzip 压缩内容、Protobuf 解码结果和原始二进制数据
 - 同一 `request_id` 对应的上下行消息
 
-**菜单栏一键调试**：勾选「🪲 调试模式 (9092→9091)」会自动启动该代理、写入 Cursor 代理、信任 CA，并打开调试 UI。本地模式开启时 upstream 指向 `18080` 以抓本地协议。
+**菜单栏一键调试**：勾选「🪲 调试模式 (9092→9091)」会自动启动该代理、写入 Cursor 代理、信任 CA，并打开调试 UI。默认 MITM `*.cursor.sh`（多 server）。本地模式开启时 upstream 指向 `18080` 以抓客户端→本地流量，同时同进程注册 backend→官方第二跳 ingest，面板可按「客户端 / 官方回源」过滤。
 
 独立手动启动时，开发者需要自行完成以下配置：
 
