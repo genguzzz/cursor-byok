@@ -76,9 +76,18 @@ func maybeHTTPDecompress(headers http.Header, body []byte) []byte {
 	if headers != nil {
 		encoding = strings.ToLower(strings.TrimSpace(headers.Get("Content-Encoding")))
 	}
-	if encoding != "gzip" && !(encoding == "" && body[0] == 0x1f && body[1] == 0x8b) {
+	// 始终识别 gzip magic；部分客户端会带非标准 Content-Encoding，或省略该头。
+	if !strings.Contains(encoding, "gzip") && !looksLikeGzip(body) {
 		return body
 	}
+	return gunzipBytes(body)
+}
+
+func looksLikeGzip(body []byte) bool {
+	return len(body) >= 2 && body[0] == 0x1f && body[1] == 0x8b
+}
+
+func gunzipBytes(body []byte) []byte {
 	reader, err := gzip.NewReader(bytes.NewReader(body))
 	if err != nil {
 		return body
@@ -121,20 +130,16 @@ func unwrapConnectUnary(body []byte) ([]byte, error) {
 		return nil, fmt.Errorf("connect frame truncated")
 	}
 	payload := body[5 : 5+length]
-	if flags&0x01 == 0 {
+	// Connect 规范用 flags&0x01 表示 gzip；同时嗅探 magic，兼容漏标压缩位的客户端。
+	if flags&0x01 == 0 && !looksLikeGzip(payload) {
 		return payload, nil
 	}
-	reader, err := gzip.NewReader(bytes.NewReader(payload))
-	if err != nil {
-		return nil, fmt.Errorf("gzip: %w", err)
+	decoded := gunzipBytes(payload)
+	if looksLikeGzip(payload) && looksLikeGzip(decoded) {
+		return nil, fmt.Errorf("gzip: decompress failed")
 	}
-	defer reader.Close()
-	decoded, err := io.ReadAll(io.LimitReader(reader, maxConnectFrameBytes+1))
-	if err != nil {
-		return nil, fmt.Errorf("gzip read: %w", err)
-	}
-	if len(decoded) > maxConnectFrameBytes {
-		return nil, fmt.Errorf("gzip payload too large")
+	if len(decoded) == 0 {
+		return nil, fmt.Errorf("gzip: empty payload")
 	}
 	return decoded, nil
 }

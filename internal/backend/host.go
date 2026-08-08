@@ -669,10 +669,12 @@ func (host *Host) rebuildLocked(cfg serverconfig.Config) error {
 				MockBuilder:   upstream.DashboardGetMeMockBuilder,
 			})),
 		),
+		// Privacy 客户端高频轮询；mixed 下回源会显著推高 MITM/出站连接建立。
+		// 该响应不影响 agent 分流，固定本地 mock。
 		server.POST("/aiserver.v1.DashboardService/GetUserPrivacyMode",
 			server.Name("dashboard_user_privacy_mode"),
 			server.ConnectUnary(),
-			server.Local(mixed.ForwardOrMock(mixedRouting, routeDeps, upstream.CompatRouteConfig{
+			server.Local(upstream.MockProtoAction(routeDeps, upstream.CompatRouteConfig{
 				Name:          "dashboard_user_privacy_mode",
 				StatusCode:    http.StatusOK,
 				MockProtoType: "aiserver.v1.GetUserPrivacyModeResponse",

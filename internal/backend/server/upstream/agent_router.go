@@ -33,6 +33,13 @@ type AgentRouter struct {
 	localRunSSE http.Handler
 	historyRoot string
 	wait        time.Duration
+
+	// deferLogOnce 避免同一 request_id 在 heartbeat/prewarm 上刷屏。
+	deferLogOnce sync.Map // request_id -> struct{}
+	// classifyFailLogMu 限制 classify 失败日志风暴（早期 gzip 误判曾达数百条/分钟）。
+	classifyFailLogMu   sync.Mutex
+	classifyFailLogLast time.Time
+	classifyFailLogN    int
 }
 
 type agentRouteTable struct {
@@ -141,10 +148,30 @@ func (router *AgentRouter) BidiAction(deps Dependencies) server.HandlerFunc {
 		}
 		backend, err := router.classifyBidi(reqCtx)
 		if err != nil {
-			logger.Infof("mixed agent bidi classify failed, default upstream err=%v", err)
+			router.logClassifyFailed(err)
 			backend = AgentBackendUpstream
 		}
 		return router.dispatch(reqCtx, backend, router.localBidi)
+	}
+}
+
+func (router *AgentRouter) logClassifyFailed(err error) {
+	if router == nil {
+		return
+	}
+	now := time.Now()
+	router.classifyFailLogMu.Lock()
+	defer router.classifyFailLogMu.Unlock()
+	router.classifyFailLogN++
+	if router.classifyFailLogLast.IsZero() || now.Sub(router.classifyFailLogLast) >= 5*time.Second {
+		n := router.classifyFailLogN
+		router.classifyFailLogN = 0
+		router.classifyFailLogLast = now
+		if n > 1 {
+			logger.Infof("mixed agent bidi classify failed, default upstream err=%v (x%d in window)", err, n)
+		} else {
+			logger.Infof("mixed agent bidi classify failed, default upstream err=%v", err)
+		}
 	}
 }
 
@@ -181,7 +208,11 @@ func (router *AgentRouter) RunSSEAction(deps Dependencies) server.HandlerFunc {
 
 func (router *AgentRouter) classifyBidi(reqCtx *RequestContext) (AgentBackend, error) {
 	appendReq := &aiserverv1.BidiAppendRequest{}
-	if err := decodeProtoPayload(reqCtx.ContentType, reqCtx.RequestBody, appendReq); err != nil {
+	body := reqCtx.RequestBody
+	if reqCtx != nil {
+		body = maybeHTTPDecompress(reqCtx.Headers, body)
+	}
+	if err := decodeProtoPayload(reqCtx.ContentType, body, appendReq); err != nil {
 		return AgentBackendUpstream, err
 	}
 	requestID := protocol.NormalizeRequestID(protocol.ReadAppendRequestID(appendReq))
@@ -201,7 +232,7 @@ func (router *AgentRouter) classifyBidi(reqCtx *RequestContext) (AgentBackend, e
 	if modelID != "" || backend == AgentBackendLocal {
 		router.table.Bind(requestID, backend)
 		logger.Infof("mixed agent route request_id=%s backend=%s model_id=%s", requestID, backend, modelID)
-	} else {
+	} else if _, loaded := router.deferLogOnce.LoadOrStore(requestID, struct{}{}); !loaded {
 		logger.Infof("mixed agent route defer bind request_id=%s (no model yet)", requestID)
 	}
 	return backend, nil
