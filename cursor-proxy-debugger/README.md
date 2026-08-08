@@ -52,7 +52,7 @@ go build -o bin/cursor-proxy-debugger ./cmd/cursor-proxy-debugger
 ## 数据处理
 
 - 对 `target-host` 匹配的主机执行 HTTPS MITM（默认全部 `*.cursor.sh`），其他 CONNECT 流量直接透传。
-- 列表区分来源：`客户端`（Cursor→代理）与 `官方回源`（backend `ForwardToUpstream` 第二跳，仅菜单栏同进程调试时可用）。
+- 列表有 **Server** 列：`本地`（经本地助手 / MITM）与 `官方`（直连或 backend 回源官方）；可用顶部过滤只看一侧。
 - `RunSSE` 按 5 字节 Connect 帧头增量拆帧，支持逐帧 gzip 解压。
 - `BidiAppendRequest.data` 会继续解码为 `agent.v1.AgentClientMessage`。
 - Fork Chat 相关的 `ForkBackgroundComposer`、`NotifyConversationClone` 和 `UploadConversationBlobs` 会双向解码为 protobuf JSON。

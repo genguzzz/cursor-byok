@@ -14,6 +14,10 @@ const (
 
 	CaptureSourceClient   = "client"
 	CaptureSourceUpstream = "upstream"
+
+	// ServerLocal / ServerOfficial 给面板「Server」列用：本地助手 vs 官方 Cursor。
+	ServerLocal    = "local"
+	ServerOfficial = "official"
 )
 
 // Config controls the standalone proxy debugger.
@@ -72,8 +76,10 @@ type ExchangeSummary struct {
 	RequestKind   string    `json:"requestKind,omitempty"`
 	ResponseKind  string    `json:"responseKind,omitempty"`
 	CaptureSource string    `json:"captureSource,omitempty"`
-	FrameCount    int       `json:"frameCount"`
-	Error         string    `json:"error,omitempty"`
+	// Server 标明流量归属：local=本地助手，official=官方 Cursor。
+	Server     string `json:"server,omitempty"`
+	FrameCount int    `json:"frameCount"`
+	Error      string `json:"error,omitempty"`
 }
 
 // Exchange contains the request and response detail shown by the debugger.

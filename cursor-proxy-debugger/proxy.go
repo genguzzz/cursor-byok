@@ -186,6 +186,7 @@ func (server *Server) captureRequest(request *http.Request, context *goproxy.Pro
 			Path:          path,
 			State:         "pending",
 			CaptureSource: CaptureSourceClient,
+			Server:        server.clientHopServer(),
 		},
 		Request: Payload{
 			Headers:      sortedHeaders(request.Header),
@@ -410,6 +411,14 @@ func (server *Server) matchesHTTPRequest(request *http.Request) bool {
 
 func (server *Server) matchesTargetHost(host string) bool {
 	return hostMatchesPatterns(host, server.config.targetHostPatterns)
+}
+
+// clientHopServer：经本地 MITM 时标 local，直连官方时标 official。
+func (server *Server) clientHopServer() string {
+	if strings.TrimSpace(server.config.UpstreamProxy) != "" {
+		return ServerLocal
+	}
+	return ServerOfficial
 }
 
 // upstreamTransportOptions 配置出站：可选上游代理，并在走本地 MITM 时信任内置 CA。

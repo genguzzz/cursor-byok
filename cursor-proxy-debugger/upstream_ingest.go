@@ -69,6 +69,7 @@ func (server *Server) IngestUpstreamHop(hop UpstreamHop) {
 			DurationMS:    hop.Duration.Milliseconds(),
 			RequestID:     hop.RequestID,
 			CaptureSource: CaptureSourceUpstream,
+			Server:        ServerOfficial,
 			Error:         hop.Error,
 		},
 		Request: Payload{

@@ -33,3 +33,28 @@ func TestDefaultTargetHostIsWildcard(t *testing.T) {
 		t.Fatal("default patterns should match api2")
 	}
 }
+
+func TestClientHopServerDependsOnUpstreamProxy(t *testing.T) {
+	local, err := New(Config{
+		ProxyAddr:     "127.0.0.1:19093",
+		UIAddr:        "127.0.0.1:19094",
+		UpstreamProxy: "http://127.0.0.1:18080",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := local.clientHopServer(); got != ServerLocal {
+		t.Fatalf("with upstream proxy: got %q, want local", got)
+	}
+
+	direct, err := New(Config{
+		ProxyAddr: "127.0.0.1:19095",
+		UIAddr:    "127.0.0.1:19096",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := direct.clientHopServer(); got != ServerOfficial {
+		t.Fatalf("without upstream proxy: got %q, want official", got)
+	}
+}

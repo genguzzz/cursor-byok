@@ -375,8 +375,8 @@ a:focus-visible {
   width: 54px;
 }
 
-.source-column {
-  width: 88px;
+.server-column {
+  width: 72px;
 }
 
 .host-column {
@@ -387,24 +387,37 @@ a:focus-visible {
   width: 250px;
 }
 
-.source-badge {
+.server-badge {
   display: inline-block;
-  padding: 1px 6px;
+  min-width: 40px;
+  padding: 2px 8px;
   border-radius: 4px;
-  font-size: 11px;
+  font-size: 12px;
+  font-weight: 650;
   line-height: 1.4;
+  text-align: center;
   background: var(--surface-3);
   color: var(--muted);
 }
 
-.source-badge.client {
+.server-badge.local {
   background: var(--accent-soft);
-  color: var(--accent);
+  color: #7ddec0;
+  box-shadow: inset 0 0 0 1px rgb(78 165 139 / 45%);
 }
 
-.source-badge.upstream {
+.server-badge.official {
   background: #3a2f24;
-  color: var(--orange);
+  color: #efb48a;
+  box-shadow: inset 0 0 0 1px rgb(200 135 98 / 45%);
+}
+
+.server-row-local td:first-child {
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.server-row-official td:first-child {
+  box-shadow: inset 3px 0 0 var(--orange);
 }
 
 .host-text {

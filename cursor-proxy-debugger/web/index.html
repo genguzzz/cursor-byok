@@ -49,10 +49,10 @@
           <button type="button" data-value="cmdk" data-i18n="filters.cmdk">CmdK</button>
           <button type="button" data-value="fork" data-i18n="filters.fork">Fork</button>
         </div>
-        <div id="source-filter" class="segmented-control" role="group" aria-label="来源过滤" data-i18n-aria-label="filters.source">
-          <button class="active" type="button" data-value="all" data-i18n="filters.sourceAll">全部来源</button>
-          <button type="button" data-value="client" data-i18n="filters.sourceClient">客户端</button>
-          <button type="button" data-value="upstream" data-i18n="filters.sourceUpstream">官方回源</button>
+        <div id="server-filter" class="segmented-control" role="group" aria-label="Server 过滤" data-i18n-aria-label="filters.server">
+          <button class="active" type="button" data-value="all" data-i18n="filters.serverAll">全部 Server</button>
+          <button type="button" data-value="local" data-i18n="filters.serverLocal">本地</button>
+          <button type="button" data-value="official" data-i18n="filters.serverOfficial">官方</button>
         </div>
         <div id="sort-order" class="segmented-control sort-control" role="group" aria-label="排序方向" data-i18n-aria-label="filters.sort">
           <button type="button" data-value="asc" data-i18n="filters.ascending">正序</button>
@@ -68,7 +68,7 @@
               <tr>
                 <th class="status-column"></th>
                 <th class="index-column">#</th>
-                <th class="source-column" data-i18n="table.source">来源</th>
+                <th class="server-column" data-i18n="table.server">Server</th>
                 <th class="host-column" data-i18n="table.host">主机</th>
                 <th data-i18n="table.url">网址</th>
                 <th class="request-id-column">Request ID</th>
