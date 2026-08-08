@@ -642,6 +642,8 @@ func (service *Service) decodeInboundIntent(requestID string, message *agentv1.A
 		}
 		intent.Kind = "run"
 		intent.StartsRun = true
+		// CLI --endpoint 常不带 request_context；仅在 skills/rules 皆空时扫描本地补齐，不覆盖 GUI。
+		intent.RequestContext = enrichRequestContextFromFilesystem(intent.RequestContext)
 		intent.Mode, intent.ModeSource, intent.HasExplicitMode, err = extractRunMode(message)
 		if err != nil {
 			return InboundIntent{}, err
@@ -692,6 +694,9 @@ func (service *Service) decodeInboundIntent(requestID string, message *agentv1.A
 		intent.UserMessage = extractConversationActionUserMessage(action)
 		intent.RequestContext = extractConversationActionRequestContext(action)
 		intent.StartsRun = conversationActionStartsRun(action)
+		if intent.StartsRun {
+			intent.RequestContext = enrichRequestContextFromFilesystem(intent.RequestContext)
+		}
 		intent.Mode, intent.ModeSource, intent.HasExplicitMode, err = extractConversationActionMode(action)
 		if err != nil {
 			return InboundIntent{}, err
