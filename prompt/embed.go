@@ -26,7 +26,7 @@ const (
 
 // assetFS 保存按模式组织的静态 prompt 与 tools 资产。
 //
-//go:embed common_prefix.md ask/prompt.md ask/tools.json plan/prompt.md plan/system_reminder.txt plan/tools.json agent/prompt.md agent/tools.json debug/prompt.md debug/tools.json debug/system_reminder_initial.txt debug/system_reminder_continuing.txt multitask/prompt.md multitask/tools.json subagent/prompt.md subagent/tools.json compaction/prompt.md commit/prompt.md
+//go:embed ask/prompt.md ask/tools.json plan/prompt.md plan/system_reminder.txt plan/tools.json agent/prompt.md agent/tools.json debug/prompt.md debug/tools.json debug/system_reminder_initial.txt debug/system_reminder_continuing.txt multitask/prompt.md multitask/tools.json subagent/prompt.md subagent/tools.json compaction/prompt.md commit/prompt.md
 var assetFS embed.FS
 
 // normalizeMode 校验并归一化传入的模式值。
@@ -57,29 +57,17 @@ func ToolsPath(mode Mode) (string, error) {
 	return fmt.Sprintf("%s/tools.json", normalized), nil
 }
 
-// ReadPrompt 读取指定模式的静态提示词文本。
+// ReadPrompt 读取指定模式的静态提示词文本（直接使用 prompt/<mode>/prompt.md）。
 func ReadPrompt(mode Mode) (string, error) {
-	normalized, err := normalizeMode(mode)
+	path, err := PromptPath(mode)
 	if err != nil {
 		return "", err
-	}
-	path := fmt.Sprintf("%s/prompt.md", normalized)
-	if normalized == ModeSubagent || normalized == ModeDebug {
-		data, err := assetFS.ReadFile(path)
-		if err != nil {
-			return "", fmt.Errorf("read prompt asset %q: %w", path, err)
-		}
-		return string(data), nil
-	}
-	prefix, err := assetFS.ReadFile("common_prefix.md")
-	if err != nil {
-		return "", fmt.Errorf("read prompt common prefix asset %q: %w", "common_prefix.md", err)
 	}
 	data, err := assetFS.ReadFile(path)
 	if err != nil {
 		return "", fmt.Errorf("read prompt asset %q: %w", path, err)
 	}
-	return string(prefix) + "\n\n" + string(data), nil
+	return string(data), nil
 }
 
 // MustReadPrompt 读取指定模式的静态提示词文本，失败时直接 panic。

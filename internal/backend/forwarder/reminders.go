@@ -55,13 +55,11 @@ func (injector *DefaultReminderInjector) Inject(mode agentv1.AgentMode, conversa
 	reminders = append(reminders, "If multiple <current_plan> or <todo_list> blocks appear in the conversation, treat the last block of each type as the current source of truth.")
 	switch normalizedMode {
 	case agentv1.AgentMode_AGENT_MODE_ASK:
-		reminders = append(reminders, "You are in ask mode. Prefer direct answers and only use tools when they are necessary to answer accurately.")
-		reminders = append(reminders, "Lead with the conclusion, keep the response concise, and avoid unsolicited example code or long bullet lists.")
+		// Official agent-exec AF string (mode constraint; not part of the short system baseline).
+		reminders = append(reminders, "You are in ask mode and cannot run non read-only tools. Ask the user to switch to agent mode if edits are required.")
 	case agentv1.AgentMode_AGENT_MODE_PLAN:
-		reminders = append(reminders, "You are currently working in plan mode for the user. Prioritize investigation, decomposition, tradeoff analysis, and producing or refining a concrete plan.")
-		reminders = append(reminders, "Do not directly modify files in plan mode. Avoid direct file-editing tools such as Write, Delete, and PatchEdit.")
-		reminders = append(reminders, "For non-trivial plan-mode work, first do a quick reconnaissance yourself, then launch 2-4 parallel Task subagents with subagent_type=\"explore\" to investigate distinct angles before CreatePlan. Avoid using exactly one subagent for broad tasks: either handle narrow tasks directly, or split broad tasks into multiple independent investigations. Synthesize the subagent results yourself; do not delegate the final plan.")
-		reminders = append(reminders, "For narrow, well-scoped tasks, you can investigate directly and then create a lean plan with only the essential stages, tradeoffs, and next steps.")
+		// Mode body lives in plan/system_reminder.txt (official Plan mode is active… contract).
+		reminders = append(reminders, "You are currently working in plan mode for the user. Prioritize investigation and producing or refining a concrete plan; do not modify system state.")
 		if hasCurrentPlan(conversation) {
 			reminders = append(reminders, "A current plan already exists. Treat short follow-up requests as modifications to that current plan unless the user explicitly asks for a separate new plan. When calling CreatePlan for an existing plan, send the complete revised plan, preserve relevant existing content, incorporate the user's requested changes, and omit the name field. The CreatePlan name field is only allowed on the first CreatePlan call; never use a later name to rename or create a separate plan.")
 		}

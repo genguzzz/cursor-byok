@@ -11,6 +11,7 @@ import (
 
 	"cursor/gen/agentv1"
 	modeladapter "cursor/internal/backend/agent/model"
+	"cursor/internal/backend/promptbudget"
 )
 
 const (
@@ -102,6 +103,54 @@ func guardCompiledConversationForProvider(compiled CompiledConversation) Compile
 				continue
 			}
 			message.ContentParts[partIndex].Text = truncatePromptGuardText("compiled.content_part", message.ContentParts[partIndex].Text, promptGuardCompiledMessageChars)
+		}
+	}
+	// Official-aligned prompt-level budget (V=3.2e6) after per-message caps.
+	// Projection-only: does not rewrite context.json history.
+	compiled = trimCompiledConversationPromptBudget(compiled)
+	return compiled
+}
+
+func trimCompiledConversationPromptBudget(compiled CompiledConversation) CompiledConversation {
+	if len(compiled.Messages) == 0 {
+		return compiled
+	}
+	input := make([]promptbudget.Message, len(compiled.Messages))
+	for index, message := range compiled.Messages {
+		content := message.Content
+		if strings.TrimSpace(content) == "" && len(message.ContentParts) > 0 {
+			parts := make([]string, 0, len(message.ContentParts))
+			for _, part := range message.ContentParts {
+				if strings.EqualFold(strings.TrimSpace(part.Type), "image") {
+					continue
+				}
+				if text := strings.TrimSpace(part.Text); text != "" {
+					parts = append(parts, text)
+				}
+			}
+			content = strings.Join(parts, "\n")
+		}
+		input[index] = promptbudget.Message{Role: message.Role, Content: content}
+	}
+	trimmed := promptbudget.TrimMessages(input, promptbudget.CharBudget)
+	for index := range compiled.Messages {
+		if shouldSkipPromptGuardMessageContent(compiled.Messages[index]) {
+			continue
+		}
+		if trimmed[index].Content == input[index].Content {
+			continue
+		}
+		compiled.Messages[index].Content = trimmed[index].Content
+		// Text parts were folded into Content for budgeting; drop stale text parts
+		// when we rewrote the message body (keep image parts).
+		if len(compiled.Messages[index].ContentParts) > 0 {
+			kept := compiled.Messages[index].ContentParts[:0]
+			for _, part := range compiled.Messages[index].ContentParts {
+				if strings.EqualFold(strings.TrimSpace(part.Type), "image") {
+					kept = append(kept, part)
+				}
+			}
+			compiled.Messages[index].ContentParts = kept
 		}
 	}
 	return compiled

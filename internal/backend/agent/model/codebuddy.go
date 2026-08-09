@@ -322,6 +322,8 @@ func applyCodeBuddyDynamicHeaders(headers map[string]string, req StreamRequest) 
 	setIfAbsent(headers, "X-Conversation-Request-ID", conversationRequestID)
 	setIfAbsent(headers, "X-Request-ID", messageID)
 	setIfAbsent(headers, "X-Conversation-Message-ID", messageID)
+	setIfAbsent(headers, "X-Root-Request-ID", conversationRequestID)
+	setIfAbsent(headers, "x-codebuddy-request", "1")
 
 	traceID := codeBuddyRandomHex(16)
 	spanID := codeBuddyRandomHex(8)

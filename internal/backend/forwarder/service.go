@@ -2438,6 +2438,7 @@ func (service *Service) rewriteCheckpointTokenDetailsForClient(stream *ActiveStr
 	compiled, hasCompiled := service.checkpointCompiledConversation(stream, conversation)
 	state.TokenDetails.UsedTokens = clampInt64ToUint32(service.checkpointDisplayUsedTokens(conversation, state, compiled, hasCompiled))
 	state.TokenDetails.Breakdown = estimateCheckpointPromptTokenBreakdown(compiled, hasCompiled, state.TokenDetails.UsedTokens, state.TokenDetails.MaxTokens)
+	state.TokenDetails.PromptContextUsageTree = buildPromptContextUsageTree(compiled, hasCompiled, state.TokenDetails.Breakdown)
 }
 
 func (service *Service) checkpointCompiledConversation(stream *ActiveStream, conversation *ConversationFile) (CompiledConversation, bool) {

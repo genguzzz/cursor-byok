@@ -1,0 +1,57 @@
+{
+  "used_tokens": 105094,
+  "max_tokens": 256000,
+  "breakdown": {
+    "total_used_tokens": 105094,
+    "max_tokens": 256000,
+    "categories": [
+      {
+        "id": "system_prompt",
+        "label": "System prompt",
+        "estimated_tokens": 477,
+        "character_count": 1877
+      },
+      {
+        "id": "tools",
+        "label": "Tool definitions",
+        "estimated_tokens": 8974,
+        "character_count": 35298
+      },
+      {
+        "id": "rules",
+        "label": "Rules",
+        "estimated_tokens": 3415,
+        "character_count": 13436
+      },
+      {
+        "id": "skills",
+        "label": "Skills",
+        "estimated_tokens": 2666,
+        "character_count": 10488
+      },
+      {
+        "id": "mcp",
+        "label": "MCP & dynamic tools",
+        "estimated_tokens": 3147,
+        "character_count": 12383
+      },
+      {
+        "id": "subagents",
+        "label": "Subagent definitions",
+        "estimated_tokens": 850,
+        "character_count": 3342
+      },
+      {
+        "id": "summarized_conversation",
+        "label": "Summarized conversation",
+        "character_count": 0
+      },
+      {
+        "id": "conversation",
+        "label": "Conversation",
+        "estimated_tokens": 85565,
+        "character_count": 254454
+      }
+    ]
+  }
+}

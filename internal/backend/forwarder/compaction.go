@@ -27,9 +27,12 @@ const (
 	compactionPreferredTailTurns     = 4
 	compactionMinimumTailTurns       = 1
 	compactionReserveFloorTokens     = 8192
-	compactionSummaryMaxChars        = 12000
-	compactionSummaryOutputMaxTokens = 4096
-	compactionTurnSnippetMaxChars    = 900
+	// Official agent-exec self-summary default: usedTokens >= floor(0.9 * maxTokens).
+	compactionOfficialTriggerRatioNumerator   = 9
+	compactionOfficialTriggerRatioDenominator = 10
+	compactionSummaryMaxChars                 = 12000
+	compactionSummaryOutputMaxTokens          = 4096
+	compactionTurnSnippetMaxChars             = 900
 
 	autoCompactionPreservedToolResultLimitBytes = 16 * 1024
 	autoCompactionFallbackToolResultLimitBytes  = 4 * 1024
@@ -125,7 +128,7 @@ func (service *Service) buildManualCompactionPlan(stream *ActiveStream, conversa
 		ContextTokens:             contextTokens,
 		ContextWindowSize:         contextWindowSize,
 		ContextUsagePercent:       usagePercent,
-		ReserveTokens:             compactionAutoReserveTokens,
+		ReserveTokens:             resolveCompactionReserveTokensForWindow(contextWindowSize),
 		MessageCount:              clampInt64ToInt32(int64(len(compiled.Messages))),
 		IsFirstCompaction:         len(compactionSummaryTexts(conversation)) == 0,
 		ExistingSummary:           existingConversationSummaryText(conversation),
@@ -147,13 +150,7 @@ func (service *Service) buildAutoCompactionPlan(stream *ActiveStream, conversati
 		return nil, nil
 	}
 	estimatedCompiledTokens := estimateCompiledPromptTokens(compiled)
-	reserveTokens := service.resolveCompactionReserveTokens(stream.ModelID)
-	if reserveTokens <= 0 {
-		reserveTokens = conversation.AutoCompactionReserveTokens
-	}
-	if reserveTokens <= 0 {
-		reserveTokens = compactionAutoReserveTokens
-	}
+	reserveTokens := service.resolveCompactionReserveTokens(stream.ModelID, contextWindowSize)
 	budgetTokens := contextWindowSize - reserveTokens
 	preflightExceeded := estimatedCompiledTokens > 0 && estimatedCompiledTokens > budgetTokens
 	contextTokens := maxPositiveInt64(
@@ -869,10 +866,25 @@ func compactionContextWindowSize(conversation *ConversationFile) int64 {
 	return projectedConversationMaxTokens
 }
 
-func (service *Service) resolveCompactionReserveTokens(modelID string) int64 {
+func (service *Service) resolveCompactionReserveTokens(modelID string, contextWindowSize int64) int64 {
 	_ = service
 	_ = modelID
-	return compactionAutoReserveTokens
+	return resolveCompactionReserveTokensForWindow(contextWindowSize)
+}
+
+// resolveCompactionReserveTokensForWindow mirrors official self-summary:
+// trigger when used >= floor(0.9 * window), i.e. reserve ~= 10% of window,
+// with a 10k floor so small windows still keep headroom.
+func resolveCompactionReserveTokensForWindow(contextWindowSize int64) int64 {
+	if contextWindowSize <= 0 {
+		return compactionAutoReserveTokens
+	}
+	triggerAt := contextWindowSize * int64(compactionOfficialTriggerRatioNumerator) / int64(compactionOfficialTriggerRatioDenominator)
+	reserve := contextWindowSize - triggerAt
+	if reserve < compactionAutoReserveTokens {
+		return compactionAutoReserveTokens
+	}
+	return reserve
 }
 
 func parseManualCompactionRequest(userMessage *agentv1.UserMessage) (string, bool) {
