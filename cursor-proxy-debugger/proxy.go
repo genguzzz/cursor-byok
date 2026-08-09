@@ -281,12 +281,17 @@ func (server *Server) captureResponse(response *http.Response, context *goproxy.
 }
 
 func (server *Server) finishRequestBody(id, path string, codec string, captured []byte, size int64, truncated bool, readErr error) {
+	contentType := server.store.contentType(id, false)
 	decodePayload := captured
 	var contentDecodeErr error
-	if decodesUnaryRequest(path) && truncated {
+	if truncated && decodesUnaryRequest(path) {
 		contentDecodeErr = errors.New("请求正文超过抓取上限，无法完整解码")
-	} else if decodesUnaryRequest(path) && codec != "" && !strings.EqualFold(codec, "identity") {
-		decodePayload, contentDecodeErr = decompressPayload(captured, codec)
+	} else if decompressed, err := decompressIfNeeded(captured, codec); err != nil {
+		if decodesUnaryRequest(path) {
+			contentDecodeErr = err
+		}
+	} else {
+		decodePayload = decompressed
 	}
 	decodedJSON, kind, requestID, decodeErr := "", "", "", contentDecodeErr
 	if decodeErr == nil {
@@ -301,6 +306,14 @@ func (server *Server) finishRequestBody(id, path string, codec string, captured 
 				decodedJSON, kind, requestID, decodeErr = altJSON, altKind, altID, nil
 				decodePayload = unwrapped
 			}
+		}
+	}
+	protoErr := decodeErr
+	// Never treat Connect streams as plain text fallback.
+	if decodedJSON == "" && runSSEMessageType(path, false) == "" {
+		if fbJSON, fbKind, ok := fallbackDisplayBody(contentType, decodePayload); ok {
+			decodedJSON, kind = fbJSON, fbKind
+			decodeErr = nil
 		}
 	}
 	var offlineFrames []FrameView
@@ -323,6 +336,9 @@ func (server *Server) finishRequestBody(id, path string, codec string, captured 
 		}
 		if decodeErr != nil {
 			exchange.Request.DecodeError = decodeErr.Error()
+		} else if protoErr != nil && decodedJSON != "" {
+			// text/json fallback succeeded after proto failure — keep a soft warning.
+			exchange.Request.DecodeError = "protobuf 解码失败，已回退为文本/JSON 展示: " + protoErr.Error()
 		} else {
 			exchange.Request.DecodeError = ""
 		}
@@ -341,8 +357,8 @@ func (server *Server) finishRequestBody(id, path string, codec string, captured 
 				}
 			}
 		}
-		// BidiAppend 等 unary：不是 Connect 流，但补一条合成 frame，避免 UI/分析工具误判「0 帧未解码」。
-		if len(exchange.Request.Frames) == 0 && decodedJSON != "" && decodesUnaryRequest(path) {
+		// Unary / text / json：补一条合成 frame，避免 UI 默认 frames 页空白。
+		if len(exchange.Request.Frames) == 0 && decodedJSON != "" {
 			exchange.Request.Frames = []FrameView{syntheticUnaryFrame(path, kind, requestID, decodedJSON, len(decodePayload))}
 		}
 		if exchange.FrameCount == 0 {
@@ -374,12 +390,17 @@ func responseContentCodec(path string, headers http.Header) string {
 }
 
 func (server *Server) finishResponseBody(id, path, codec string, captured []byte, size int64, truncated bool, readErr error) {
+	contentType := server.store.contentType(id, true)
 	decodePayload := captured
 	var contentDecodeErr error
-	if decodesUnaryResponse(path) && truncated {
+	if truncated && decodesUnaryResponse(path) {
 		contentDecodeErr = errors.New("响应正文超过抓取上限，无法完整解码")
-	} else if decodesUnaryResponse(path) && codec != "" && !strings.EqualFold(codec, "identity") {
-		decodePayload, contentDecodeErr = decompressPayload(captured, codec)
+	} else if decompressed, err := decompressIfNeeded(captured, codec); err != nil {
+		if decodesUnaryResponse(path) {
+			contentDecodeErr = err
+		}
+	} else {
+		decodePayload = decompressed
 	}
 	decodedJSON, kind, decodeErr := "", "", contentDecodeErr
 	if decodeErr == nil {
@@ -395,9 +416,17 @@ func (server *Server) finishResponseBody(id, path, codec string, captured []byte
 			}
 		}
 	}
+	protoErr := decodeErr
 	var offlineFrames []FrameView
 	if messageType := runSSEMessageType(path, true); messageType != "" && len(captured) > 0 {
 		offlineFrames = decodeConnectFramesOffline(messageType, codec, server.maxFrames(), captured)
+	}
+	// Text/JSON fallback only for unary HTTP (not Connect RunSSE streams).
+	if decodedJSON == "" && len(offlineFrames) == 0 && runSSEMessageType(path, true) == "" {
+		if fbJSON, fbKind, ok := fallbackDisplayBody(contentType, decodePayload); ok {
+			decodedJSON, kind = fbJSON, fbKind
+			decodeErr = nil
+		}
 	}
 	server.store.update(id, func(exchange *Exchange) {
 		exchange.ResponseBytes = size
@@ -412,6 +441,10 @@ func (server *Server) finishResponseBody(id, path, codec string, captured []byte
 		}
 		if decodeErr != nil {
 			exchange.Response.DecodeError = decodeErr.Error()
+		} else if protoErr != nil && decodedJSON != "" {
+			exchange.Response.DecodeError = "protobuf 解码失败，已回退为文本/JSON 展示: " + protoErr.Error()
+		} else {
+			exchange.Response.DecodeError = ""
 		}
 		// 官方 upstream RunSSE 先前只落 rawHex；这里补齐与本地 MITM 一致的 frames。
 		if len(exchange.Response.Frames) == 0 && len(offlineFrames) > 0 {
@@ -420,8 +453,8 @@ func (server *Server) finishResponseBody(id, path, codec string, captured []byte
 				exchange.ResponseKind = firstNonEmptyFrameKind(offlineFrames)
 			}
 		}
-		// Unary aiserver RPCs: synthesize a response frame when typed decode succeeded.
-		if len(exchange.Response.Frames) == 0 && decodedJSON != "" && decodesUnaryResponse(path) {
+		// Unary / text / json：合成 frame，避免响应默认 frames 页空白。
+		if len(exchange.Response.Frames) == 0 && decodedJSON != "" {
 			exchange.Response.Frames = []FrameView{syntheticUnaryFrame(path, kind, "", decodedJSON, len(decodePayload))}
 		}
 		if len(exchange.Response.Frames) > 0 {

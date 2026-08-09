@@ -198,6 +198,19 @@ func (store *exchangeStore) get(id string) (Exchange, bool) {
 	return cloneExchange(*exchange), true
 }
 
+func (store *exchangeStore) contentType(id string, responseSide bool) string {
+	store.mu.RLock()
+	defer store.mu.RUnlock()
+	exchange := store.exchanges[id]
+	if exchange == nil {
+		return ""
+	}
+	if responseSide {
+		return exchange.Response.ContentType
+	}
+	return exchange.Request.ContentType
+}
+
 func (store *exchangeStore) query(q ExchangeQuery) (items []Exchange, total int, stats StoreStats) {
 	store.mu.RLock()
 	defer store.mu.RUnlock()

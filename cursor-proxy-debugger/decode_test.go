@@ -207,6 +207,38 @@ func TestFinishRequestBodyDecodesCompressedCloneRequest(t *testing.T) {
 	}
 }
 
+func TestFinishResponseBodyFallsBackToTextWhenProtoFails(t *testing.T) {
+	t.Parallel()
+	server := &Server{store: newExchangeStore(defaultMaxStoreBytes, 0), config: Config{}.normalized()}
+	server.store.create(&Exchange{
+		ExchangeSummary: ExchangeSummary{ID: "404", StartedAt: time.Now(), Path: "/aiserver.v1.AnalyticsService/Batch"},
+		Response:        Payload{ContentType: "text/plain; charset=utf-8"},
+	})
+	body := []byte("404 page not found\n")
+	server.finishResponseBody("404", "/aiserver.v1.AnalyticsService/Batch", "identity", body, int64(len(body)), false, nil)
+	ex, ok := server.store.get("404")
+	if !ok {
+		t.Fatal("missing")
+	}
+	if ex.Response.DecodedJSON == "" || !strings.Contains(ex.Response.DecodedJSON, "404 page not found") {
+		t.Fatalf("expected text fallback decodedJson, got %q err=%q", ex.Response.DecodedJSON, ex.Response.DecodeError)
+	}
+	if ex.ResponseKind != "text" {
+		t.Fatalf("responseKind=%q", ex.ResponseKind)
+	}
+	if len(ex.Response.Frames) != 1 {
+		t.Fatalf("expected synthetic frame, frames=%d", len(ex.Response.Frames))
+	}
+}
+
+func TestFallbackDisplayBodyJSON(t *testing.T) {
+	t.Parallel()
+	decoded, kind, ok := fallbackDisplayBody("application/json", []byte(`{"ok":true}`))
+	if !ok || kind != "json" || !strings.Contains(decoded, `"ok"`) {
+		t.Fatalf("json fallback failed: ok=%v kind=%q decoded=%q", ok, kind, decoded)
+	}
+}
+
 func TestDecodeCommonAiserverUnaryRPCs(t *testing.T) {
 	t.Parallel()
 	req, err := proto.Marshal(&aiserverv1.ServerTimeRequest{})

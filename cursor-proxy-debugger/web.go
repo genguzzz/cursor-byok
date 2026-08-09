@@ -115,6 +115,14 @@ func (server *Server) handleExchangeRaw(writer http.ResponseWriter, request *htt
 	}
 	switch format {
 	case "json":
+		textPreview := ""
+		if payload.DecodedJSON == "" && payload.RawHex != "" {
+			if raw, err := hex.DecodeString(payload.RawHex); err == nil {
+				if fb, _, ok := fallbackDisplayBody(payload.ContentType, raw); ok {
+					textPreview = fb
+				}
+			}
+		}
 		writeJSON(writer, http.StatusOK, map[string]any{
 			"id":           exchange.ID,
 			"side":         side,
@@ -124,6 +132,7 @@ func (server *Server) handleExchangeRaw(writer http.ResponseWriter, request *htt
 			"rawTruncated": payload.RawTruncated,
 			"rawHex":       payload.RawHex,
 			"decodedJson":  payload.DecodedJSON,
+			"textPreview":  textPreview,
 			"decodeError":  payload.DecodeError,
 			"frameCount":   len(payload.Frames),
 		})

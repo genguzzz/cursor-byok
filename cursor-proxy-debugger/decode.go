@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"unicode/utf8"
 
 	"cursor/gen/agentv1"
 	"cursor/gen/aiserverv1"
@@ -417,4 +418,68 @@ func clippedHex(payload []byte, max int) string {
 		return hex.EncodeToString(payload[:max]) + "..."
 	}
 	return hex.EncodeToString(payload)
+}
+
+// fallbackDisplayBody turns non-protobuf (or failed-proto) bodies into UI-visible JSON.
+// Covers text/plain error pages, application/json, and UTF-8 text mistaken as proto.
+func fallbackDisplayBody(contentType string, payload []byte) (decodedJSON string, kind string, ok bool) {
+	if len(payload) == 0 {
+		return "", "", false
+	}
+	ct := strings.ToLower(strings.TrimSpace(contentType))
+	if strings.Contains(ct, "json") {
+		if trimmed := bytes.TrimSpace(payload); json.Valid(trimmed) {
+			return prettyJSON(trimmed), "json", true
+		}
+		wrapped, err := json.MarshalIndent(map[string]any{
+			"content_type": contentType,
+			"text":         string(payload),
+		}, "", "  ")
+		if err != nil {
+			return "", "", false
+		}
+		return string(wrapped), "json_text", true
+	}
+	if strings.Contains(ct, "text/") || strings.Contains(ct, "xml") || strings.Contains(ct, "javascript") || looksLikeUTF8Text(payload) {
+		wrapped, err := json.MarshalIndent(map[string]any{
+			"content_type": contentType,
+			"text":         string(payload),
+		}, "", "  ")
+		if err != nil {
+			return "", "", false
+		}
+		kind = "text"
+		if strings.Contains(ct, "html") {
+			kind = "html"
+		}
+		return string(wrapped), kind, true
+	}
+	return "", "", false
+}
+
+func looksLikeUTF8Text(payload []byte) bool {
+	if len(payload) == 0 {
+		return false
+	}
+	sample := payload
+	if len(sample) > 4096 {
+		sample = sample[:4096]
+	}
+	if !utf8.Valid(sample) {
+		return false
+	}
+	printable := 0
+	for _, b := range sample {
+		if b == '\n' || b == '\r' || b == '\t' || (b >= 32 && b < 127) || b >= 0x80 {
+			printable++
+		}
+	}
+	return printable*10 >= len(sample)*8
+}
+
+func decompressIfNeeded(captured []byte, codec string) ([]byte, error) {
+	if len(captured) == 0 || codec == "" || strings.EqualFold(codec, "identity") {
+		return captured, nil
+	}
+	return decompressPayload(captured, codec)
 }

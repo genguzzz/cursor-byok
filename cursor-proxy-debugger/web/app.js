@@ -236,17 +236,63 @@ function renderDetailError(error) {
 function renderPayload(payload, tab) {
   if (!payload) return `<div class="notice">${escapeHTML(t("notices.noContent"))}</div>`;
   if (tab === "headers") return renderHeaders(payload.headers);
-  if (tab === "frames") return renderFrames(payload.frames);
+  if (tab === "frames") {
+    if (payload.frames?.length) return renderFrames(payload.frames);
+    // Unary / plain HTTP often has decodedJson but no Connect frames — don't show a blank frames pane.
+    if (payload.decodedJson) {
+      return `${renderDecodeError(payload.decodeError)}<pre class="code-view">${escapeHTML(payload.decodedJson)}</pre>${renderTruncated(payload.rawTruncated)}`;
+    }
+    const text = utf8FromRawHex(payload.rawHex);
+    if (text) {
+      return `${renderDecodeError(payload.decodeError)}<pre class="code-view">${escapeHTML(text)}</pre>${renderTruncated(payload.rawTruncated)}`;
+    }
+    if (payload.rawHex) {
+      return `${renderDecodeError(payload.decodeError)}<div class="notice">${escapeHTML(t("notices.noFramesUseRaw"))}</div><pre class="hex-view">${escapeHTML(formatHex(payload.rawHex))}</pre>${renderTruncated(payload.rawTruncated)}`;
+    }
+    return `<div class="notice">${escapeHTML(t("notices.noFrames"))}</div>${renderDecodeError(payload.decodeError)}`;
+  }
   if (tab === "raw") {
     const body = payload.rawHex ? formatHex(payload.rawHex) : t("notices.noRaw");
     return `<pre class="hex-view">${escapeHTML(body)}</pre>${renderTruncated(payload.rawTruncated)}`;
   }
+  // body tab
   if (payload.decodedJson) {
     return `<pre class="code-view">${escapeHTML(payload.decodedJson)}</pre>${renderDecodeError(payload.decodeError)}${renderTruncated(payload.rawTruncated)}`;
   }
   if (payload.frames?.length) return renderFrames(payload.frames);
+  const text = utf8FromRawHex(payload.rawHex);
+  if (text) {
+    return `${renderDecodeError(payload.decodeError)}<pre class="code-view">${escapeHTML(text)}</pre>${renderTruncated(payload.rawTruncated)}`;
+  }
+  if (payload.rawHex) {
+    return `${renderDecodeError(payload.decodeError)}<div class="notice">${escapeHTML(t("notices.bodyAsHex"))}</div><pre class="hex-view">${escapeHTML(formatHex(payload.rawHex))}</pre>${renderTruncated(payload.rawTruncated)}`;
+  }
   if (payload.decodeError) return `<div class="notice error">${escapeHTML(payload.decodeError)}</div>`;
+  if ((payload.size || 0) === 0) return `<div class="notice">${escapeHTML(t("notices.emptyBody"))}</div>`;
   return `<div class="notice">${escapeHTML(t("notices.noBody"))}</div>`;
+}
+
+function utf8FromRawHex(rawHex) {
+  const hex = String(rawHex || "").replace(/[^0-9a-f]/gi, "");
+  if (!hex || hex.length % 2 !== 0) return "";
+  try {
+    const bytes = new Uint8Array(hex.length / 2);
+    for (let i = 0; i < bytes.length; i++) {
+      bytes[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16);
+    }
+    const text = new TextDecoder("utf-8", { fatal: false }).decode(bytes);
+    if (!text) return "";
+    // Prefer printable / mostly-text payloads for the body pane.
+    let printable = 0;
+    for (let i = 0; i < text.length; i++) {
+      const code = text.charCodeAt(i);
+      if (code === 9 || code === 10 || code === 13 || (code >= 32 && code !== 127)) printable++;
+    }
+    if (printable * 10 < text.length * 8) return "";
+    return text;
+  } catch {
+    return "";
+  }
 }
 
 function renderHeaders(headers = []) {
@@ -304,8 +350,13 @@ function currentCopyText(side) {
   const tab = state.tabs[side];
   if (tab === "headers") return (payload.headers || []).map((item) => `${item.name}: ${item.value}`).join("\n");
   if (tab === "raw") return payload.rawHex || "";
-  if (tab === "frames") return (payload.frames || []).map((frame) => frame.json || frame.rawHex || frame.error || "").join("\n\n");
-  return payload.decodedJson || "";
+  if (tab === "frames") {
+    if (payload.frames?.length) {
+      return payload.frames.map((frame) => frame.json || frame.rawHex || frame.error || "").join("\n\n");
+    }
+    return payload.decodedJson || utf8FromRawHex(payload.rawHex) || payload.rawHex || "";
+  }
+  return payload.decodedJson || utf8FromRawHex(payload.rawHex) || "";
 }
 
 function formatHex(value) {
