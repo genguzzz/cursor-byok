@@ -22,8 +22,12 @@ const maxConnectFrameBytes = 64 << 20
 
 const (
 	bidiAppendPath              = "/aiserver.v1.BidiService/BidiAppend"
+	runSSEPath                  = "/agent.v1.AgentService/RunSSE"
 	notifyConversationClonePath = "/agent.v1.AgentService/NotifyConversationClone"
 	uploadConversationBlobsPath = "/agent.v1.AgentService/UploadConversationBlobs"
+
+	runSSERequestMessageType  = "aiserver.v1.BidiRequestId"
+	runSSEResponseMessageType = "agent.v1.AgentServerMessage"
 )
 
 type connectFrameDecoder struct {
@@ -144,6 +148,41 @@ func decompressPayload(payload []byte, codec string) ([]byte, error) {
 		return nil, fmt.Errorf("gzip 解压后超过 %d 字节限制", maxConnectFrameBytes)
 	}
 	return decoded, nil
+}
+
+// decodeConnectFramesOffline 把一整段 Connect 流拆成帧并解码（用于官方 upstream 整包回灌）。
+// MITM 流式路径已在抓包时增量解码；offline 仅在 Frames 仍为空时使用。
+func decodeConnectFramesOffline(messageType, codec string, maxFrames int, payload []byte) []FrameView {
+	if len(payload) == 0 || maxFrames <= 0 {
+		return nil
+	}
+	frames := make([]FrameView, 0, 16)
+	decoder := newConnectFrameDecoder(messageType, codec, maxFrames, func(frame FrameView) {
+		frames = append(frames, frame)
+	})
+	decoder.Write(payload)
+	decoder.Close()
+	return frames
+}
+
+func runSSEMessageType(path string, responseSide bool) string {
+	if path != runSSEPath {
+		return ""
+	}
+	if responseSide {
+		return runSSEResponseMessageType
+	}
+	return runSSERequestMessageType
+}
+
+func firstNonEmptyFrameKind(frames []FrameView) string {
+	for i := len(frames) - 1; i >= 0; i-- {
+		kind := strings.TrimSpace(frames[i].Kind)
+		if kind != "" && kind != "end_stream" {
+			return kind
+		}
+	}
+	return ""
 }
 
 func decodeUnaryRequest(path string, payload []byte) (decodedJSON string, kind string, requestID string, err error) {

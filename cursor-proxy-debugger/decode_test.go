@@ -143,7 +143,7 @@ func TestFinishResponseBodyDecodesCompressedCloneResponse(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	server := &Server{store: newExchangeStore(1)}
+	server := &Server{store: newExchangeStore(defaultMaxStoreBytes, 0)}
 	server.store.create(&Exchange{
 		ExchangeSummary: ExchangeSummary{ID: "1", StartedAt: time.Now()},
 	})
@@ -184,7 +184,7 @@ func TestFinishRequestBodyDecodesCompressedCloneRequest(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	server := &Server{store: newExchangeStore(1)}
+	server := &Server{store: newExchangeStore(defaultMaxStoreBytes, 0)}
 	server.store.create(&Exchange{
 		ExchangeSummary: ExchangeSummary{ID: "1", StartedAt: time.Now()},
 	})

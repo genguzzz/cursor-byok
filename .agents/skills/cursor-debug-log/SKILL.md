@@ -1,6 +1,6 @@
 ---
 name: cursor-debug-log
-description: 当需要调查 Cursor 本地模式 debug/log 证据时使用：config.yaml 的 log 热加载、history/<conversationId>/debug JSONL 文件、Bidi 原始/解码记录、RunSSE 记录、runtime/provider debug 记录、debug 文件缺失原因，或解释这些 debug 文件如何生成与如何查询。
+description: 当需要调查 Cursor 本地模式 debug/log 证据，或菜单栏「调试模式」/cursor-proxy-debugger 抓包（官方 vs 本地 BidiAppend/RunSSE、token_details、query API）时使用：config.yaml 的 log 热加载、history/<conversationId>/debug JSONL、调试器 :9091 API、Bidi/RunSSE 解码差异、debug 文件缺失原因。
 ---
 
 # Cursor Debug Log
@@ -174,3 +174,69 @@ runtime model parameters，例如 thinking strength，只是 provider request �
 - 写文件失败；如果该版本有相关记录，app log 里可能有 warning。
 
 debug 证据缺失时，回退到 `state.json`、`context.json`、`usage.json`、`logs/app.log`，并把结论标成推断，而不是直接证明。
+
+## 菜单栏调试器 / cursor-proxy-debugger（协议抓包）
+
+这和 Cursor Agent 的 **Debug Mode（AGENT_MODE_DEBUG）** 不是一回事。菜单栏「调试模式」会启动进程内 `cursor-proxy-debugger`：
+
+| 组件 | 默认地址 |
+|------|----------|
+| 调试 UI / API | `http://127.0.0.1:9091` |
+| MITM 代理 | `http://127.0.0.1:9092` |
+| 上游（本地模式开着时） | `http://127.0.0.1:18080` |
+| 解密目标 | `*.cursor.sh` |
+
+### Server 列含义
+
+- `local` + `captureSource=client`：Cursor → 调试代理 → 本地助手（MITM 流式拆帧，RunSSE `response.frames` 增量解码）。
+- `official` + `captureSource=upstream`：backend → 官方 `api*.cursor.sh` 第二跳（整包回灌后 **offline Connect 拆帧**；修复后应与本地一样有 `frames`）。
+
+官方 system prompt **正文通常不在** Bidi/RunSSE 明文里；可观测的是计量（`token_details` / `system_prompt` 的 tokens/chars）与协议消息。
+
+### 存储与淘汰
+
+- 默认内存预算约 **200MiB**（`maxStoreBytes`），超出丢弃最早记录；不是只留 200 条。
+- 单侧 raw 默认最多约 **16MiB**（过小会截断大 RunSSE）。
+- 进程退出后抓包消失；**不会**自动写入 `history/*/debug/`。
+- 本地 `log: true` 的 JSONL 与调试器是两套证据：前者落盘会话目录，后者是实时协议 MITM。
+
+### 分析流程（优先用 query API）
+
+1. 确认调试开着：`curl -s http://127.0.0.1:9091/api/status`（看 `running`、`store.usedBytes`）。
+2. 列官方 run / RunSSE：
+
+```bash
+curl -sS 'http://127.0.0.1:9091/api/exchanges/query?server=official&kind=run_request&include=summary&limit=20' | jq '.items[]|{id,path,requestKind,frameCount,requestBytes,responseBytes}'
+curl -sS 'http://127.0.0.1:9091/api/exchanges/query?server=official&path=RunSSE&include=summary&limit=20' | jq '.total,.items[:5]'
+```
+
+3. 看解码后的 frames（官方与本地都应非空）：
+
+```bash
+ID=<exchangeId>
+curl -sS "http://127.0.0.1:9091/api/exchanges/$ID?include=frames" | jq '{id,server,captureSource,frameCount,responseKind,frames:(.response.frames|length),sample:(.response.frames[:3]|map({index,kind,error}))}'
+```
+
+4. 抽 `token_details` / system_prompt 计量：
+
+```bash
+curl -sS "http://127.0.0.1:9091/api/exchanges/$ID?include=frames" \
+  | jq -r '.response.frames[].json // empty' \
+  | rg -n 'system_prompt|estimated_tokens|character_count|Tool definitions' | head
+```
+
+5. 需要 raw 时：
+
+```bash
+curl -sS "http://127.0.0.1:9091/api/exchanges/$ID/raw?side=response&format=json" | jq '{size,rawTruncated,contentCodec,frameCount}'
+# 或 bin：format=bin / hex：format=hex
+```
+
+6. 对照本地会话落盘（若 `log: true`）：`history/<conversationId>/debug/{bidi,runsse,provider}.jsonl`。
+
+### 常见坑
+
+- 缓冲区按字节淘汰：大 RunSSE 一多，旧的 `run_request` 会 404；需要时立刻 `query`/`raw` 导出。
+- `frameCount=0` 但有 `rawHex`：旧二进制未做官方 offline 拆帧；应重启菜单栏调试（新代码在 `finishResponseBody` 补解码）。
+- Proxyman 里可能看不到 `api2.cursor.sh`：流量走调试器 MITM，应查 `:9091` 而不是 Proxyman。
+- 不要把对话内容里出现的 prompt 字符串误当成官方 system（常来自读仓库文件）。

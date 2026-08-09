@@ -105,7 +105,8 @@ func ForwardToUpstream(reqCtx *RequestContext, options ForwardOptions) (*Forward
 	return meta, nil
 }
 
-const defaultTrafficCaptureBytes = 2 << 20
+// defaultTrafficCaptureBytes 官方回源抓包上限（与 cursor-proxy-debugger MaxCaptureBytes 对齐）。
+const defaultTrafficCaptureBytes = 16 << 20
 
 type captureLimitWriter struct {
 	buf []byte

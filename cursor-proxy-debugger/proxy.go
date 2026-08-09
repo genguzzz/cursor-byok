@@ -52,7 +52,7 @@ func New(config Config) (*Server, error) {
 	server := &Server{
 		config:      config,
 		certManager: manager,
-		store:       newExchangeStore(config.MaxExchanges),
+		store:       newExchangeStore(config.MaxStoreBytes, config.MaxExchanges),
 	}
 	proxyHandler, err := server.newProxyHandler()
 	if err != nil {
@@ -204,9 +204,9 @@ func (server *Server) captureRequest(request *http.Request, context *goproxy.Pro
 		return request, nil
 	}
 	var frameDecoder *connectFrameDecoder
-	if path == "/agent.v1.AgentService/RunSSE" {
+	if path == runSSEPath {
 		frameDecoder = newConnectFrameDecoder(
-			"aiserver.v1.BidiRequestId",
+			runSSERequestMessageType,
 			requestCodec,
 			server.config.MaxFrames,
 			func(frame FrameView) { server.appendRequestFrame(id, frame) },
@@ -254,9 +254,9 @@ func (server *Server) captureResponse(response *http.Response, context *goproxy.
 	}
 
 	var frameDecoder *connectFrameDecoder
-	if path == "/agent.v1.AgentService/RunSSE" {
+	if path == runSSEPath {
 		frameDecoder = newConnectFrameDecoder(
-			"agent.v1.AgentServerMessage",
+			runSSEResponseMessageType,
 			responseCodec,
 			server.config.MaxFrames,
 			func(frame FrameView) { server.appendResponseFrame(id, frame) },
@@ -292,6 +292,10 @@ func (server *Server) finishRequestBody(id, path string, codec string, captured 
 	if decodeErr == nil {
 		decodedJSON, kind, requestID, decodeErr = decodeUnaryRequest(path, decodePayload)
 	}
+	var offlineFrames []FrameView
+	if messageType := runSSEMessageType(path, false); messageType != "" && len(captured) > 0 {
+		offlineFrames = decodeConnectFramesOffline(messageType, codec, server.maxFrames(), captured)
+	}
 	server.store.update(id, func(exchange *Exchange) {
 		exchange.RequestBytes = size
 		exchange.Request.Size = size
@@ -309,6 +313,21 @@ func (server *Server) finishRequestBody(id, path string, codec string, captured 
 		if decodeErr != nil {
 			exchange.Request.DecodeError = decodeErr.Error()
 		}
+		// 官方 upstream 整包回灌不会走 MITM 流式拆帧；Frames 为空时补做 offline Connect 解码。
+		if len(exchange.Request.Frames) == 0 && len(offlineFrames) > 0 {
+			exchange.Request.Frames = offlineFrames
+			if exchange.RequestKind == "" {
+				exchange.RequestKind = firstNonEmptyFrameKind(offlineFrames)
+			}
+			if exchange.RequestID == "" {
+				for _, frame := range offlineFrames {
+					if frame.RequestID != "" {
+						exchange.RequestID = frame.RequestID
+						break
+					}
+				}
+			}
+		}
 		if readErr != nil && !errors.Is(readErr, io.EOF) {
 			exchange.Error = readErr.Error()
 		}
@@ -316,14 +335,14 @@ func (server *Server) finishRequestBody(id, path string, codec string, captured 
 }
 
 func requestContentCodec(path string, headers http.Header) string {
-	if path == "/agent.v1.AgentService/RunSSE" {
+	if path == runSSEPath {
 		return strings.TrimSpace(headers.Get("Connect-Content-Encoding"))
 	}
 	return strings.TrimSpace(headers.Get("Content-Encoding"))
 }
 
 func responseContentCodec(path string, headers http.Header) string {
-	if path == "/agent.v1.AgentService/RunSSE" {
+	if path == runSSEPath {
 		return strings.TrimSpace(headers.Get("Connect-Content-Encoding"))
 	}
 	if !decodesUnaryResponse(path) {
@@ -346,6 +365,10 @@ func (server *Server) finishResponseBody(id, path, codec string, captured []byte
 	if decodeErr == nil {
 		decodedJSON, kind, decodeErr = decodeUnaryResponse(path, decodePayload)
 	}
+	var offlineFrames []FrameView
+	if messageType := runSSEMessageType(path, true); messageType != "" && len(captured) > 0 {
+		offlineFrames = decodeConnectFramesOffline(messageType, codec, server.maxFrames(), captured)
+	}
 	server.store.update(id, func(exchange *Exchange) {
 		exchange.ResponseBytes = size
 		exchange.Response.Size = size
@@ -360,6 +383,16 @@ func (server *Server) finishResponseBody(id, path, codec string, captured []byte
 		if decodeErr != nil {
 			exchange.Response.DecodeError = decodeErr.Error()
 		}
+		// 官方 upstream RunSSE 先前只落 rawHex；这里补齐与本地 MITM 一致的 frames。
+		if len(exchange.Response.Frames) == 0 && len(offlineFrames) > 0 {
+			exchange.Response.Frames = offlineFrames
+			exchange.FrameCount = len(offlineFrames)
+			if exchange.ResponseKind == "" {
+				exchange.ResponseKind = firstNonEmptyFrameKind(offlineFrames)
+			}
+		} else {
+			exchange.FrameCount = len(exchange.Response.Frames)
+		}
 		exchange.DurationMS = elapsedMS(exchange.StartedAt)
 		exchange.State = "completed"
 		if readErr != nil && !errors.Is(readErr, io.EOF) {
@@ -367,6 +400,13 @@ func (server *Server) finishResponseBody(id, path, codec string, captured []byte
 			exchange.Error = readErr.Error()
 		}
 	})
+}
+
+func (server *Server) maxFrames() int {
+	if server != nil && server.config.MaxFrames > 0 {
+		return server.config.MaxFrames
+	}
+	return defaultMaxFrames
 }
 
 func (server *Server) appendRequestFrame(id string, frame FrameView) {

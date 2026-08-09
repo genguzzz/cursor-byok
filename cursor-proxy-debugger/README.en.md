@@ -39,11 +39,22 @@ go build -o bin/cursor-proxy-debugger ./cmd/cursor-proxy-debugger
 ## Options
 
 ```text
--proxy-addr       Proxy listen address; default: 127.0.0.1:9090
--ui-addr          Debugging UI listen address; default: 127.0.0.1:9091
--target-host      Hosts to decrypt/capture; default: *.cursor.sh (comma-separated or wildcard)
--max-exchanges    Maximum number of exchanges retained in memory; default: 200
--open             Open the browser after startup; default: true
+-proxy-addr         Proxy listen address; default: 127.0.0.1:9092
+-ui-addr            Debugging UI listen address; default: 127.0.0.1:9091
+-target-host        Hosts to decrypt/capture; default: *.cursor.sh (comma-separated or wildcard)
+-upstream-proxy     Optional upstream proxy, e.g. local-mode http://127.0.0.1:18080
+-max-store-bytes    Capture memory budget in bytes; default: 209715200 (200MiB); evict oldest when exceeded
+-max-exchanges      Optional count cap; 0 (default) means budget-only
+-open               Open the browser after startup; default: true
+```
+
+## Query API
+
+```text
+GET /api/status
+GET /api/exchanges/query?...&include=summary|decoded|raw|frames|full
+GET /api/exchanges/{id}?include=full
+GET /api/exchanges/{id}/raw?side=request|response&format=hex|bin|json
 ```
 
 ## Data Handling
@@ -55,6 +66,7 @@ go build -o bin/cursor-proxy-debugger ./cmd/cursor-proxy-debugger
 - Local Fork Chat is primarily client-side and only emits `NotifyConversationClone` and `UploadConversationBlobs` when clone blob synchronization is enabled and privacy settings allow it.
 - Requests can be sorted chronologically or in reverse chronological order and filtered by protocol `request_id`.
 - The UI supports Simplified Chinese and English, follows the browser language, and remembers a manual selection.
-- Captured traffic is stored only in process memory and is discarded when the process exits.
+- Captured traffic is stored only in process memory (default ~200MiB budget; oldest evicted first) and is discarded when the process exits.
 - Sensitive HTTP headers such as `Authorization`, `Cookie`, and `Set-Cookie` are hidden in the UI by default.
-- Raw bodies are retained up to 2 MiB per side by default; forwarded traffic is never truncated.
+- Raw bodies are retained up to 16 MiB per side by default; forwarded traffic is never truncated.
+- `RunSSE`: local MITM decodes frames incrementally; official upstream hops are offline-decoded the same way after ingest so both sides expose `response.frames`.

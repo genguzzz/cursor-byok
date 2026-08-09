@@ -23,6 +23,9 @@ description: Use when debugging Cursor client agent/local-mode/tool/backend-stor
 - `history + logs` 反查层
   - 现象：用户发来一个 id，要判断它是 `conversationId`、`requestId`、`modelCallId`、`toolCallId`；需要从 `history/<conversationId>/state.json` 与 `history/<conversationId>/context.json` 追运行状态和语义历史。
   - 先读 [references/backend-store-log-tracing.md](references/backend-store-log-tracing.md)
+- `菜单栏调试器 / 官方 vs 本地协议抓包` 层
+  - 现象：用户说「调试模式抓包」、`:9091` UI、官方 `RunSSE`/`BidiAppend` frames、`token_details`、server=official/local 对照；或官方 frames 解不出而本地可以。
+  - **先读** [`cursor-debug-log` skill](../cursor-debug-log/SKILL.md) 的「菜单栏调试器 / cursor-proxy-debugger」一节；用 `/api/exchanges/query` 与 `/api/exchanges/{id}?include=frames`，不要只翻 Proxyman。
 - `provider replay / debug` 层
   - 现象：provider 返回 400/参数错误、SSE `event: error`、需要验证最终出站 provider body 是否能被独立 curl 复现。
   - 先读 [references/provider-replay-debugging.md](references/provider-replay-debugging.md)，必要时使用 [scripts/provider-replay.sh](scripts/provider-replay.sh)

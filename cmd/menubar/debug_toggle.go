@@ -65,7 +65,8 @@ func startDebugLocked(openBrowserTab bool) bool {
 		UIAddr:        debugUIListenAddr,
 		TargetHost:    "*.cursor.sh",
 		UpstreamProxy: upstream,
-		MaxExchanges:  200,
+		MaxStoreBytes: 200 << 20, // 200 MiB；满则丢最早
+		MaxExchanges:  0,         // 不按条数截断
 	}
 	server, err := proxydebugger.New(config)
 	if err != nil {

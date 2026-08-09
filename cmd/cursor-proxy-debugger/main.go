@@ -22,7 +22,8 @@ func main() {
 	flag.StringVar(&config.UIAddr, "ui-addr", "127.0.0.1:9091", "调试界面监听地址")
 	flag.StringVar(&config.TargetHost, "target-host", "*.cursor.sh", "需要解密和抓取的目标主机（逗号分隔或 *.cursor.sh）")
 	flag.StringVar(&config.UpstreamProxy, "upstream-proxy", "", "可选上游代理，例如本地模式 http://127.0.0.1:18080")
-	flag.IntVar(&config.MaxExchanges, "max-exchanges", 200, "内存中保留的最大请求数")
+	flag.Int64Var(&config.MaxStoreBytes, "max-store-bytes", 200<<20, "抓包内存预算（字节），超出丢弃最早记录，默认 200MiB")
+	flag.IntVar(&config.MaxExchanges, "max-exchanges", 0, "可选条数上限；0 表示不按条数限制，只按字节预算")
 	flag.BoolVar(&openBrowser, "open", true, "启动后打开浏览器")
 	flag.Parse()
 
