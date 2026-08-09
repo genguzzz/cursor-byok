@@ -792,6 +792,14 @@ func (bridge *Bridge) openTask(openContext OpenExecContext, toolCall runtimecore
 	if modelID == "" {
 		modelID = strings.TrimSpace(openContext.ModelID)
 	}
+	runInBackground, err := readBoolPtrArg(args, "run_in_background", "runInBackground")
+	if err != nil {
+		return nil, runtimecore.PendingExec{}, fmt.Errorf("decode Task run_in_background failed: %w", err)
+	}
+	interrupt, err := readBoolPtrArg(args, "interrupt")
+	if err != nil {
+		return nil, runtimecore.PendingExec{}, fmt.Errorf("decode Task interrupt failed: %w", err)
+	}
 	serverMessage := &agentv1.AgentServerMessage{
 		Message: &agentv1.AgentServerMessage_ExecServerMessage{
 			ExecServerMessage: &agentv1.ExecServerMessage{
@@ -805,6 +813,8 @@ func (bridge *Bridge) openTask(openContext OpenExecContext, toolCall runtimecore
 						Prompt:               strings.TrimSpace(readStringArg(args, "prompt")),
 						Readonly:             readonly,
 						ResumeAgentId:        stringPtr(strings.TrimSpace(readStringArg(args, "resume"))),
+						RunInBackground:      runInBackground,
+						Interrupt:            interrupt,
 						ParentConversationId: stringPtrIfNonEmpty(parentConversationID),
 						Mode:                 taskModeFromReadonly(readonly),
 					},
@@ -1792,7 +1802,7 @@ func buildTaskCompletedToolCall(argsJSON []byte, result *agentv1.SubagentResult)
 		SubagentType: subagentTypeProtoFromString(strings.TrimSpace(readStringArg(args, "subagent_type", "subagentType"))),
 		Model:        stringPtr(strings.TrimSpace(readStringArg(args, "model"))),
 		Resume:       stringPtr(strings.TrimSpace(readStringArg(args, "resume"))),
-		Attachments:  readStringSliceArg(args, "attachments"),
+		Attachments:  readStringSliceArg(args, "attachments", "file_attachments", "fileAttachments"),
 		Mode:         taskModeFromReadonly(readonly),
 	}
 	if agentID := strings.TrimSpace(readStringArg(args, "agentId", "agent_id")); agentID != "" {

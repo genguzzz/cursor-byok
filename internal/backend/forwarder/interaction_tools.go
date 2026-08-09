@@ -219,6 +219,7 @@ type generateImageToolCarrier struct {
 	Description         string   `json:"description,omitempty"`
 	FilePath            string   `json:"file_path,omitempty"`
 	ReferenceImagePaths []string `json:"reference_image_paths,omitempty"`
+	AspectRatio         string   `json:"aspect_ratio,omitempty"`
 	ImageData           string   `json:"image_data,omitempty"`
 }
 
@@ -284,6 +285,7 @@ func decodeGenerateImageToolCarrier(raw []byte) (generateImageToolCarrier, error
 	}
 	carrier.Description = strings.TrimSpace(carrier.Description)
 	carrier.FilePath = strings.TrimSpace(carrier.FilePath)
+	carrier.AspectRatio = strings.TrimSpace(carrier.AspectRatio)
 	carrier.ImageData = strings.TrimSpace(carrier.ImageData)
 	carrier.ReferenceImagePaths = compactTrimmedStrings(carrier.ReferenceImagePaths)
 	return carrier, nil
@@ -311,6 +313,9 @@ func buildGenerateImageArgsFromCarrier(carrier generateImageToolCarrier) *agentv
 	if filePath := strings.TrimSpace(carrier.FilePath); filePath != "" {
 		args.FilePath = &filePath
 	}
+	if aspectRatio := strings.TrimSpace(carrier.AspectRatio); aspectRatio != "" {
+		args.AspectRatio = &aspectRatio
+	}
 	return args
 }
 
@@ -325,6 +330,9 @@ func encodeGenerateImageArgsForHistory(args *agentv1.GenerateImageArgs) []byte {
 		}
 		if referenceImagePaths := compactTrimmedStrings(args.GetReferenceImagePaths()); len(referenceImagePaths) > 0 {
 			payload["reference_image_paths"] = referenceImagePaths
+		}
+		if aspectRatio := strings.TrimSpace(args.GetAspectRatio()); aspectRatio != "" {
+			payload["aspect_ratio"] = aspectRatio
 		}
 	}
 	encoded, err := json.Marshal(payload)

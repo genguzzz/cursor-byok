@@ -18,6 +18,9 @@ LOG_FILE="$HOME/.cursor-local-assistant-v2/logs/app.log"
 CLI_LOG_FILE="$HOME/.cursor-local-assistant-v2/logs/cli-subprocess.log"
 INSTALL_PATH="/Applications/CursorLocalAssistant.app"
 
+# 开发构建：去掉符号表/DWARF，减小体积并略加速 link；关闭 VCS 戳避免每次 git 探测。
+GO_BUILD_FLAGS=(-tags cli -trimpath -buildvcs=false -ldflags='-s -w')
+
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -60,17 +63,24 @@ kill_existing() {
 build_all() {
     info "编译菜单栏程序 + CLI..."
     cd "$PROJECT_ROOT"
-    go build -tags cli -o "$APP_NAME" ./cmd/menubar 2>&1
-    go build -tags cli -o "$CLI_NAME" ./cmd/cli 2>&1
-    ok "编译完成: $APP_NAME + $CLI_NAME"
+    local t0 t1 t2
+    t0=$(date +%s)
+    go build "${GO_BUILD_FLAGS[@]}" -o "$APP_NAME" ./cmd/menubar 2>&1
+    t1=$(date +%s)
+    go build "${GO_BUILD_FLAGS[@]}" -o "$CLI_NAME" ./cmd/cli 2>&1
+    t2=$(date +%s)
+    ok "编译完成: $APP_NAME ($((t1 - t0))s, $(du -h "$APP_NAME" | awk '{print $1}')) + $CLI_NAME ($((t2 - t1))s, $(du -h "$CLI_NAME" | awk '{print $1}'))"
 }
 
 # ── 编译 CLI ───────────────────────────────────────────────────────────────
 build_cli() {
     info "编译 CLI..."
     cd "$PROJECT_ROOT"
-    go build -tags cli -o "$CLI_NAME" ./cmd/cli 2>&1
-    ok "编译完成: $CLI_NAME"
+    local t0 t1
+    t0=$(date +%s)
+    go build "${GO_BUILD_FLAGS[@]}" -o "$CLI_NAME" ./cmd/cli 2>&1
+    t1=$(date +%s)
+    ok "编译完成: $CLI_NAME ($((t1 - t0))s, $(du -h "$CLI_NAME" | awk '{print $1}'))"
 }
 
 # ── 调试运行菜单栏程序 ─────────────────────────────────────────────────────

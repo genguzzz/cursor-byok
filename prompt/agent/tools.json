@@ -330,7 +330,7 @@
             "type": "string"
           },
           "notify_on_output": {
-            "description": "Optional watcher for backgrounded command output. You will be notified at the end of your turn whenever output matches the regex pattern. Use stable sentinel lines and simple anchored regexes; do not match all output. Completion notifications are separate and do not require this field.",
+            "description": "Optional output notification config. ONLY set this when the user explicitly requests monitoring. Each terminal output which matches the pattern will notify you. Output redirected only to a file will not trigger it. Configure a 5-or-fewer-word `reason` explaining what you are watching for, and optionally configure `debounce_ms`.",
             "properties": {
               "pattern": {
                 "description": "Regex pattern to match against command output.",
@@ -368,7 +368,7 @@
     "type": "function",
     "function": {
       "name": "AwaitShell",
-      "description": "Check or poll a backgrounded shell job. Use this after Shell returns a shell_id. If shell_id is omitted, this waits for the requested block_until_ms duration and returns. Prefer not to poll reflexively; use it when the next step depends on the background job status or when doing a one-shot smoke check after block_until_ms: 0. Pattern matching checks accumulated stdout/stderr content, not terminal metadata.",
+      "description": "Check or poll a backgrounded shell job. For work that does not have a shell id, you can omit the `shell_id` arg to sleep for the full `block_until_ms` duration (prefer this over sleeping in the shell, because it renders nicely to the user). At the end of your turn, you will be notified about any unawaited jobs that completed. If you think a job completed (e.g. because you killed it), observe it with AwaitShell to skip the notification, because stale notifications can confuse the user.\n\nPrefer NOT to poll reflexively with AwaitShell. Multitask on independent work while backgrounded jobs run, or finish your turn and rely on the end-of-turn completion notification. Poll with AwaitShell only when one of the following is true:\n- Your very next step is blocked on this specific job's result and you have no other productive work to do (shell jobs only — never wait on a subagent), OR\n- The task requires close monitoring (see shell guidance below). Subagents are never a candidate for close monitoring.\n- Never poll a task whose tool result says it was \"manually backgrounded by the user\".\n- NEVER USE THIS TO POLL OR WAIT VACUOUSLY FOR A SUBAGENT LAUNCHED WITH THE Task TOOL — rely on the end-of-turn completion notification instead (it is delivered as soon as the subagent finishes; guessing a wait time is inefficient).\n- Subagents: never wait on a subagent with AwaitShell. Subagents are always notify-on-completion — multitask on independent work (or respond to the user if there is nothing else productive to do) and wait to be woken up. The only valid use of AwaitShell on a subagent is a non-blocking status check (`block_until_ms: 0`); never use it to block on the subagent finishing.\n- Shell: only poll with AwaitShell when the command requires close monitoring. Close monitoring means a long-running job that can silently hang, degrade, or need a course correction before it completes — e.g. training runs, eval runs, deployments, long builds, datagen pipelines, DB migrations, large data transfers. For fire-and-forget commands (tests, installs, dev servers/watchers, short scripts, etc.) the completion notification is enough — start them, keep working, and only poll with AwaitShell later if you end up blocked on the result.\n- Shell sanity check (regardless of close monitoring): when you spawn a command directly into the background (`block_until_ms: 0`), do a single status check by reading the output file to confirm the command didn't fail to start. This is a one-shot smoke check, not a polling loop.\n- Shell close-monitoring guidance (only applies in the close-monitoring case above):\n  - HARD STOPPING CONSTRAINT: once you've decided to actively poll, don't stop until (a) the job terminates, (b) the command reaches a healthy steady state (only for non-terminating commands, e.g. dev server/watcher), or (c) the command is hung — follow the hang guidance below.\n  - Waiting until a regex matches the output can be useful for e.g. known startup/status/error logs.\n  - Size `block_until_ms` to the command's expected runtime. When waiting further, avoid waiting 1h or more: prefer slices of 60s-59m (keeps prompt cache warm). Size slices based on expected progress; when progress is unclear, exponential backoff is useful.\n  - Output file header has `pid` and `running_for_ms` (updated every 5000ms).\n  - When finished, footer with `exit_code` and `elapsed_ms` appears (regex only matches the body, not header/footer).\n  - If the command is taking longer than expected and appears hung (use judgment based on command type), kill the process if safe to do so using the pid in the header. If possible, fix the hang and proceed.\n\nPattern matching checks accumulated stdout/stderr content, not terminal metadata.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -489,56 +489,81 @@
   },
   {
     "function": {
-      "description": "Launch a new agent to handle complex, multi-step tasks autonomously.\n\nThe Task tool launches specialized subagents (subprocesses) that autonomously handle complex tasks. Each subagent_type has specific capabilities and tools available to it.\n\nWhen using the Task tool, you must specify a subagent_type parameter to select which agent type to use.\n\nVERY IMPORTANT: When broadly exploring the codebase to gather context for a large task, it is recommended that you use the Task tool with subagent_type=\"explore\" instead of running search commands directly.\n\nIf the query is a narrow or specific question, you should NOT use the Task and instead address the query directly using the other tools available to you.\n\nExamples:\n- user: \"Where is the ClientError class defined?\" assistant: [Uses Grep directly - this is a needle query for a specific class]\n- user: \"Run this query using my database API\" assistant: [Calls the MCP directly - this is not a broad exploration task]\n- user: \"What is the codebase structure?\" assistant: [Uses the Task tool with subagent_type=\"explore\"]\n\nIf it is possible to explore different areas of the codebase in parallel, you should launch multiple agents concurrently.\n\nWhen NOT to use the Task tool:\n- Simple, single or few-step tasks that can be performed by a single agent (using parallel or sequential tool calls) -- just call the tools directly instead.\n- For example:\n  - If you want to read a specific file path, use the Read or Glob tool instead of the Task tool, to find the match more quickly\n  - If you are searching for code within a specific file or set of 2-3 files, use the Read tool instead of the Task tool, to find the match more quickly\n  - If you are searching for a specific class definition like \"class Foo\", use the Glob tool instead, to find the match more quickly\n\nUsage notes:\n- Always include a short description (3-5 words) summarizing what the agent will do\n- Launch multiple agents concurrently whenever possible, to maximize performance; to do that, use a single message with multiple tool uses. IMPORTANT: DO NOT launch more than 4 agents concurrently.\n- When the agent is done, it will return a single message back to you. Specify exactly what information the agent should return back in its final response to you. The result returned by the agent is not visible to the user. To show the user the result, you should send a text message back to the user with a concise summary of the result.\n- Agents can be resumed using the `resume` parameter by passing the agent ID from a previous invocation. This sends a follow-up message when the agent's turn is complete, preserving existing context. When NOT resuming, each invocation starts fresh and you should provide a detailed task description with all necessary context.\n- When using the Task tool, the subagent invocation does not have access to the user's message or prior assistant steps. Therefore, you should provide a highly detailed task description with all necessary context for the agent to perform its task autonomously.\n- The subagent's outputs should generally be trusted\n- Clearly tell the subagent which tasks you want it to perform, since it is not aware of the user's intent or your prior assistant steps (tool calls, thinking, or messages).\n- If the subagent description mentions that it should be used proactively, then you should try your best to use it without the user having to ask for it first. Use your judgement.\n- If the user specifies that they want you to run subagents \"in parallel\", you MUST send a single message with multiple Task tool use content blocks. For example, if you need to launch both a code-reviewer subagent and a test-runner subagent in parallel, send a single message with both tool calls.\n- Avoid delegating the full query to the Task tool and returning the result. In these cases, you should address the query using the other tools available to you.\n\nAvailable subagent_types and a quick description of what they do:\n- generalPurpose: General-purpose agent for researching complex questions, searching for code, and executing multi-step tasks. Use when searching for a keyword or file and not confident you'll find the match quickly.\n- explore: Fast agent specialized for exploring codebases. Use this when you need to quickly find files by patterns (eg. \"src/components/**/*.tsx\"), search code for keywords (eg. \"API endpoints\"), or answer questions about the codebase (eg. \"how do API endpoints work?\"). When calling this agent, specify the desired thoroughness level: \"quick\" for basic searches, \"medium\" for moderate exploration, or \"very thorough\" for comprehensive analysis across multiple locations and naming conventions.\n- shell: Command execution specialist for running bash commands. Use this for git operations, command execution, and other terminal tasks.\n- browser-use: Perform browser-based testing and web automation. This subagent can navigate web pages, interact with elements, fill forms, and take screenshots. Use this for testing web applications, verifying UI changes, or any browser-based tasks. Use this browser subagent when you need to either: (1) parallelize browser tasks alongside other work, or (2) execute a longer sequence of browser actions that benefit from dedicated context. For simple, single browser actions, you may use the browser tools directly. This subagent_type is stateful; if a browserUse subagent already exists, the previously created subagent will be resumed if you reuse the Task tool with subagent_type set to browserUse. (Auto-resumes most recent agent of this type; `resume` arg is ignored)\n\nAvailable models:\n- fast (cost: 1/10, intelligence: 5/10): Extremely fast, moderately intelligent model that is effective for tightly scoped changes. Not well-suited for long-horizon tasks or deep investigations.\n\nWhen speaking to the USER about which model you selected for a Task/subagent, do NOT reveal these internal model alias names. Instead, use natural language such as \"a faster model\", \"a more capable model\", or \"the default model\".\n\nWhen choosing a model, prefer `fast` for quick, straightforward tasks to minimize cost and latency. Only choose a named alternative model when there is a specific reason — for example, the task requires deep multi-step reasoning, very high code quality, multimodal understanding, or the user explicitly requests a more capable model.",
+      "description": "Launch a new agent to handle complex, multi-step tasks autonomously.\n\nThe Task tool launches specialized subagents (subprocesses) that autonomously handle complex tasks. Each subagent_type has specific capabilities and tools available to it.\n\nWhen using the Task tool, you must specify a subagent_type parameter to select which agent type to use.\n\nVERY IMPORTANT: When broadly exploring the codebase to gather context for a large task, it is recommended that you use the Task tool with subagent_type=\"explore\" instead of running search commands directly.\n\nIf the query is a narrow or specific question, you should NOT use the Task and instead address the query directly using the other tools available to you.\n\nExamples:\n- user: \"Where is the ClientError class defined?\" assistant: [Uses Grep directly - this is a needle query for a specific class]\n- user: \"Run this query using my database API\" assistant: [Calls the MCP directly - this is not a broad exploration task]\n- user: \"What is the codebase structure?\" assistant: [Uses the Task tool with subagent_type=\"explore\"]\n\nIf it is possible to explore different areas of the codebase in parallel, you should launch multiple agents concurrently.\n\nWhen NOT to use the Task tool:\n- Simple, single or few-step tasks that can be performed by a single agent (using parallel or sequential tool calls) -- just call the tools directly instead.\n- For example:\n  - If you want to read a specific file path, use the Read or Glob tool instead of the Task tool, to find the match more quickly\n  - If you are searching for code within a specific file or set of 2-3 files, use the Read tool instead of the Task tool, to find the match more quickly\n  - If you are searching for a specific class definition like \"class Foo\", use the Glob tool instead, to find the match more quickly\n\nUsage notes:\n- Always include a short description (3-5 words) summarizing what the agent will do\n- Launch multiple agents concurrently whenever possible, to maximize performance; to do that, use a single message with multiple tool uses.\n- When the agent is done, it will return a single message back to you. Specify exactly what information the agent should return back in its final response to you. Background subagent completion messages already include a user-visible summary portion; do not summarize or restate a single background subagent's result by default. Respond only when the user asks, multiple background subagents need synthesis, or the background subagent reports a blocker requiring parent action outside of the user-visible high level summary.\n- Agents can be resumed using the `resume` parameter by passing the agent ID from a previous invocation. This sends a follow-up message after the agent has completed, preserving existing context. If the agent is still running, the request fails unless `interrupt` is true. Set `interrupt` to true only when the user explicitly wants to interrupt the running agent. You can also set `resume` to \"self\" to fork the current parent agent into a new child subagent. When NOT resuming, each invocation starts fresh and you should provide a detailed task description with all necessary context.\n- In user-facing responses, you may link to agents and subagents with markdown chat links in the `[label](id)` format, using the agent ID as the link target. Do not print raw agent IDs separately.\n- When using the Task tool, the subagent invocation does not have access to the user's message or prior assistant steps. Therefore, you should provide a highly detailed task description with all necessary context for the agent to perform its task autonomously.\n- The subagent's outputs should generally be trusted\n- Clearly tell the subagent which tasks you want it to perform, since it is not aware of the user's intent or your prior assistant steps (tool calls, thinking, or messages).\n- If the subagent description mentions that it should be used proactively, then you should try your best to use it without the user having to ask for it first. Use your judgement.\n- If the user specifies that they want you to run subagents \"in parallel\", you MUST send a single message with multiple Task tool use content blocks. For example, if you need to launch both a code-reviewer subagent and a test-runner subagent in parallel, send a single message with both tool calls.\n- Avoid delegating the full query to the Task tool and returning the result. In these cases, you should address the query using the other tools available to you.\n\nAvailable subagent_types and a quick description of what they do:\n- generalPurpose: General-purpose agent for researching complex questions, searching for code, and executing multi-step tasks. Use when searching for a keyword or file and not confident you'll find the match quickly.\n- explore: Fast agent specialized for exploring codebases. Use this when you need to quickly find files by patterns (eg. \"src/components/**/*.tsx\"), search code for keywords (eg. \"API endpoints\"), or answer questions about the codebase (eg. \"how do API endpoints work?\"). When calling this agent, specify the desired thoroughness level: \"quick\" for basic searches, \"medium\" for moderate exploration, or \"very thorough\" for comprehensive analysis across multiple locations and naming conventions.\n- shell: Command execution specialist for running bash commands. Use this for git operations, command execution, and other terminal tasks.\n- browser-use: Perform browser-based testing and web automation. This subagent can navigate web pages, interact with elements, fill forms, and take screenshots. Use this for testing web applications, verifying UI changes, or any browser-based tasks. Use this browser subagent when you need to either: (1) parallelize browser tasks alongside other work, or (2) execute a longer sequence of browser actions that benefit from dedicated context. For simple, single browser actions, you may use the browser tools directly. This subagent_type is stateful; if a browserUse subagent already exists, the previously created subagent will be resumed if you reuse the Task tool with subagent_type set to browserUse. (Auto-resumes most recent agent of this type; `resume` arg is ignored)\n- cursor-guide: Read Cursor product documentation to answer questions about how Cursor Desktop, IDE, CLI, Cloud Agents, Bugbot, and other features work. Use when the user asks 'In Cursor, how do I...?' or similar questions about Cursor products.\n- ci-investigator: Investigate a single failing PR CI check and return a short root-cause summary. Use when the user asks to summarize, explain, diagnose, or investigate a specific failed check from a pull request.\n- bugbot: Use only when the user *explicitly* asks for a Bugbot-like review of local code changes. When launching this subagent, set the Task description to exactly \"Bugbot\". Launch exactly one Bugbot subagent with `run_in_background: false` unless the user explicitly asks to run in background.\n- security-review: Use only when the user *explicitly* asks for a security review of local code changes. When launching this subagent, set the Task description to exactly \"Security Review\". Launch exactly one security-review subagent with `run_in_background: false` unless the user explicitly asks to run in background.\n- best-of-n-runner: Run a task in an isolated git worktree. Each best-of-n-runner gets its own branch and working directory. Use for best-of-N parallel attempts or isolated experiments.\n\nIf the user explicitly asks for the model of a subagent/task, you may ONLY use model slugs from this list:\n- fast\n\nIf the user isn't asking for a specific version, prefer the latest version of the model family. As an example, if the user just says \"gpt\" or \"claude\", use the latest available version of GPT or Claude.\n\nIMPORTANT: If the user requests a model that is NOT in the list above, do NOT substitute a different model or guess. Instead, skip launching the subagent with that model and tell the user which model was unavailable and which models are available.\n\nWhen speaking to the USER about which model you selected for a subagent, do NOT use the kebab-case model names unless the user requested the model using that format. Use the same naming scheme the user used to discuss the model when they requested it.\n\nWhen choosing a model, prefer `fast` for quick, straightforward tasks to minimize cost and latency. Only choose a named alternative model when there is a specific reason — for example, the task requires deep multi-step reasoning, very high code quality, multimodal understanding, or the user explicitly requests a more capable model.\n\nWhen an agent runs in the background, you will be automatically notified when it completes after you end your own turn - do NOT AwaitShell, poll, or proactively check on its progress. Continue with other work or end your turn instead.\n",
       "name": "Task",
       "parameters": {
+        "type": "object",
         "properties": {
-          "attachments": {
-            "description": "Optional array of file paths to videos to pass to video-review subagents. Files are read and attached to the subagent's context. Supports video formats (mp4, webm) for Gemini models.",
-            "items": {
-              "type": "string"
-            },
-            "type": "array"
-          },
           "description": {
-            "description": "A short (3-5 word) description of the task",
-            "type": "string"
-          },
-          "model": {
-            "description": "Optional model to use for this agent. If not specified, inherits from parent. Prefer fast for quick, straightforward tasks to minimize cost and latency. Only select a different model when the task specifically benefits from it (e.g., deep reasoning, high-quality code review, multimodal input)",
-            "enum": [
-              "fast"
-            ],
+            "description": "A short, user-friendly title for the subagent. This appears in the UI as the subagent's name. Make it concrete and distinct, consider recent titles to avoid reuse. For resumed subagents which you are prompting to work on a separate task, give an updated description based on the latest work the subagent is performing. (Do not rename if the subagent is continuing work on the same high-level task.)",
             "type": "string"
           },
           "prompt": {
             "description": "The task for the agent to perform",
             "type": "string"
           },
-          "readonly": {
-            "description": "If true, the subagent will run in readonly mode (\"Ask mode\") with restricted write operations and no MCP access.",
-            "type": "boolean"
-          },
-          "resume": {
-            "description": "Optional agent ID to resume from. If provided, sends a follow-up message to the agent when its turn is complete.",
-            "type": "string"
-          },
           "subagent_type": {
-            "description": "Subagent type to use for this task. Must be one of: generalPurpose, explore, shell, browser-use.",
+            "description": "Subagent type to use for this task. Must be one of: generalPurpose, explore, shell, browser-use, cursor-guide, ci-investigator, bugbot, security-review, best-of-n-runner.",
             "enum": [
               "generalPurpose",
               "explore",
               "shell",
-              "browser-use"
+              "browser-use",
+              "cursor-guide",
+              "ci-investigator",
+              "bugbot",
+              "security-review",
+              "best-of-n-runner"
             ],
+            "type": "string"
+          },
+          "model": {
+            "description": "Optional model to use for this agent. If not specified, inherits from parent. Prefer fast for quick, straightforward tasks to minimize cost and latency. Only select a different model when the task specifically benefits from it. Do not pass if resume field is set (prior model will be used).",
+            "enum": [
+              "fast"
+            ],
+            "type": "string"
+          },
+          "resume": {
+            "description": "Optional agent ID to resume from. If provided, sends a follow-up message to the agent after it has completed. Requests to a currently running asynchronous agent fail unless `interrupt` is true; set `interrupt` to true only when you intend to interrupt the running agent. Use \"self\" to start a new agent with your own entire conversation history as a starting point (aka 'self-fork').",
+            "type": "string"
+          },
+          "interrupt": {
+            "description": "If true and `resume` targets a running async agent, interrupt the current run and send this prompt immediately. Only use when the user explicitly asks to interrupt or change what the running agent is doing.",
+            "type": "boolean"
+          },
+          "run_in_background": {
+            "description": "Run the agent in the background. If this is false, you will be blocked until the agent completes. When true, the background subagent will send a notification when it completes.",
+            "type": "boolean"
+          },
+          "readonly": {
+            "description": "Local extension: if true, the subagent will run in readonly mode (\"Ask mode\") with restricted write operations and no MCP access.",
+            "type": "boolean"
+          },
+          "attachments": {
+            "description": "Optional array of file paths to images or videos to pass to video-review subagents. Files are read and attached to the subagent's context. Use to forward relevant media (e.g. images sent by user) to subagents. Alias: file_attachments (official Zod name).",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "file_attachments": {
+            "description": "Official alias for attachments. Optional array of file paths to images or videos to pass to video-review subagents.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "agent_id": {
+            "description": "Local extension: optional pre-allocated agent id. Prefer omitting this and using the agent_id returned by Task success.",
             "type": "string"
           }
         },
         "required": [
           "description",
-          "prompt"
-        ],
-        "type": "object"
+          "prompt",
+          "subagent_type"
+        ]
       }
     },
     "type": "function"
@@ -596,7 +621,7 @@
   },
   {
     "function": {
-      "description": "Fetch content from a specified URL and return its contents in a readable markdown format. Use this tool when you need to retrieve and analyze webpage content.\n\n- The URL must be a fully-formed, valid URL.\n- This tool is read-only and will not work for requests intended to have side effects.\n- This fetch tries to return live public web results.\n- Authentication is not supported, and an error will be returned if the URL requires authentication.\n- If the URL is returning a non-200 status code, e.g. 404, the tool will not return the content and will instead return an error message.\n- This fetch uses a public-web-only backend fetch policy. Localhost, private IPs, and link-local addresses will not work.\n- This tool does not support fetching binary content, e.g. media or PDFs.\n- For static assets and non-webpage URLs, use the `Shell` tool instead.\n",
+      "description": "Fetch content from a specified URL and return its contents in a readable markdown format. Use this tool when you need to retrieve and analyze webpage content.\n\n- The URL must be a fully-formed, valid URL.\n- This tool is read-only and will not work for requests intended to have side effects.\n- This fetch tries to return live results but may return previously cached content.\n- Authentication is not supported, and an error will be returned if the URL requires authentication.\n- If the URL is returning a non-200 status code, e.g. 404, the tool will not return the content and will instead return an error message.\n- This fetch runs from an isolated server. Hosts like localhost or private IPs will not work.\n- This tool does not support fetching binary content, e.g. media or PDFs.\n- For static assets and non-webpage URLs, use the Shell tool instead.",
       "name": "WebFetch",
       "parameters": {
         "properties": {
@@ -615,7 +640,7 @@
   },
   {
     "function": {
-      "description": "Search the web for real-time information about any topic. Returns summarized information from search results and relevant URLs.\n\nUse this tool when you need up-to-date information that might not be available or correct in your training data, or when you need to verify current facts.\nThis includes queries about:\n- Libraries, frameworks, and tools whose APIs, best practices, or usage instructions are frequently updated. (\"How do I run Postgres in a container?\")\n- Current events or technology news. (\"Which AI model is best for coding?\")\n- Informational queries similar to what you might Google (\"kubernetes operator for mysql\")\n\nIMPORTANT - Use the correct year in search queries:\n- Today's date is 2026-03-14. You MUST use this year when searching for recent information, documentation, or current events.\n- Example: If today is 2026-07-15 and the user asks for \"latest React docs\", search for \"React documentation 2026\", NOT \"React documentation 2025\"",
+      "description": "Search the web for real-time information about any topic. Returns summarized information from search results and relevant URLs.\n\nUse this tool when you need up-to-date information that might not be available or correct in your training data, or when you need to verify current facts.\nThis includes queries about:\n- Libraries, frameworks, and tools whose APIs, best practices, or usage instructions are frequently updated. (\"How do I run Postgres in a container?\")\n- Current events or technology news. (\"Which AI model is best for coding?\")\n- Informational queries similar to what you might Google (\"kubernetes operator for mysql\")\n\nIMPORTANT - Use the correct year in search queries:\n- Use the year from Today's date in the current user_info / request context. You MUST use that year when searching for recent information, documentation, or current events.\n- Example: If today's date is 2026-08-09 and the user asks for \"latest React docs\", search for \"React documentation 2026\", NOT \"React documentation 2025\".",
       "name": "WebSearch",
       "parameters": {
         "properties": {
@@ -662,21 +687,39 @@
   },
   {
     "function": {
-      "description": "Generate or display an image using Cursor's native image result flow. Use this when the model already has generated image data to return. The image must be provided as raw base64 in image_data; the backend maps it to Cursor's native GenerateImageResult.success.image_data for display. Do not use markdown images, data URLs, or custom image/file URL protocols.",
+      "description": "Generate an image file from a text description.\n\nSTRICT INVOCATION RULES (must follow):\n- Only use this tool when the user explicitly asks for an image. Do not generate images \"just to be helpful\".\n- Do not use this tool for data heavy visualizations such as charts, plots, tables.\n\nGeneral guidelines:\n- Provide a concrete description first: subject(s), layout, style, colors, text (if any), and constraints.\n- If the user requests an aspect ratio, set `aspect_ratio` to one of \"1:1\", \"4:3\", \"3:4\", \"16:9\", or \"9:16\".\n- If the user provides reference images, include them in `reference_image_paths`.\n- Do not repeat generated images as Markdown in your response; the client displays tool-generated images automatically.\n- Local BYOK note: this runtime completes the tool via a display carrier that requires `image_data` (raw base64, no data-URL prefix) plus optional `file_path`. This is intentionally different from the official cloud GenerateImage request flow that returns a generated file without model-supplied image bytes.\n\nExamples that should call this tool:\n- user: \"Generate an app icon for a note-taking app, minimal flat vector style.\" (explicitly requests an image asset)\n- user: \"Make a UI mockup of a settings screen with a dark mode toggle.\" (explicitly requests a UI mockup)\n- user: \"Generate an asset of a game character with a sword.\" (explicitly requests a visual asset)\n\nExamples that should not call this tool:\n- user: \"Create a plan to refactor this module.\" (planning request; respond in text or mermaid diagram)\n- user: \"Generate a chart of sales and revenue using data.csv.\" (data visualization; generate via code)",
       "name": "GenerateImage",
       "parameters": {
         "properties": {
           "description": {
-            "description": "Optional description of the generated image or the user's image generation intent.",
+            "description": "A detailed description of the image.",
             "type": "string"
           },
           "file_path": {
-            "description": "Optional target file path if the user explicitly requested one.",
+            "description": "Optional local filename/path for the displayed image artifact (BYOK carrier path).",
             "type": "string"
           },
           "image_data": {
-            "description": "Raw base64 image data for the generated image. Do not include a data:image/...;base64, prefix.",
+            "description": "Required for local BYOK completion path: raw base64 image bytes without a data URL prefix.",
             "type": "string"
+          },
+          "aspect_ratio": {
+            "description": "Optional aspect ratio for the generated image. Supported values are \"1:1\", \"4:3\", \"3:4\", \"16:9\", and \"9:16\".",
+            "enum": [
+              "1:1",
+              "4:3",
+              "3:4",
+              "16:9",
+              "9:16"
+            ],
+            "type": "string"
+          },
+          "reference_image_paths": {
+            "description": "Optional array of file paths to reference images as additional inputs.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
           }
         },
         "type": "object"

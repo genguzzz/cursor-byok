@@ -793,7 +793,7 @@ func buildTaskArgsFromMap(payload map[string]any) *agentv1.TaskArgs {
 		SubagentType: subagentTypeFromString(
 			strings.TrimSpace(stringValue(valueByAlias(payload, "subagent_type", "subagentType"))),
 		),
-		Attachments: stringSliceValue(valueByAlias(payload, "attachments")),
+		Attachments: stringSliceValue(valueByAlias(payload, "attachments", "file_attachments", "fileAttachments")),
 		Mode:        taskModeFromReadonly(boolValue(valueByAlias(payload, "readonly", "readOnly"))),
 	}
 	if model := strings.TrimSpace(stringValue(valueByAlias(payload, "model"))); model != "" {

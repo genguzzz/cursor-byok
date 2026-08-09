@@ -10,7 +10,6 @@ import (
 	"connectrpc.com/connect"
 
 	"cursor/gen/aiserverv1"
-	"cursor/gen/aiserverv1/aiserverv1connect"
 )
 
 type usageLookupRecord struct {
@@ -19,9 +18,29 @@ type usageLookupRecord struct {
 	CreatedAt    time.Time
 }
 
+// Procedure path constants only — do not import gen/aiserverv1/aiserverv1connect.
+// That generated package is ~30k LoC of unused client/handler stubs and dominates cold compile time.
 const (
 	dashboardServiceGetTokenUsageProcedure                  = "/aiserver.v1.DashboardService/GetTokenUsage"
 	dashboardServiceGetGlassEarlyPreviewEnrollmentProcedure = "/aiserver.v1.DashboardService/GetGlassEarlyPreviewEnrollment"
+	aiServiceCountTokensProcedure                           = "/aiserver.v1.AiService/CountTokens"
+	aiServiceGetThoughtAnnotationProcedure                  = "/aiserver.v1.AiService/GetThoughtAnnotation"
+	aiServiceWriteGitCommitMessageProcedure                 = "/aiserver.v1.AiService/WriteGitCommitMessage"
+	aiServiceCreateExperimentalIndexProcedure               = "/aiserver.v1.AiService/CreateExperimentalIndex"
+	aiServiceListExperimentalIndexFilesProcedure            = "/aiserver.v1.AiService/ListExperimentalIndexFiles"
+	aiServiceListenExperimentalIndexProcedure               = "/aiserver.v1.AiService/ListenExperimentalIndex"
+	aiServiceRegisterFileToIndexProcedure                   = "/aiserver.v1.AiService/RegisterFileToIndex"
+	aiServiceSetupIndexDependenciesProcedure                = "/aiserver.v1.AiService/SetupIndexDependencies"
+	aiServiceComputeIndexTopoSortProcedure                  = "/aiserver.v1.AiService/ComputeIndexTopoSort"
+	aiServiceDocumentationQueryProcedure                    = "/aiserver.v1.AiService/DocumentationQuery"
+	aiServiceAvailableDocsProcedure                         = "/aiserver.v1.AiService/AvailableDocs"
+	aiServiceKnowledgeBaseAddProcedure                      = "/aiserver.v1.AiService/KnowledgeBaseAdd"
+	aiServiceKnowledgeBaseListProcedure                     = "/aiserver.v1.AiService/KnowledgeBaseList"
+	aiServiceKnowledgeBaseRemoveProcedure                   = "/aiserver.v1.AiService/KnowledgeBaseRemove"
+	aiServiceKnowledgeBaseUpdateProcedure                   = "/aiserver.v1.AiService/KnowledgeBaseUpdate"
+	aiServiceFetchRelevantKnowledgeForConversationProcedure = "/aiserver.v1.AiService/FetchRelevantKnowledgeForConversation"
+	aiServiceNameTabProcedure                               = "/aiserver.v1.AiService/NameTab"
+	aiServiceNameAgentProcedure                             = "/aiserver.v1.AiService/NameAgent"
 )
 
 func newAIHandler(service *Service) http.Handler {
@@ -35,76 +54,76 @@ func newAIHandler(service *Service) http.Handler {
 		connect.NewUnaryHandler(dashboardServiceGetGlassEarlyPreviewEnrollmentProcedure, service.GetGlassEarlyPreviewEnrollment),
 	)
 	mux.Handle(
-		aiserverv1connect.AiServiceCountTokensProcedure,
-		connect.NewUnaryHandler(aiserverv1connect.AiServiceCountTokensProcedure, service.CountTokens),
+		aiServiceCountTokensProcedure,
+		connect.NewUnaryHandler(aiServiceCountTokensProcedure, service.CountTokens),
 	)
 	mux.Handle(
-		aiserverv1connect.AiServiceGetThoughtAnnotationProcedure,
-		connect.NewUnaryHandler(aiserverv1connect.AiServiceGetThoughtAnnotationProcedure, service.GetThoughtAnnotation),
+		aiServiceGetThoughtAnnotationProcedure,
+		connect.NewUnaryHandler(aiServiceGetThoughtAnnotationProcedure, service.GetThoughtAnnotation),
 	)
 	mux.Handle(
-		aiserverv1connect.AiServiceWriteGitCommitMessageProcedure,
-		connect.NewUnaryHandler(aiserverv1connect.AiServiceWriteGitCommitMessageProcedure, service.WriteGitCommitMessage),
+		aiServiceWriteGitCommitMessageProcedure,
+		connect.NewUnaryHandler(aiServiceWriteGitCommitMessageProcedure, service.WriteGitCommitMessage),
 	)
 	mux.Handle(
-		aiserverv1connect.AiServiceCreateExperimentalIndexProcedure,
-		connect.NewUnaryHandler(aiserverv1connect.AiServiceCreateExperimentalIndexProcedure, service.CreateExperimentalIndex),
+		aiServiceCreateExperimentalIndexProcedure,
+		connect.NewUnaryHandler(aiServiceCreateExperimentalIndexProcedure, service.CreateExperimentalIndex),
 	)
 	mux.Handle(
-		aiserverv1connect.AiServiceListExperimentalIndexFilesProcedure,
-		connect.NewUnaryHandler(aiserverv1connect.AiServiceListExperimentalIndexFilesProcedure, service.ListExperimentalIndexFiles),
+		aiServiceListExperimentalIndexFilesProcedure,
+		connect.NewUnaryHandler(aiServiceListExperimentalIndexFilesProcedure, service.ListExperimentalIndexFiles),
 	)
 	mux.Handle(
-		aiserverv1connect.AiServiceListenExperimentalIndexProcedure,
-		connect.NewServerStreamHandler(aiserverv1connect.AiServiceListenExperimentalIndexProcedure, service.ListenExperimentalIndex),
+		aiServiceListenExperimentalIndexProcedure,
+		connect.NewServerStreamHandler(aiServiceListenExperimentalIndexProcedure, service.ListenExperimentalIndex),
 	)
 	mux.Handle(
-		aiserverv1connect.AiServiceRegisterFileToIndexProcedure,
-		connect.NewUnaryHandler(aiserverv1connect.AiServiceRegisterFileToIndexProcedure, service.RegisterFileToIndex),
+		aiServiceRegisterFileToIndexProcedure,
+		connect.NewUnaryHandler(aiServiceRegisterFileToIndexProcedure, service.RegisterFileToIndex),
 	)
 	mux.Handle(
-		aiserverv1connect.AiServiceSetupIndexDependenciesProcedure,
-		connect.NewUnaryHandler(aiserverv1connect.AiServiceSetupIndexDependenciesProcedure, service.SetupIndexDependencies),
+		aiServiceSetupIndexDependenciesProcedure,
+		connect.NewUnaryHandler(aiServiceSetupIndexDependenciesProcedure, service.SetupIndexDependencies),
 	)
 	mux.Handle(
-		aiserverv1connect.AiServiceComputeIndexTopoSortProcedure,
-		connect.NewUnaryHandler(aiserverv1connect.AiServiceComputeIndexTopoSortProcedure, service.ComputeIndexTopoSort),
+		aiServiceComputeIndexTopoSortProcedure,
+		connect.NewUnaryHandler(aiServiceComputeIndexTopoSortProcedure, service.ComputeIndexTopoSort),
 	)
 	mux.Handle(
-		aiserverv1connect.AiServiceDocumentationQueryProcedure,
-		connect.NewUnaryHandler(aiserverv1connect.AiServiceDocumentationQueryProcedure, service.DocumentationQuery),
+		aiServiceDocumentationQueryProcedure,
+		connect.NewUnaryHandler(aiServiceDocumentationQueryProcedure, service.DocumentationQuery),
 	)
 	mux.Handle(
-		aiserverv1connect.AiServiceAvailableDocsProcedure,
-		connect.NewUnaryHandler(aiserverv1connect.AiServiceAvailableDocsProcedure, service.AvailableDocs),
+		aiServiceAvailableDocsProcedure,
+		connect.NewUnaryHandler(aiServiceAvailableDocsProcedure, service.AvailableDocs),
 	)
 	mux.Handle(
-		aiserverv1connect.AiServiceKnowledgeBaseAddProcedure,
-		connect.NewUnaryHandler(aiserverv1connect.AiServiceKnowledgeBaseAddProcedure, service.KnowledgeBaseAdd),
+		aiServiceKnowledgeBaseAddProcedure,
+		connect.NewUnaryHandler(aiServiceKnowledgeBaseAddProcedure, service.KnowledgeBaseAdd),
 	)
 	mux.Handle(
-		aiserverv1connect.AiServiceKnowledgeBaseListProcedure,
-		connect.NewUnaryHandler(aiserverv1connect.AiServiceKnowledgeBaseListProcedure, service.KnowledgeBaseList),
+		aiServiceKnowledgeBaseListProcedure,
+		connect.NewUnaryHandler(aiServiceKnowledgeBaseListProcedure, service.KnowledgeBaseList),
 	)
 	mux.Handle(
-		aiserverv1connect.AiServiceKnowledgeBaseRemoveProcedure,
-		connect.NewUnaryHandler(aiserverv1connect.AiServiceKnowledgeBaseRemoveProcedure, service.KnowledgeBaseRemove),
+		aiServiceKnowledgeBaseRemoveProcedure,
+		connect.NewUnaryHandler(aiServiceKnowledgeBaseRemoveProcedure, service.KnowledgeBaseRemove),
 	)
 	mux.Handle(
-		aiserverv1connect.AiServiceKnowledgeBaseUpdateProcedure,
-		connect.NewUnaryHandler(aiserverv1connect.AiServiceKnowledgeBaseUpdateProcedure, service.KnowledgeBaseUpdate),
+		aiServiceKnowledgeBaseUpdateProcedure,
+		connect.NewUnaryHandler(aiServiceKnowledgeBaseUpdateProcedure, service.KnowledgeBaseUpdate),
 	)
 	mux.Handle(
-		aiserverv1connect.AiServiceFetchRelevantKnowledgeForConversationProcedure,
-		connect.NewUnaryHandler(aiserverv1connect.AiServiceFetchRelevantKnowledgeForConversationProcedure, service.FetchRelevantKnowledgeForConversation),
+		aiServiceFetchRelevantKnowledgeForConversationProcedure,
+		connect.NewUnaryHandler(aiServiceFetchRelevantKnowledgeForConversationProcedure, service.FetchRelevantKnowledgeForConversation),
 	)
 	mux.Handle(
-		aiserverv1connect.AiServiceNameTabProcedure,
-		connect.NewUnaryHandler(aiserverv1connect.AiServiceNameTabProcedure, service.NameTab),
+		aiServiceNameTabProcedure,
+		connect.NewUnaryHandler(aiServiceNameTabProcedure, service.NameTab),
 	)
 	mux.Handle(
-		aiserverv1connect.AiServiceNameAgentProcedure,
-		connect.NewUnaryHandler(aiserverv1connect.AiServiceNameAgentProcedure, service.NameAgent),
+		aiServiceNameAgentProcedure,
+		connect.NewUnaryHandler(aiServiceNameAgentProcedure, service.NameAgent),
 	)
 	mux.Handle("/", http.NotFoundHandler())
 	return mux
