@@ -648,6 +648,7 @@ func (service *Service) decodeInboundIntent(requestID string, message *agentv1.A
 		if err != nil {
 			return InboundIntent{}, err
 		}
+		_ = ApplyEffectiveChildRunModel(message)
 		intent.ModelID = extractRequestedModelID(message)
 		intent.ThinkingEffort = extractRuntimeThinkingEffort(message)
 		intent.SubagentTypeName = strings.TrimSpace(runRequest.GetSubagentTypeName())
@@ -683,6 +684,7 @@ func (service *Service) decodeInboundIntent(requestID string, message *agentv1.A
 		if err != nil {
 			return InboundIntent{}, err
 		}
+		_ = ApplyEffectiveChildRunModel(message)
 		intent.ModelID = firstNonEmpty(extractRequestedModelID(message), "default")
 		intent.ThinkingEffort = extractRuntimeThinkingEffort(message)
 		intent.ModelName = service.resolveRequestedModelName(message, intent.ModelID)

@@ -143,3 +143,41 @@ func unwrapConnectUnary(body []byte) ([]byte, error) {
 	}
 	return decoded, nil
 }
+
+// encodeRequestProtoPayload 把 protobuf 编成与原请求形态匹配的 unary body（不压缩）。
+func encodeRequestProtoPayload(contentType string, originalBody []byte, message proto.Message) ([]byte, string, error) {
+	if message == nil {
+		return nil, "", fmt.Errorf("nil proto message")
+	}
+	raw, err := proto.Marshal(message)
+	if err != nil {
+		return nil, "", err
+	}
+	normalized := strings.ToLower(strings.TrimSpace(contentType))
+	useConnect := strings.Contains(normalized, "connect") || looksLikeConnectFrame(originalBody)
+	if useConnect {
+		outType := "application/connect+proto"
+		if strings.Contains(normalized, "json") {
+			outType = firstNonEmptyContentType(contentType, outType)
+		}
+		return wrapConnectUnary(raw), outType, nil
+	}
+	return raw, firstNonEmptyContentType(contentType, "application/proto"), nil
+}
+
+func wrapConnectUnary(payload []byte) []byte {
+	frame := make([]byte, 5+len(payload))
+	frame[0] = 0
+	binary.BigEndian.PutUint32(frame[1:5], uint32(len(payload)))
+	copy(frame[5:], payload)
+	return frame
+}
+
+func firstNonEmptyContentType(values ...string) string {
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
+	}
+	return "application/proto"
+}

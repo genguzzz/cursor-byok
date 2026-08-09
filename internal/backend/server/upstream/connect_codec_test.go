@@ -118,3 +118,26 @@ func TestDecodeProtoPayloadConnectJSON(t *testing.T) {
 		t.Fatalf("json request id = %q", decoded.GetRequestId())
 	}
 }
+
+func TestEncodeRequestProtoPayloadConnectRoundTrip(t *testing.T) {
+	message := &aiserverv1.BidiRequestId{RequestId: "req-encode"}
+	raw, err := proto.Marshal(message)
+	if err != nil {
+		t.Fatal(err)
+	}
+	frame := wrapConnectUnary(raw)
+	encoded, contentType, err := encodeRequestProtoPayload("application/connect+proto", frame, message)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if contentType != "application/connect+proto" {
+		t.Fatalf("content-type = %q", contentType)
+	}
+	decoded := &aiserverv1.BidiRequestId{}
+	if err := decodeProtoPayload(contentType, encoded, decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded.GetRequestId() != "req-encode" {
+		t.Fatalf("request id = %q", decoded.GetRequestId())
+	}
+}

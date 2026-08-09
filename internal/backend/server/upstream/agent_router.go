@@ -2,9 +2,11 @@ package upstream
 
 import (
 	"bytes"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -16,6 +18,8 @@ import (
 	"cursor/internal/backend/server"
 	"cursor/internal/logger"
 	legacyruntime "cursor/internal/runtime"
+
+	"google.golang.org/protobuf/proto"
 )
 
 const defaultRunSSEClassifyWait = 2 * time.Second
@@ -219,12 +223,18 @@ func (router *AgentRouter) classifyBidi(reqCtx *RequestContext) (AgentBackend, e
 	if requestID == "" {
 		return AgentBackendUpstream, fmt.Errorf("request_id is required")
 	}
-	if backend, ok := router.table.Lookup(requestID); ok {
-		return backend, nil
-	}
 	message, _, err := protocol.DecodeAgentClientMessage(appendReq.GetData())
 	if err != nil {
 		return AgentBackendUpstream, err
+	}
+	if forwarder.ApplyEffectiveChildRunModel(message) {
+		if err := rewriteBidiAppendAgentMessage(reqCtx, body, appendReq, message); err != nil {
+			return AgentBackendUpstream, fmt.Errorf("rewrite child run model: %w", err)
+		}
+		logger.Infof("mixed agent child model rewritten request_id=%s model_id=%s", requestID, forwarder.ExtractRequestedModelID(message))
+	}
+	if backend, ok := router.table.Lookup(requestID); ok {
+		return backend, nil
 	}
 	backend := router.classifyMessage(reqCtx, message)
 	modelID := forwarder.ExtractRequestedModelID(message)
@@ -238,8 +248,41 @@ func (router *AgentRouter) classifyBidi(reqCtx *RequestContext) (AgentBackend, e
 	return backend, nil
 }
 
+func rewriteBidiAppendAgentMessage(reqCtx *RequestContext, originalBody []byte, appendReq *aiserverv1.BidiAppendRequest, message *agentv1.AgentClientMessage) error {
+	if reqCtx == nil || appendReq == nil || message == nil {
+		return fmt.Errorf("rewrite inputs are required")
+	}
+	raw, err := proto.Marshal(message)
+	if err != nil {
+		return err
+	}
+	appendReq.Data = hex.EncodeToString(raw)
+	encoded, contentType, err := encodeRequestProtoPayload(reqCtx.ContentType, originalBody, appendReq)
+	if err != nil {
+		return err
+	}
+	reqCtx.RequestBody = encoded
+	reqCtx.ContentType = contentType
+	if reqCtx.Headers == nil {
+		reqCtx.Headers = make(http.Header)
+	}
+	reqCtx.Headers.Set("Content-Type", contentType)
+	reqCtx.Headers.Del("Content-Encoding")
+	reqCtx.Headers.Set("Content-Length", strconv.Itoa(len(encoded)))
+	if reqCtx.Request != nil {
+		if reqCtx.Request.Header == nil {
+			reqCtx.Request.Header = make(http.Header)
+		}
+		reqCtx.Request.Header.Set("Content-Type", contentType)
+		reqCtx.Request.Header.Del("Content-Encoding")
+		reqCtx.Request.Header.Set("Content-Length", strconv.Itoa(len(encoded)))
+		reqCtx.Request.ContentLength = int64(len(encoded))
+	}
+	return nil
+}
+
 func (router *AgentRouter) classifyMessage(reqCtx *RequestContext, message *agentv1.AgentClientMessage) AgentBackend {
-	modelID := forwarder.ExtractRequestedModelID(message)
+	modelID := forwarder.ExtractEffectiveRunModelID(message)
 	adapters, err := loadConfiguredModelAdapters(reqCtx)
 	if err != nil {
 		adapters = nil
@@ -288,7 +331,7 @@ func peekRunSSERequestID(reqCtx *RequestContext) (string, error) {
 }
 
 // matchesLocalAdapter 仅按渠道 hash（adapter.ID）判定，避免 provider modelID
-//（如 composer-2.5）劫持官方同名模型。CLI 的 GetUsableModels.modelId 也是渠道 hash。
+// （如 composer-2.5）劫持官方同名模型。CLI 的 GetUsableModels.modelId 也是渠道 hash。
 func matchesLocalAdapter(modelID string, adapters []legacyruntime.ModelAdapterConfig) bool {
 	channels := make(map[string]struct{}, len(adapters))
 	for _, adapter := range adapters {
