@@ -11,7 +11,8 @@
 - (void)toggleProxyAction:(id)sender { menuCallback(4); }
 - (void)restoreAuthAction:(id)sender { menuCallback(5); }
 - (void)toggleDebugAction:(id)sender { menuCallback(6); }
-- (void)toggleDebugLogAction:(id)sender { menuCallback(7); }
+// 调试日志已与调试模式合并，由调试模式开关同时控制。
+// - (void)toggleDebugLogAction:(id)sender { menuCallback(7); }
 @end
 
 static NSStatusItem   *g_statusItem    = nil;
@@ -19,7 +20,8 @@ static NSMenuItem     *g_localModeItem = nil;
 static NSMenuItem     *g_statusDisplay = nil;
 static NSMenuItem     *g_proxyItem     = nil;
 static NSMenuItem     *g_debugItem     = nil;
-static NSMenuItem     *g_debugLogItem  = nil;
+// 调试日志菜单项已移除（与调试模式合并）
+// static NSMenuItem     *g_debugLogItem  = nil;
 static MenuHandler    *g_handler       = nil;
 
 void setupMenubar() {
@@ -90,11 +92,12 @@ void setupMenubar() {
         }
     }
 
-    g_debugLogItem = [menu addItemWithTitle:@"调试日志"
-                                     action:@selector(toggleDebugLogAction:)
-                              keyEquivalent:@""];
-    [g_debugLogItem setTarget:g_handler];
-    [g_debugLogItem setState:NSControlStateValueOff];
+// 调试日志菜单项已移除（与调试模式合并，由调试模式开关同时控制）
+//     g_debugLogItem = [menu addItemWithTitle:@"调试日志"
+//                                      action:@selector(toggleDebugLogAction:)
+//                               keyEquivalent:@""];
+//     [g_debugLogItem setTarget:g_handler];
+//     [g_debugLogItem setState:NSControlStateValueOff];
 
     [menu addItem:[NSMenuItem separatorItem]];
 
@@ -154,10 +157,11 @@ void setDebugMenuItemEnabled(int enabled) {
     });
 }
 
-void setDebugLogMenuItemEnabled(int enabled) {
-    dispatch_async(dispatch_get_main_queue(), ^{
-        if (g_debugLogItem) {
-            [g_debugLogItem setState:(enabled ? NSControlStateValueOn : NSControlStateValueOff)];
-        }
-    });
-}
+// 调试日志菜单项已移除（与调试模式合并）
+// void setDebugLogMenuItemEnabled(int enabled) {
+//     dispatch_async(dispatch_get_main_queue(), ^{
+//         if (g_debugLogItem) {
+//             [g_debugLogItem setState:(enabled ? NSControlStateValueOn : NSControlStateValueOff)];
+//         }
+//     });
+// }

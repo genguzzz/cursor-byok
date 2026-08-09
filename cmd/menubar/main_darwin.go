@@ -14,7 +14,8 @@ extern void stopEventLoop();
 extern void updateMenubarStatus(const char *status, int running, int busy);
 extern void setProxyMenuItemEnabled(int enabled);
 extern void setDebugMenuItemEnabled(int enabled);
-extern void setDebugLogMenuItemEnabled(int enabled);
+// 调试日志菜单项已移除（与调试模式合并）
+// extern void setDebugLogMenuItemEnabled(int enabled);
 */
 import "C"
 
@@ -79,9 +80,10 @@ func main() {
 	proxyEnabled = readProxyEnabled()
 	C.setProxyMenuItemEnabled(boolToInt(proxyEnabled))
 
-	debugLogEnabled := readDebugLogEnabled()
-	logger.SetDebugEnabled(debugLogEnabled)
-	C.setDebugLogMenuItemEnabled(boolToInt(debugLogEnabled))
+	// 调试日志已与调试模式合并，由调试模式开关同时控制
+	// debugLogEnabled := readDebugLogEnabled()
+	// logger.SetDebugEnabled(debugLogEnabled)
+	// C.setDebugLogMenuItemEnabled(boolToInt(debugLogEnabled))
 
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
@@ -120,8 +122,9 @@ func handleActions() {
 		case 6:
 			toggleDebug()
 			C.setDebugMenuItemEnabled(boolToInt(isDebugEnabled()))
-		case 7:
-			toggleDebugLog()
+// 调试日志已与调试模式合并，由 toggleDebug() 同时控制
+// 		case 7:
+// 			toggleDebugLog()
 		}
 	}
 }
@@ -145,29 +148,30 @@ func toggleProxy() {
 	}
 }
 
-func readDebugLogEnabled() bool {
-	enabled, err := readDebugLogEnabledFromFile(configPath())
-	if err != nil {
-		logger.Errorf("read debug log config failed: %v", err)
-		return false
-	}
-	return enabled
-}
-
-func toggleDebugLog() {
-	next := !logger.DebugEnabled()
-	if err := writeDebugLogEnabledToFile(configPath(), next); err != nil {
-		logger.Errorf("write debug log config failed: %v", err)
-		return
-	}
-	logger.SetDebugEnabled(next)
-	C.setDebugLogMenuItemEnabled(boolToInt(next))
-	if next {
-		logger.Infof("调试日志已开启（写入 app.log；含 shell 流式诊断）")
-	} else {
-		logger.Infof("调试日志已关闭")
-	}
-}
+// 调试日志已与调试模式合并，由 debug_toggle.go 中的 startDebugLocked / stopDebugLocked 统一控制
+// func readDebugLogEnabled() bool {
+// 	enabled, err := readDebugLogEnabledFromFile(configPath())
+// 	if err != nil {
+// 		logger.Errorf("read debug log config failed: %v", err)
+// 		return false
+// 	}
+// 	return enabled
+// }
+//
+// func toggleDebugLog() {
+// 	next := !logger.DebugEnabled()
+// 	if err := writeDebugLogEnabledToFile(configPath(), next); err != nil {
+// 		logger.Errorf("write debug log config failed: %v", err)
+// 		return
+// 	}
+// 	logger.SetDebugEnabled(next)
+// 	C.setDebugLogMenuItemEnabled(boolToInt(next))
+// 	if next {
+// 		logger.Infof("调试日志已开启（写入 app.log；含 shell 流式诊断）")
+// 	} else {
+// 		logger.Infof("调试日志已关闭")
+// 	}
+// }
 
 func quitApp() {
 	quitOnce.Do(func() {

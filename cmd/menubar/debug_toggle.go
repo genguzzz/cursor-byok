@@ -109,6 +109,14 @@ func startDebugLocked(openBrowserTab bool) bool {
 	logger.Infof("menubar: 调试代理已启动 proxy=%s ui=%s upstream=%q",
 		server.ProxyAddr(), server.UIURL(), upstream)
 
+	// 调试模式下同时开启调试日志（写入 app.log；含 shell 流式诊断）
+	if err := writeDebugLogEnabledToFile(configPath(), true); err != nil {
+		logger.Errorf("menubar: write debug log config failed: %v", err)
+	} else {
+		logger.SetDebugEnabled(true)
+		logger.Infof("调试日志已开启")
+	}
+
 	if openBrowserTab {
 		_ = browser.OpenURL(server.UIURL())
 	}
@@ -162,6 +170,13 @@ func stopDebugLocked(restoreProxy bool) {
 		logger.Infof("menubar: 调试代理已停止")
 	}
 	debugState.enabled = false
+
+	// 关闭调试模式时同时关闭调试日志
+	if err := writeDebugLogEnabledToFile(configPath(), false); err != nil {
+		logger.Errorf("menubar: write debug log config failed: %v", err)
+	} else {
+		logger.SetDebugEnabled(false)
+	}
 
 	if !restoreProxy {
 		return
