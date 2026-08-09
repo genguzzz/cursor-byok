@@ -61,6 +61,9 @@ func copyLegacyRules(sourceRoot string, targetRoot string) {
 }
 
 func copyLegacyFile(sourcePath string, targetPath string) {
+	if _, err := os.Stat(targetPath); err == nil {
+		return
+	}
 	sourceFile, err := os.Open(sourcePath)
 	if err != nil {
 		return
@@ -71,13 +74,9 @@ func copyLegacyFile(sourcePath string, targetPath string) {
 	if err != nil || !info.Mode().IsRegular() {
 		return
 	}
-	if err := os.MkdirAll(filepath.Dir(targetPath), 0o755); err != nil {
-		return
-	}
-	targetFile, err := os.OpenFile(targetPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, info.Mode().Perm())
+	data, err := io.ReadAll(sourceFile)
 	if err != nil {
 		return
 	}
-	defer targetFile.Close()
-	_, _ = io.Copy(targetFile, sourceFile)
+	_ = WriteFileAtomic(targetPath, data, info.Mode().Perm())
 }

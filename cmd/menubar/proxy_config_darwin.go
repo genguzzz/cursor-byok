@@ -7,6 +7,8 @@ import (
 	"os"
 	"strings"
 
+	"cursor/internal/appdata"
+
 	"gopkg.in/yaml.v3"
 )
 
@@ -77,12 +79,8 @@ func writeConfigRoot(path string, root *yaml.Node) error {
 	if err != nil {
 		return fmt.Errorf("序列化 config.yaml 失败: %w", err)
 	}
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o644); err != nil {
-		return fmt.Errorf("写入临时 config 失败: %w", err)
-	}
-	if err := os.Rename(tmp, path); err != nil {
-		return fmt.Errorf("保存 config 失败: %w", err)
+	if err := appdata.WriteFileAtomic(path, data, 0o644); err != nil {
+		return fmt.Errorf("保存 config.yaml 失败: %w", err)
 	}
 	return nil
 }
