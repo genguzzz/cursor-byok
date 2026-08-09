@@ -4,9 +4,11 @@ import (
 	"encoding/base64"
 	"io"
 	"net/http"
+	neturl "net/url"
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"cursor/gen/agentv1"
 )
@@ -181,6 +183,127 @@ func TestLiveBingWebSearchOptional(t *testing.T) {
 	if len(refs) == 0 {
 		t.Fatal("live bing returned empty refs")
 	}
+}
+
+type liveWebSearchCase struct {
+	domain   string
+	query    string
+	needles  []string
+	minHits  int
+	wantCN   bool
+	wantIntl bool
+}
+
+func TestLiveMultiDomainWebSearchOptional(t *testing.T) {
+	if os.Getenv("WEBSEARCH_LIVE") != "1" {
+		t.Skip("set WEBSEARCH_LIVE=1 to probe real Bing+Baidu merge")
+	}
+	bridge := NewBridge()
+	cases := []liveWebSearchCase{
+		{domain: "crypto", query: "okx", needles: []string{"okx.com", "okx"}, minHits: 1, wantCN: true, wantIntl: true},
+		{domain: "infra", query: "kubernetes ingress nginx", needles: []string{"kubernetes", "nginx", "github.com"}, minHits: 1, wantIntl: true},
+		{domain: "cn-policy", query: "个人所得税专项附加扣除", needles: []string{"chinatax", "gov.cn", "个税", "专项附加"}, minHits: 1, wantCN: true},
+		{domain: "science", query: "CRISPR gene editing", needles: []string{"nih.gov", "nature.com", "wikipedia", "crispr", "broadinstitute"}, minHits: 1, wantIntl: true},
+		{domain: "sports", query: "Premier League table", needles: []string{"premierleague", "skysports", "bbc", "espn"}, minHits: 1, wantIntl: true},
+		{domain: "product", query: "Sony WH-1000XM5 review", needles: []string{"sony", "rtings", "whathifi", "wh-1000xm5"}, minHits: 1, wantIntl: true},
+		{domain: "medical", query: "semaglutide Ozempic", needles: []string{"nih.gov", "fda.gov", "wikipedia", "novo", "ozempic", "semaglutide"}, minHits: 1, wantIntl: true},
+		{domain: "academic", query: "Attention Is All You Need transformer", needles: []string{"arxiv.org", "neurips", "nips", "google"}, minHits: 1, wantIntl: true},
+		{domain: "local-cn", query: "杭州西湖 开放时间", needles: []string{"hangzhou", "westlake", "西湖", "gov.cn", "trip"}, minHits: 1, wantCN: true},
+		{domain: "markets", query: "NASDAQ AAPL stock", needles: []string{"apple.com", "nasdaq", "yahoo", "bloomberg", "aapl"}, minHits: 1, wantIntl: true},
+		{domain: "news", query: "typhoon Pacific August 2026", needles: []string{"typhoon", "nhc", "jma", "reuters", "cnn", "weather"}, minHits: 1},
+		{domain: "code", query: "golang context deadline exceeded", needles: []string{"go.dev", "pkg.go.dev", "stackoverflow", "github.com", "context"}, minHits: 1, wantIntl: true},
+	}
+
+	type row struct {
+		domain     string
+		query      string
+		ms         int64
+		n          int
+		cn         int
+		intl       int
+		err        string
+		needlesOK  bool
+		titles     []string
+		urls       []string
+	}
+	rows := make([]row, 0, len(cases))
+	var totalMS int64
+	var fail int
+	for _, tc := range cases {
+		started := time.Now()
+		refs, _, err := bridge.executeWebSearch(tc.query)
+		elapsed := time.Since(started).Milliseconds()
+		totalMS += elapsed
+		item := row{domain: tc.domain, query: tc.query, ms: elapsed, n: len(refs)}
+		if err != nil {
+			item.err = err.Error()
+			fail++
+			rows = append(rows, item)
+			t.Logf("FAIL %s %q err=%v ms=%d", tc.domain, tc.query, err, elapsed)
+			continue
+		}
+		needleHits := 0
+		for _, ref := range refs {
+			blob := strings.ToLower(ref.GetTitle() + " " + ref.GetUrl() + " " + ref.GetChunk())
+			if isLikelyCNSearchURL(ref.GetUrl()) {
+				item.cn++
+			} else {
+				item.intl++
+			}
+			for _, needle := range tc.needles {
+				if strings.Contains(blob, strings.ToLower(needle)) {
+					needleHits++
+					break
+				}
+			}
+			if len(item.titles) < 3 {
+				item.titles = append(item.titles, ref.GetTitle())
+				item.urls = append(item.urls, ref.GetUrl())
+			}
+		}
+		item.needlesOK = needleHits >= tc.minHits
+		if err == nil && item.n == 0 {
+			fail++
+		}
+		if !item.needlesOK || (tc.wantCN && item.cn == 0) || (tc.wantIntl && item.intl == 0) {
+			t.Logf("coverage weak [%s] needles=%v cn=%d intl=%d", tc.domain, item.needlesOK, item.cn, item.intl)
+		}
+		rows = append(rows, item)
+	}
+
+	t.Logf("==== merged WebSearch live bench n=%d avg=%dms total=%dms fail=%d ====", len(rows), totalMS/int64(len(rows)), totalMS, fail)
+	for _, item := range rows {
+		t.Logf("[%s] %q  %dms  n=%d cn=%d intl=%d needles=%v err=%s",
+			item.domain, item.query, item.ms, item.n, item.cn, item.intl, item.needlesOK, item.err)
+		for i := range item.titles {
+			t.Logf("    %d. %s | %s", i+1, item.titles[i], item.urls[i])
+		}
+	}
+
+	splitQueries := []string{"okx", "个人所得税专项附加扣除", "kubernetes ingress nginx"}
+	for _, query := range splitQueries {
+		bingStart := time.Now()
+		bingRefs, _, bingErr := bridge.tryBingWebSearch(bridge.httpClient, query)
+		bingMS := time.Since(bingStart).Milliseconds()
+		baiduStart := time.Now()
+		baiduRefs, _, baiduErr := bridge.tryBaiduWebSearch(bridge.httpClient, query)
+		baiduMS := time.Since(baiduStart).Milliseconds()
+		t.Logf("split %-24q bing=%dms n=%d err=%v | baidu=%dms n=%d err=%v | serial=%dms",
+			query, bingMS, len(bingRefs), bingErr, baiduMS, len(baiduRefs), baiduErr, bingMS+baiduMS)
+	}
+	if fail > 0 {
+		t.Fatalf("%d live cases missed expected coverage or returned errors", fail)
+	}
+}
+
+func isLikelyCNSearchURL(rawURL string) bool {
+	parsed, err := neturl.Parse(strings.TrimSpace(rawURL))
+	if err != nil {
+		return strings.Contains(strings.ToLower(rawURL), "baidu.com") || strings.Contains(strings.ToLower(rawURL), ".cn")
+	}
+	host := strings.ToLower(parsed.Hostname())
+	return host == "baidu.com" || strings.HasSuffix(host, ".baidu.com") ||
+		strings.HasSuffix(host, ".cn") || strings.HasSuffix(host, ".com.cn")
 }
 
 func truncateForLog(value string, limit int) string {
