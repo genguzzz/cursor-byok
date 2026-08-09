@@ -182,7 +182,12 @@ func (bridge *Bridge) ApplyExecClientMessage(msg *agentv1.ExecClientMessage, pen
 		result.IsTerminal = true
 		return result, nil
 	case "mcp":
-		toolResult := truncateMcpToolResultForReplay(convertMcpResult(msg.GetMcpResult()))
+		mcpResult := msg.GetMcpResult()
+		if mcpResult != nil && mcpResult.GetApproved() != nil {
+			// 用户已批准 MCP 调用；真正的 success/error 会随后到达。
+			return result, nil
+		}
+		toolResult := truncateMcpToolResultForReplay(convertMcpResult(mcpResult))
 		result.ToolResultPayload = summarizeMcpResult(toolResult)
 		result.ToolCall = buildMcpCompletedToolCall(pending.ToolCallID, pending.ArgsJSON, toolResult)
 		result.IsTerminal = true
@@ -1367,20 +1372,58 @@ func convertMcpResult(result *agentv1.McpResult) *agentv1.McpToolResult {
 			},
 		}
 	case *agentv1.McpResult_ToolNotFound:
-		return &agentv1.McpToolResult{
-			Result: &agentv1.McpToolResult_Error{
-				Error: &agentv1.McpToolError{
-					Error: fmt.Sprintf("tool not found: %s", item.ToolNotFound.GetName()),
-				},
-			},
-		}
+		return mcpToolResultError(formatMCPToolNotFound(item.ToolNotFound))
+	case *agentv1.McpResult_ServerNotFound:
+		return mcpToolResultError(formatMCPServerNotFound(item.ServerNotFound))
+	case *agentv1.McpResult_Approved:
+		return mcpToolResultError("mcp approved without terminal result")
 	default:
-		return &agentv1.McpToolResult{
-			Result: &agentv1.McpToolResult_Error{
-				Error: &agentv1.McpToolError{Error: "unknown mcp result"},
-			},
+		detail := "empty"
+		if item != nil {
+			detail = fmt.Sprintf("%T", item)
 		}
+		return mcpToolResultError("unknown mcp result: " + detail)
 	}
+}
+
+func mcpToolResultError(message string) *agentv1.McpToolResult {
+	return &agentv1.McpToolResult{
+		Result: &agentv1.McpToolResult_Error{
+			Error: &agentv1.McpToolError{Error: message},
+		},
+	}
+}
+
+func formatMCPServerNotFound(item *agentv1.McpServerNotFound) string {
+	name := "?"
+	var servers []string
+	if item != nil {
+		if trimmed := strings.TrimSpace(item.GetName()); trimmed != "" {
+			name = trimmed
+		}
+		servers = item.GetAvailableServers()
+	}
+	message := fmt.Sprintf("mcp server not found: %s", name)
+	if len(servers) > 0 {
+		message += "\navailable servers: " + strings.Join(servers, ", ")
+	}
+	return message
+}
+
+func formatMCPToolNotFound(item *agentv1.McpToolNotFound) string {
+	name := "?"
+	var tools []string
+	if item != nil {
+		if trimmed := strings.TrimSpace(item.GetName()); trimmed != "" {
+			name = trimmed
+		}
+		tools = item.GetAvailableTools()
+	}
+	message := fmt.Sprintf("tool not found: %s", name)
+	if len(tools) > 0 {
+		message += "\navailable tools: " + strings.Join(tools, ", ")
+	}
+	return message
 }
 
 func truncateMcpToolResultForReplay(result *agentv1.McpToolResult) *agentv1.McpToolResult {
