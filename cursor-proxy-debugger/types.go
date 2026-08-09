@@ -159,7 +159,8 @@ type ExchangeQuery struct {
 	PathContains  string
 	RequestID     string
 	ID            string
-	Q             string // 模糊匹配 id/path/kind/requestId/decoded/error
+	Q             string // 默认只匹配元数据（id/path/kind/requestId/error…）
+	SearchBody    bool   // qBody=1 时才扫 decodedJson（有长度上限）；避免持续抓包时查询卡死
 	Status        int
 	HasRaw        *bool
 	HasDecoded    *bool

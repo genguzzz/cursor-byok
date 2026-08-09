@@ -49,8 +49,9 @@ func (server *Server) handleStatus(writer http.ResponseWriter, _ *http.Request) 
 	})
 }
 
-func (server *Server) handleExchangeList(writer http.ResponseWriter, _ *http.Request) {
-	writeJSON(writer, http.StatusOK, server.store.summaries())
+func (server *Server) handleExchangeList(writer http.ResponseWriter, request *http.Request) {
+	limit := atoiDefault(request.URL.Query().Get("limit"), maxListSummaries)
+	writeJSON(writer, http.StatusOK, server.store.summariesLimited(limit))
 }
 
 func (server *Server) handleExchangeQuery(writer http.ResponseWriter, request *http.Request) {
@@ -206,11 +207,14 @@ func parseExchangeQuery(request *http.Request) ExchangeQuery {
 		ID:            strings.TrimSpace(values.Get("id")),
 		Q:             strings.TrimSpace(firstNonEmpty(values.Get("q"), values.Get("query"))),
 		Include:       strings.TrimSpace(values.Get("include")),
-		Limit:         atoiDefault(values.Get("limit"), 50),
+		Limit:         atoiDefault(values.Get("limit"), defaultQueryLimit),
 		Offset:        atoiDefault(values.Get("offset"), 0),
 		Status:        atoiDefault(values.Get("status"), 0),
 		MinReqBytes:   int64(atoiDefault(values.Get("minRequestBytes"), 0)),
 		MinRespBytes:  int64(atoiDefault(values.Get("minResponseBytes"), 0)),
+	}
+	if body := strings.TrimSpace(firstNonEmpty(values.Get("qBody"), values.Get("searchBody"))); body != "" {
+		query.SearchBody = strings.EqualFold(body, "1") || strings.EqualFold(body, "true") || strings.EqualFold(body, "yes")
 	}
 	if raw := strings.TrimSpace(values.Get("hasRaw")); raw != "" {
 		value := strings.EqualFold(raw, "1") || strings.EqualFold(raw, "true") || strings.EqualFold(raw, "yes")

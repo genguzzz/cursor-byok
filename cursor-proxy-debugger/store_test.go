@@ -1,6 +1,7 @@
 package proxydebugger
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -83,9 +84,71 @@ func TestStoreQueryFiltersServerAndKind(t *testing.T) {
 		t.Fatal("include=raw should drop decodedJson")
 	}
 
+	// Default q is metadata-only: body hit must not match without SearchBody.
 	items, total, _ = store.query(ExchangeQuery{Q: "AGENT_MODE_ASK", Include: "decoded", Limit: 10})
+	if total != 0 {
+		t.Fatalf("metadata-only q should miss body text, total=%d", total)
+	}
+	items, total, _ = store.query(ExchangeQuery{Q: "AGENT_MODE_ASK", SearchBody: true, Include: "decoded", Limit: 10})
 	if total != 1 || items[0].ID != "1" {
-		t.Fatalf("q search failed: total=%d items=%v", total, idsOf(items))
+		t.Fatalf("qBody search failed: total=%d items=%v", total, idsOf(items))
+	}
+
+	items, total, _ = store.query(ExchangeQuery{Q: "run_request", Include: "summary", Limit: 10})
+	if total != 2 {
+		t.Fatalf("metadata q on requestKind failed: total=%d", total)
+	}
+}
+
+func TestAppendStreamingFrameBatchesPublishesAndAccountsBytes(t *testing.T) {
+	store := newExchangeStore(defaultMaxStoreBytes, 0)
+	store.create(&Exchange{ExchangeSummary: ExchangeSummary{ID: "r", Path: runSSEPath, StartedAt: time.Now()}})
+	before := store.stats().UsedBytes
+	for i := 0; i < framePublishInterval+1; i++ {
+		store.appendStreamingFrame("r", true, FrameView{
+			Index: i,
+			Kind:  "interaction_update",
+			JSON:  fmt.Sprintf(`{"i":%d,"pad":"%s"}`, i, strings.Repeat("x", 64)),
+		}, defaultMaxFrames)
+	}
+	ex, ok := store.get("r")
+	if !ok {
+		t.Fatal("missing exchange")
+	}
+	if ex.FrameCount != framePublishInterval+1 {
+		t.Fatalf("frameCount=%d", ex.FrameCount)
+	}
+	after := store.stats().UsedBytes
+	if after <= before {
+		t.Fatalf("usedBytes should grow: before=%d after=%d", before, after)
+	}
+	// Successful frames should not keep rawHex.
+	for _, frame := range ex.Response.Frames {
+		if frame.RawHex != "" {
+			t.Fatal("successful streaming frames should drop rawHex")
+		}
+	}
+}
+
+func TestQueryLimitCapAndNewestFirst(t *testing.T) {
+	store := newExchangeStore(defaultMaxStoreBytes, 0)
+	for i := 0; i < 5; i++ {
+		store.create(&Exchange{ExchangeSummary: ExchangeSummary{
+			ID:        fmt.Sprintf("%d", i),
+			Path:      "/x",
+			StartedAt: time.Now().Add(time.Duration(i) * time.Second),
+		}})
+	}
+	items, total, _ := store.query(ExchangeQuery{Limit: 2, Include: "summary"})
+	if total != 5 || len(items) != 2 {
+		t.Fatalf("total=%d len=%d", total, len(items))
+	}
+	if items[0].ID != "4" || items[1].ID != "3" {
+		t.Fatalf("expected newest-first page, got %v", idsOf(items))
+	}
+	items, total, _ = store.query(ExchangeQuery{Limit: 10_000, Include: "summary"})
+	if total != 5 || len(items) != 5 {
+		t.Fatalf("limit cap failed: total=%d len=%d", total, len(items))
 	}
 }
 

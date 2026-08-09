@@ -95,7 +95,6 @@ func (decoder *connectFrameDecoder) decode(flags uint8, payload []byte) FrameVie
 		Length:     len(payload),
 		Compressed: flags&0x01 != 0,
 		EndStream:  flags&0x02 != 0,
-		RawHex:     clippedHex(payload, 4096),
 	}
 	decoded := payload
 	if frame.Compressed {
@@ -103,6 +102,7 @@ func (decoder *connectFrameDecoder) decode(flags uint8, payload []byte) FrameVie
 		decoded, err = decompressPayload(payload, decoder.codec)
 		if err != nil {
 			frame.Error = err.Error()
+			frame.RawHex = clippedHex(payload, 4096)
 			return frame
 		}
 	}
@@ -116,10 +116,12 @@ func (decoder *connectFrameDecoder) decode(flags uint8, payload []byte) FrameVie
 	message := newMessage(decoder.messageType)
 	if message == nil {
 		frame.Error = "未知的 protobuf 消息类型"
+		frame.RawHex = clippedHex(payload, 4096)
 		return frame
 	}
 	if err := proto.Unmarshal(decoded, message); err != nil {
 		frame.Error = fmt.Sprintf("protobuf 解码失败：%v", err)
+		frame.RawHex = clippedHex(payload, 4096)
 		return frame
 	}
 	frame.MessageType = decoder.messageType
@@ -183,6 +185,51 @@ func firstNonEmptyFrameKind(frames []FrameView) string {
 		}
 	}
 	return ""
+}
+
+// maybeUnwrapConnectUnary peels a single Connect unary envelope (5-byte header + body).
+// Returns the original payload when it is not exactly one envelope.
+func maybeUnwrapConnectUnary(payload []byte, codec string) ([]byte, error) {
+	if len(payload) < 5 {
+		return payload, nil
+	}
+	flags := payload[0]
+	length := int(binary.BigEndian.Uint32(payload[1:5]))
+	if length < 0 || length > maxConnectFrameBytes || 5+length != len(payload) {
+		return payload, nil
+	}
+	body := payload[5 : 5+length]
+	if flags&0x01 == 0 {
+		return body, nil
+	}
+	unwrapCodec := strings.TrimSpace(codec)
+	if unwrapCodec == "" || strings.EqualFold(unwrapCodec, "identity") {
+		unwrapCodec = "gzip"
+	}
+	return decompressPayload(body, unwrapCodec)
+}
+
+func syntheticUnaryFrame(path, kind, requestID, decodedJSON string, length int) FrameView {
+	messageType := "application/proto"
+	switch path {
+	case bidiAppendPath:
+		messageType = "aiserver.v1.BidiAppendRequest+agent.v1.AgentClientMessage"
+	case notifyConversationClonePath:
+		messageType = "agent.v1.NotifyConversationCloneRequest"
+	case uploadConversationBlobsPath:
+		messageType = "agent.v1.UploadConversationBlobsRequest"
+	}
+	if kind == "" {
+		kind = "unary_request"
+	}
+	return FrameView{
+		Index:       0,
+		Length:      length,
+		Kind:        kind,
+		MessageType: messageType,
+		RequestID:   requestID,
+		JSON:        decodedJSON,
+	}
 }
 
 func decodeUnaryRequest(path string, payload []byte) (decodedJSON string, kind string, requestID string, err error) {

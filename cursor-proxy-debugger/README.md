@@ -56,16 +56,22 @@ go build -o bin/cursor-proxy-debugger ./cmd/cursor-proxy-debugger
 GET /api/status
   → store.usedBytes / maxStoreBytes / count
 
+GET /api/exchanges
+  → 摘要列表（默认最多 2000 条，可用 ?limit=）
+
 GET /api/exchanges/query
   过滤：server, captureSource, requestKind|kind, responseKind, method,
         host|hostContains, path|pathContains, requestId, id, status,
-        q|query（模糊匹配 id/path/kind/decoded/frames）,
+        q|query（默认只匹配元数据：id/path/kind/requestId/error…）,
+        qBody|searchBody=1（才扫描 decodedJson，且有 64KiB 上限；持续抓包时勿默认开启）,
         hasRaw, hasDecoded, minRequestBytes, minResponseBytes,
-        since, until (RFC3339), limit, offset,
+        since, until (RFC3339), limit(默认50, 最大200), offset,
         include=summary|decoded|raw|frames|full
   例：
   /api/exchanges/query?server=official&kind=run_request&include=decoded&limit=20
   /api/exchanges/query?path=RunSSE&hasRaw=true&include=raw
+  /api/exchanges/query?q=run_request
+  /api/exchanges/query?q=AGENT_MODE&qBody=1&include=summary
 
 GET /api/exchanges/{id}?include=full|decoded|raw|frames|summary
 GET /api/exchanges/{id}/raw?side=request|response&format=hex|bin|json
@@ -75,9 +81,11 @@ GET /api/exchanges/{id}/raw?side=request|response&format=hex|bin|json
 
 - 对 `target-host` 匹配的主机执行 HTTPS MITM（默认全部 `*.cursor.sh`），其他 CONNECT 流量直接透传。
 - 列表有 **Server** 列：`本地`（经本地助手 / MITM）与 `官方`（直连或 backend 回源官方）；可用顶部过滤只看一侧。
-- `RunSSE` 按 5 字节 Connect 帧头增量拆帧，支持逐帧 gzip 解压。
+- `RunSSE` 按 5 字节 Connect 帧头增量拆帧，支持逐帧 gzip 解压；流式写入按批发布 SSE，避免每帧锁/刷新卡死。
+- `BidiAppend` 是 **unary**（不是 Connect 流）：正文解压后解码为 `decodedJson`；并合成 1 条 `request.frames`，避免被误判为「0 帧未解码」。也兼容 Connect unary envelope。
 - `BidiAppendRequest.data` 会继续解码为 `agent.v1.AgentClientMessage`。
 - Fork Chat 相关的 `ForkBackgroundComposer`、`NotifyConversationClone` 和 `UploadConversationBlobs` 会双向解码为 protobuf JSON。
+- 内存：默认 200MiB 字节预算淘汰最早记录；成功帧不保留 rawHex；查询默认不扫大 body。
 - 本地 Fork Chat 主要在客户端完成，只有启用克隆 blob 同步且隐私设置允许时才会产生 `NotifyConversationClone` 和 `UploadConversationBlobs` 流量。
 - 请求列表支持按抓包时间正序/倒序排列，并可按协议中的 `request_id`、CmdK、来源过滤。
 - 调试界面支持简体中文和英文，可跟随浏览器语言并记住手动选择。

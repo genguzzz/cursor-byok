@@ -3,12 +3,14 @@ package proxydebugger
 import (
 	"bytes"
 	"compress/gzip"
+	"encoding/binary"
 	"encoding/json"
 	"strings"
 	"testing"
 	"time"
 
 	"cursor/gen/agentv1"
+	"cursor/gen/aiserverv1"
 
 	"google.golang.org/protobuf/proto"
 )
@@ -199,6 +201,95 @@ func TestFinishRequestBodyDecodesCompressedCloneRequest(t *testing.T) {
 	}
 	if !strings.Contains(compactJSON(t, exchange.Request.DecodedJSON), `"conversation_id":"new-conversation"`) {
 		t.Fatalf("unexpected decoded request:\n%s", exchange.Request.DecodedJSON)
+	}
+	if exchange.FrameCount != 1 || len(exchange.Request.Frames) != 1 {
+		t.Fatalf("unary request should synthesize one frame: frameCount=%d frames=%d", exchange.FrameCount, len(exchange.Request.Frames))
+	}
+}
+
+func TestMaybeUnwrapConnectUnaryExactEnvelope(t *testing.T) {
+	t.Parallel()
+	inner := []byte("hello-proto")
+	envelope := make([]byte, 5+len(inner))
+	envelope[0] = 0
+	envelope[1] = 0
+	envelope[2] = 0
+	envelope[3] = 0
+	envelope[4] = byte(len(inner))
+	copy(envelope[5:], inner)
+	got, err := maybeUnwrapConnectUnary(envelope, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(inner) {
+		t.Fatalf("got %q want %q", got, inner)
+	}
+	// non-envelope raw body stays unchanged
+	raw := []byte{0x0a, 0x01, 0x61}
+	got, err = maybeUnwrapConnectUnary(raw, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(raw) {
+		t.Fatalf("raw body should pass through")
+	}
+}
+
+func TestFinishRequestBodySynthesizesBidiAppendFrame(t *testing.T) {
+	t.Parallel()
+	payload, err := proto.Marshal(&aiserverv1.BidiAppendRequest{
+		RequestId: &aiserverv1.BidiRequestId{RequestId: "req-12"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := &Server{store: newExchangeStore(defaultMaxStoreBytes, 0), config: Config{}.normalized()}
+	server.store.create(&Exchange{ExchangeSummary: ExchangeSummary{ID: "bidi", StartedAt: time.Now()}})
+	server.finishRequestBody("bidi", bidiAppendPath, "identity", payload, int64(len(payload)), false, nil)
+	exchange, ok := server.store.get("bidi")
+	if !ok {
+		t.Fatal("missing exchange")
+	}
+	if exchange.RequestID != "req-12" {
+		t.Fatalf("requestID=%q", exchange.RequestID)
+	}
+	if exchange.Request.DecodedJSON == "" {
+		t.Fatal("expected decodedJson for BidiAppend unary")
+	}
+	if exchange.FrameCount != 1 || len(exchange.Request.Frames) != 1 {
+		t.Fatalf("expected synthetic unary frame, frameCount=%d frames=%d", exchange.FrameCount, len(exchange.Request.Frames))
+	}
+	if exchange.Request.Frames[0].Kind == "" {
+		t.Fatal("synthetic frame kind empty")
+	}
+}
+
+func TestFinishRequestBodyUnwrapsConnectUnaryEnvelope(t *testing.T) {
+	t.Parallel()
+	inner, err := proto.Marshal(&aiserverv1.BidiAppendRequest{
+		RequestId: &aiserverv1.BidiRequestId{RequestId: "env-1"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	envelope := make([]byte, 5+len(inner))
+	binary.BigEndian.PutUint32(envelope[1:5], uint32(len(inner)))
+	copy(envelope[5:], inner)
+
+	server := &Server{store: newExchangeStore(defaultMaxStoreBytes, 0), config: Config{}.normalized()}
+	server.store.create(&Exchange{ExchangeSummary: ExchangeSummary{ID: "env", StartedAt: time.Now()}})
+	// Force the envelope path: corrupt raw decode by... actually raw envelope fails proto.Unmarshal of BidiAppend,
+	// then unwrap retries.
+	server.finishRequestBody("env", bidiAppendPath, "identity", envelope, int64(len(envelope)), false, nil)
+	exchange, ok := server.store.get("env")
+	if !ok {
+		t.Fatal("missing exchange")
+	}
+	if exchange.RequestID != "env-1" {
+		t.Fatalf("requestID=%q want env-1 (decodedJson err=%q)", exchange.RequestID, exchange.Request.DecodeError)
+	}
+	if exchange.FrameCount < 1 {
+		t.Fatal("expected synthetic frame after unwrap")
 	}
 }
 

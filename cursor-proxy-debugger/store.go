@@ -7,14 +7,22 @@ import (
 	"time"
 )
 
+const (
+	defaultQueryLimit    = 50
+	maxQueryLimit        = 200
+	maxListSummaries     = 2000
+	maxBodySearchChars   = 64 << 10 // 64 KiB cap when qBody=1
+	framePublishInterval = 64       // publish SSE at most every N frames
+)
+
 type exchangeStore struct {
-	mu             sync.RWMutex
-	maxStoreBytes  int64
-	maxExchanges   int
-	order          []string // newest first
-	exchanges      map[string]*Exchange
-	usedBytes      int64
-	subscribers    map[chan storeEvent]struct{}
+	mu            sync.RWMutex
+	maxStoreBytes int64
+	maxExchanges  int
+	order         []string // oldest first; newest at end
+	exchanges     map[string]*Exchange
+	usedBytes     int64
+	subscribers   map[chan storeEvent]struct{}
 }
 
 func newExchangeStore(maxStoreBytes int64, maxExchanges int) *exchangeStore {
@@ -33,7 +41,7 @@ func (store *exchangeStore) create(exchange *Exchange) {
 	store.mu.Lock()
 	exchange.StoredBytes = estimateExchangeBytes(*exchange)
 	store.exchanges[exchange.ID] = exchange
-	store.order = append([]string{exchange.ID}, store.order...)
+	store.order = append(store.order, exchange.ID)
 	store.usedBytes += exchange.StoredBytes
 	evicted := store.evictLocked()
 	store.mu.Unlock()
@@ -65,6 +73,60 @@ func (store *exchangeStore) update(id string, apply func(*Exchange)) {
 	}
 }
 
+// appendStreamingFrame appends one Connect frame without a full recount/SSE storm.
+// Bytes are accounted incrementally; SSE publishes every framePublishInterval frames.
+func (store *exchangeStore) appendStreamingFrame(id string, responseSide bool, frame FrameView, maxFrames int) {
+	store.mu.Lock()
+	exchange := store.exchanges[id]
+	if exchange == nil {
+		store.mu.Unlock()
+		return
+	}
+	target := &exchange.Request.Frames
+	if responseSide {
+		target = &exchange.Response.Frames
+	}
+	if maxFrames > 0 && len(*target) >= maxFrames {
+		store.mu.Unlock()
+		return
+	}
+	if frame.Error == "" {
+		frame.RawHex = ""
+	}
+	*target = append(*target, frame)
+	delta := estimateFrameBytes(frame)
+	exchange.StoredBytes += delta
+	store.usedBytes += delta
+	if responseSide {
+		exchange.FrameCount = len(exchange.Response.Frames)
+		if frame.Kind != "" && frame.Kind != "end_stream" {
+			exchange.ResponseKind = frame.Kind
+		}
+		if frame.Error != "" {
+			exchange.Response.DecodeError = frame.Error
+		}
+	} else {
+		if exchange.FrameCount == 0 {
+			exchange.FrameCount = len(exchange.Request.Frames)
+		}
+		if frame.Kind != "" {
+			exchange.RequestKind = frame.Kind
+		}
+		if frame.RequestID != "" {
+			exchange.RequestID = frame.RequestID
+		}
+	}
+	shouldPublish := len(*target)%framePublishInterval == 0
+	evicted := store.evictLocked()
+	store.mu.Unlock()
+	if shouldPublish {
+		store.publish(storeEvent{Type: "updated", ID: id})
+	}
+	for _, eid := range evicted {
+		store.publish(storeEvent{Type: "evicted", ID: eid})
+	}
+}
+
 // evictLocked drops oldest exchanges until under byte/count budgets.
 // Caller must hold store.mu.
 func (store *exchangeStore) evictLocked() []string {
@@ -75,8 +137,8 @@ func (store *exchangeStore) evictLocked() []string {
 		if !overBytes && !overCount {
 			break
 		}
-		oldest := store.order[len(store.order)-1]
-		store.order = store.order[:len(store.order)-1]
+		oldest := store.order[0]
+		store.order = store.order[1:]
 		if exchange := store.exchanges[oldest]; exchange != nil {
 			store.usedBytes -= exchange.StoredBytes
 			if store.usedBytes < 0 {
@@ -92,11 +154,23 @@ func (store *exchangeStore) evictLocked() []string {
 }
 
 func (store *exchangeStore) summaries() []ExchangeSummary {
+	return store.summariesLimited(maxListSummaries)
+}
+
+func (store *exchangeStore) summariesLimited(limit int) []ExchangeSummary {
 	store.mu.RLock()
 	defer store.mu.RUnlock()
-	result := make([]ExchangeSummary, 0, len(store.order))
-	for _, id := range store.order {
-		if exchange := store.exchanges[id]; exchange != nil {
+	if limit <= 0 || limit > maxListSummaries {
+		limit = maxListSummaries
+	}
+	n := len(store.order)
+	if n > limit {
+		n = limit
+	}
+	result := make([]ExchangeSummary, 0, n)
+	// newest first
+	for i := len(store.order) - 1; i >= 0 && len(result) < limit; i-- {
+		if exchange := store.exchanges[store.order[i]]; exchange != nil {
 			result = append(result, exchange.ExchangeSummary)
 		}
 	}
@@ -134,23 +208,25 @@ func (store *exchangeStore) query(q ExchangeQuery) (items []Exchange, total int,
 		MaxExchanges:  store.maxExchanges,
 	}
 	if q.Limit <= 0 {
-		q.Limit = 50
+		q.Limit = defaultQueryLimit
 	}
-	if q.Limit > 500 {
-		q.Limit = 500
+	if q.Limit > maxQueryLimit {
+		q.Limit = maxQueryLimit
 	}
 	if q.Offset < 0 {
 		q.Offset = 0
 	}
-	matched := make([]*Exchange, 0, 64)
-	for _, id := range store.order {
-		exchange := store.exchanges[id]
-		if exchange == nil || !exchangeMatches(*exchange, q) {
+
+	needle := strings.ToLower(strings.TrimSpace(q.Q))
+	matchedIdx := make([]int, 0, 64) // indexes into order (oldest-first)
+	for i := len(store.order) - 1; i >= 0; i-- {
+		exchange := store.exchanges[store.order[i]]
+		if exchange == nil || !exchangeMatches(*exchange, q, needle) {
 			continue
 		}
-		matched = append(matched, exchange)
+		matchedIdx = append(matchedIdx, i)
 	}
-	total = len(matched)
+	total = len(matchedIdx)
 	if q.Offset >= total {
 		return nil, total, stats
 	}
@@ -159,13 +235,17 @@ func (store *exchangeStore) query(q ExchangeQuery) (items []Exchange, total int,
 		end = total
 	}
 	items = make([]Exchange, 0, end-q.Offset)
-	for _, exchange := range matched[q.Offset:end] {
+	for _, orderIdx := range matchedIdx[q.Offset:end] {
+		exchange := store.exchanges[store.order[orderIdx]]
+		if exchange == nil {
+			continue
+		}
 		items = append(items, projectExchange(*exchange, q.Include))
 	}
 	return items, total, stats
 }
 
-func exchangeMatches(exchange Exchange, q ExchangeQuery) bool {
+func exchangeMatches(exchange Exchange, q ExchangeQuery, needleLower string) bool {
 	if q.ID != "" && !strings.EqualFold(exchange.ID, q.ID) {
 		return false
 	}
@@ -184,13 +264,13 @@ func exchangeMatches(exchange Exchange, q ExchangeQuery) bool {
 	if q.Method != "" && !strings.EqualFold(exchange.Method, q.Method) {
 		return false
 	}
-	if q.HostContains != "" && !strings.Contains(strings.ToLower(exchange.Host), strings.ToLower(q.HostContains)) {
+	if q.HostContains != "" && !containsFold(exchange.Host, q.HostContains) {
 		return false
 	}
-	if q.PathContains != "" && !strings.Contains(strings.ToLower(exchange.Path), strings.ToLower(q.PathContains)) {
+	if q.PathContains != "" && !containsFold(exchange.Path, q.PathContains) {
 		return false
 	}
-	if q.RequestID != "" && !strings.Contains(strings.ToLower(exchange.RequestID), strings.ToLower(q.RequestID)) {
+	if q.RequestID != "" && !containsFold(exchange.RequestID, q.RequestID) {
 		return false
 	}
 	if q.Status != 0 && exchange.Status != q.Status {
@@ -215,42 +295,70 @@ func exchangeMatches(exchange Exchange, q ExchangeQuery) bool {
 		}
 	}
 	if q.HasDecoded != nil {
-		has := exchange.Request.DecodedJSON != "" || exchange.Response.DecodedJSON != "" || len(exchange.Response.Frames) > 0
+		has := exchange.Request.DecodedJSON != "" || exchange.Response.DecodedJSON != "" ||
+			len(exchange.Request.Frames) > 0 || len(exchange.Response.Frames) > 0
 		if *q.HasDecoded != has {
 			return false
 		}
 	}
-	if q.Q != "" {
-		needle := strings.ToLower(q.Q)
-		haystack := strings.ToLower(strings.Join([]string{
-			exchange.ID,
-			exchange.Path,
-			exchange.URL,
-			exchange.Host,
-			exchange.RequestID,
-			exchange.RequestKind,
-			exchange.ResponseKind,
-			exchange.Server,
-			exchange.CaptureSource,
-			exchange.Error,
-			exchange.Request.DecodedJSON,
-			exchange.Response.DecodedJSON,
-		}, "\n"))
-		if !strings.Contains(haystack, needle) {
-			// also search a few frame json snippets
-			found := false
-			for _, frame := range exchange.Response.Frames {
-				if strings.Contains(strings.ToLower(frame.JSON), needle) || strings.Contains(strings.ToLower(frame.Kind), needle) {
-					found = true
-					break
-				}
-			}
-			if !found {
-				return false
-			}
+	if needleLower != "" {
+		if !exchangeMatchesQueryText(exchange, needleLower, q.SearchBody) {
+			return false
 		}
 	}
 	return true
+}
+
+func exchangeMatchesQueryText(exchange Exchange, needleLower string, searchBody bool) bool {
+	// Cheap metadata first (default path under sustained capture).
+	if containsFold(exchange.ID, needleLower) ||
+		containsFold(exchange.Path, needleLower) ||
+		containsFold(exchange.URL, needleLower) ||
+		containsFold(exchange.Host, needleLower) ||
+		containsFold(exchange.RequestID, needleLower) ||
+		containsFold(exchange.RequestKind, needleLower) ||
+		containsFold(exchange.ResponseKind, needleLower) ||
+		containsFold(exchange.Server, needleLower) ||
+		containsFold(exchange.CaptureSource, needleLower) ||
+		containsFold(exchange.Error, needleLower) {
+		return true
+	}
+	if !searchBody {
+		return false
+	}
+	if containsFoldLimited(exchange.Request.DecodedJSON, needleLower, maxBodySearchChars) ||
+		containsFoldLimited(exchange.Response.DecodedJSON, needleLower, maxBodySearchChars) {
+		return true
+	}
+	// Frame kind only (not full JSON) to avoid scanning megabytes of thinking_delta.
+	for _, frame := range exchange.Request.Frames {
+		if containsFold(frame.Kind, needleLower) || containsFold(frame.RequestID, needleLower) {
+			return true
+		}
+	}
+	for _, frame := range exchange.Response.Frames {
+		if containsFold(frame.Kind, needleLower) || containsFold(frame.RequestID, needleLower) {
+			return true
+		}
+	}
+	return false
+}
+
+func containsFold(haystack, needle string) bool {
+	if needle == "" {
+		return true
+	}
+	return strings.Contains(strings.ToLower(haystack), strings.ToLower(needle))
+}
+
+func containsFoldLimited(haystack, needleLower string, maxChars int) bool {
+	if needleLower == "" {
+		return true
+	}
+	if maxChars > 0 && len(haystack) > maxChars {
+		haystack = haystack[:maxChars]
+	}
+	return strings.Contains(strings.ToLower(haystack), needleLower)
 }
 
 func projectExchange(exchange Exchange, include string) Exchange {
@@ -339,9 +447,13 @@ func estimatePayloadBytes(payload Payload) int64 {
 		n += int64(len(header.Name) + len(header.Value) + 8)
 	}
 	for _, frame := range payload.Frames {
-		n += int64(64 + len(frame.Kind) + len(frame.MessageType) + len(frame.RequestID) + len(frame.JSON) + len(frame.RawHex) + len(frame.Error))
+		n += estimateFrameBytes(frame)
 	}
 	return n
+}
+
+func estimateFrameBytes(frame FrameView) int64 {
+	return int64(64 + len(frame.Kind) + len(frame.MessageType) + len(frame.RequestID) + len(frame.JSON) + len(frame.RawHex) + len(frame.Error))
 }
 
 func cloneExchange(exchange Exchange) Exchange {

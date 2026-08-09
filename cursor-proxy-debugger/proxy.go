@@ -292,6 +292,17 @@ func (server *Server) finishRequestBody(id, path string, codec string, captured 
 	if decodeErr == nil {
 		decodedJSON, kind, requestID, decodeErr = decodeUnaryRequest(path, decodePayload)
 	}
+	// 部分客户端用 Connect unary envelope（5 字节头）承载 application/proto。
+	if decodesUnaryRequest(path) && len(decodePayload) > 0 && (decodeErr != nil || decodedJSON == "") {
+		if unwrapped, unwrapErr := maybeUnwrapConnectUnary(decodePayload, codec); unwrapErr == nil &&
+			len(unwrapped) > 0 && len(unwrapped) != len(decodePayload) {
+			altJSON, altKind, altID, altErr := decodeUnaryRequest(path, unwrapped)
+			if altErr == nil && altJSON != "" {
+				decodedJSON, kind, requestID, decodeErr = altJSON, altKind, altID, nil
+				decodePayload = unwrapped
+			}
+		}
+	}
 	var offlineFrames []FrameView
 	if messageType := runSSEMessageType(path, false); messageType != "" && len(captured) > 0 {
 		offlineFrames = decodeConnectFramesOffline(messageType, codec, server.maxFrames(), captured)
@@ -312,6 +323,8 @@ func (server *Server) finishRequestBody(id, path string, codec string, captured 
 		}
 		if decodeErr != nil {
 			exchange.Request.DecodeError = decodeErr.Error()
+		} else {
+			exchange.Request.DecodeError = ""
 		}
 		// 官方 upstream 整包回灌不会走 MITM 流式拆帧；Frames 为空时补做 offline Connect 解码。
 		if len(exchange.Request.Frames) == 0 && len(offlineFrames) > 0 {
@@ -327,6 +340,13 @@ func (server *Server) finishRequestBody(id, path string, codec string, captured 
 					}
 				}
 			}
+		}
+		// BidiAppend 等 unary：不是 Connect 流，但补一条合成 frame，避免 UI/分析工具误判「0 帧未解码」。
+		if len(exchange.Request.Frames) == 0 && decodedJSON != "" && decodesUnaryRequest(path) {
+			exchange.Request.Frames = []FrameView{syntheticUnaryFrame(path, kind, requestID, decodedJSON, len(decodePayload))}
+		}
+		if exchange.FrameCount == 0 {
+			exchange.FrameCount = len(exchange.Request.Frames)
 		}
 		if readErr != nil && !errors.Is(readErr, io.EOF) {
 			exchange.Error = readErr.Error()
@@ -386,12 +406,14 @@ func (server *Server) finishResponseBody(id, path, codec string, captured []byte
 		// 官方 upstream RunSSE 先前只落 rawHex；这里补齐与本地 MITM 一致的 frames。
 		if len(exchange.Response.Frames) == 0 && len(offlineFrames) > 0 {
 			exchange.Response.Frames = offlineFrames
-			exchange.FrameCount = len(offlineFrames)
 			if exchange.ResponseKind == "" {
 				exchange.ResponseKind = firstNonEmptyFrameKind(offlineFrames)
 			}
-		} else {
+		}
+		if len(exchange.Response.Frames) > 0 {
 			exchange.FrameCount = len(exchange.Response.Frames)
+		} else if exchange.FrameCount == 0 {
+			exchange.FrameCount = len(exchange.Request.Frames)
 		}
 		exchange.DurationMS = elapsedMS(exchange.StartedAt)
 		exchange.State = "completed"
@@ -410,32 +432,11 @@ func (server *Server) maxFrames() int {
 }
 
 func (server *Server) appendRequestFrame(id string, frame FrameView) {
-	server.store.update(id, func(exchange *Exchange) {
-		if len(exchange.Request.Frames) < server.config.MaxFrames {
-			exchange.Request.Frames = append(exchange.Request.Frames, frame)
-		}
-		if frame.Kind != "" {
-			exchange.RequestKind = frame.Kind
-		}
-		if frame.RequestID != "" {
-			exchange.RequestID = frame.RequestID
-		}
-	})
+	server.store.appendStreamingFrame(id, false, frame, server.config.MaxFrames)
 }
 
 func (server *Server) appendResponseFrame(id string, frame FrameView) {
-	server.store.update(id, func(exchange *Exchange) {
-		if len(exchange.Response.Frames) < server.config.MaxFrames {
-			exchange.Response.Frames = append(exchange.Response.Frames, frame)
-		}
-		exchange.FrameCount = len(exchange.Response.Frames)
-		if frame.Kind != "" && frame.Kind != "end_stream" {
-			exchange.ResponseKind = frame.Kind
-		}
-		if frame.Error != "" {
-			exchange.Response.DecodeError = frame.Error
-		}
-	})
+	server.store.appendStreamingFrame(id, true, frame, server.config.MaxFrames)
 }
 
 func (server *Server) matchesHTTPRequest(request *http.Request) bool {

@@ -237,6 +237,8 @@ curl -sS "http://127.0.0.1:9091/api/exchanges/$ID/raw?side=response&format=json"
 ### 常见坑
 
 - 缓冲区按字节淘汰：大 RunSSE 一多，旧的 `run_request` 会 404；需要时立刻 `query`/`raw` 导出。
-- `frameCount=0` 但有 `rawHex`：旧二进制未做官方 offline 拆帧；应重启菜单栏调试（新代码在 `finishResponseBody` 补解码）。
+- `BidiAppend` 是 unary：关键看 `request.decodedJson`（及合成的 `request.frames[0]`），不要按 RunSSE 的 Connect 流帧模型要求「拆成多帧」。
+- `q` 默认只搜元数据；搜正文需 `qBody=1`（有长度上限）。持续抓包时避免对大 body 全表扫描。
+- `frameCount=0` 且无 `decodedJson`、但有 `rawHex`：旧二进制或解码失败；官方 RunSSE 应有 offline 拆帧，需重启菜单栏调试。
 - Proxyman 里可能看不到 `api2.cursor.sh`：流量走调试器 MITM，应查 `:9091` 而不是 Proxyman。
 - 不要把对话内容里出现的 prompt 字符串误当成官方 system（常来自读仓库文件）。
