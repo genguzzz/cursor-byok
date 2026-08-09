@@ -68,9 +68,11 @@ func (injector *DefaultReminderInjector) Inject(mode agentv1.AgentMode, conversa
 		reminders = append(reminders, "After delegating the only coherent worker task for a request, do not continue the same work in the foreground. Only do distinct coordination work, answer a new independent question, or synthesize after multiple workers return.")
 		reminders = append(reminders, "Do not wait, sleep, or poll just for a running worker to complete. End the response unless there is separate useful coordination to do.")
 		reminders = append(reminders, "Do not over-decompose small or medium tasks into many sibling workers. Use multiple sibling workers only for clearly independent top-level workstreams.")
+		reminders = append(reminders, "If you mention a launched subagent to the user, write a markdown chat link `[label](agent_id)` from the Task result and do not print the raw id.")
 	default:
 		reminders = append(reminders, "You are in agent mode. Use the available tools when they materially improve correctness or efficiency.")
 		reminders = append(reminders, "When reporting progress or completion, lead with the result, mention only key changes or verification, and avoid long recaps, exhaustive lists, or unsolicited example code.")
+		reminders = append(reminders, "If you mention a launched subagent to the user, write a markdown chat link `[label](agent_id)` from the Task result and do not print the raw id.")
 	}
 
 	result := PromptReminders{

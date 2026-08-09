@@ -200,7 +200,7 @@ func (bridge *Bridge) ApplyExecClientMessage(msg *agentv1.ExecClientMessage, pen
 		result.IsTerminal = true
 		return result, nil
 	case "subagent":
-		result.ToolResultPayload = summarizeSubagentResult(msg.GetSubagentResult())
+		result.ToolResultPayload = summarizeSubagentResult(pending.ArgsJSON, msg.GetSubagentResult())
 		result.ToolCall = buildTaskCompletedToolCall(pending.ArgsJSON, msg.GetSubagentResult())
 		result.IsTerminal = true
 		return result, nil
@@ -1170,28 +1170,56 @@ func summarizeDiagnosticsResult(result *agentv1.DiagnosticsResult) string {
 }
 
 // summarizeSubagentResult 生成 Task 对应的执行结果摘要。
-func summarizeSubagentResult(result *agentv1.SubagentResult) string {
+func summarizeSubagentResult(argsJSON []byte, result *agentv1.SubagentResult) string {
 	if result == nil {
 		return "subagent result missing"
 	}
 	switch item := result.GetResult().(type) {
 	case *agentv1.SubagentResult_Success:
-		if text := strings.TrimSpace(item.Success.GetFinalMessage()); text != "" {
-			return text
+		agentID := ""
+		if item.Success != nil {
+			agentID = strings.TrimSpace(item.Success.GetAgentId())
 		}
-		if isBackgroundSubagentSuccess(item.Success) {
-			return fmt.Sprintf("subagent running in background agent_id=%s reason=%s transcript_path=%s",
-				strings.TrimSpace(item.Success.GetAgentId()),
+		var body string
+		if text := strings.TrimSpace(item.Success.GetFinalMessage()); text != "" {
+			body = text
+		} else if isBackgroundSubagentSuccess(item.Success) {
+			body = fmt.Sprintf("subagent running in background agent_id=%s reason=%s transcript_path=%s",
+				agentID,
 				item.Success.GetBackgroundReason().String(),
 				strings.TrimSpace(item.Success.GetTranscriptPath()),
 			)
+		} else {
+			body = "subagent returned empty response"
 		}
-		return "subagent returned empty response"
+		if hint := subagentUserMentionHint(argsJSON, agentID); hint != "" {
+			return body + "\n" + hint
+		}
+		return body
 	case *agentv1.SubagentResult_Error:
 		return item.Error.GetError()
 	default:
 		return "unknown subagent result"
 	}
+}
+
+func subagentUserMentionHint(argsJSON []byte, agentID string) string {
+	agentID = strings.TrimSpace(agentID)
+	if agentID == "" {
+		return ""
+	}
+	label := "subagent"
+	if args, err := decodeArgsMap(argsJSON); err == nil {
+		if description := strings.TrimSpace(readStringArg(args, "description")); description != "" {
+			label = description
+		}
+	}
+	label = strings.NewReplacer("[", "", "]", "", "\n", " ", "\r", "").Replace(label)
+	label = strings.Join(strings.Fields(label), " ")
+	if label == "" {
+		label = "subagent"
+	}
+	return fmt.Sprintf("When mentioning this subagent to the user, write exactly: [%s](%s)\nDo not print the raw agent id separately.", label, agentID)
 }
 
 // summarizeDeleteResult 生成 Delete 结果摘要。
