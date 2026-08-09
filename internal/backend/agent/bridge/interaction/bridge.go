@@ -13,6 +13,7 @@ import (
 	neturl "net/url"
 	"regexp"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 	"unicode/utf8"
@@ -574,7 +575,14 @@ const (
 	webSearchPayloadLimit = 16 * 1024
 	webSearchTitleLimit   = 512
 	webSearchChunkLimit   = 2 * 1024
+	webSearchMergedLimit  = 8
 )
+
+type webSearchAttempt struct {
+	name       string
+	references []*agentv1.WebSearchReference
+	err        error
+}
 
 func (bridge *Bridge) executeWebSearch(searchTerm string) ([]*agentv1.WebSearchReference, string, error) {
 	searchTerm = strings.TrimSpace(searchTerm)
@@ -586,23 +594,58 @@ func (bridge *Bridge) executeWebSearch(searchTerm string) ([]*agentv1.WebSearchR
 		client = netproxy.NewHTTPClient(15 * time.Second)
 	}
 
-	// 先尝试百度搜索
-	baiduReferences, baiduPayload, baiduErr := bridge.tryBaiduWebSearch(client, searchTerm)
-	if baiduErr == nil && len(baiduReferences) > 0 {
-		return baiduReferences, baiduPayload, nil
+	bingAttempt, baiduAttempt := bridge.searchBingAndBaidu(client, searchTerm)
+	merged := mergeWebSearchReferences(bingAttempt.references, baiduAttempt.references, webSearchMergedLimit)
+	if len(merged) > 0 {
+		return merged, formatWebSearchPayload(searchTerm, merged), nil
 	}
 
-	// 百度失败，回退到 DuckDuckGo
 	duckReferences, duckPayload, duckErr := bridge.tryDuckDuckGoWebSearch(client, searchTerm)
 	if duckErr == nil && len(duckReferences) > 0 {
 		return duckReferences, duckPayload, nil
 	}
 
-	// 两者都失败，返回综合错误
-	if baiduErr != nil && duckErr != nil {
-		return nil, "", fmt.Errorf("web search failed: baidu=%v, duckduckgo=%v", baiduErr, duckErr)
+	return nil, "", fmt.Errorf(
+		"web search failed: bing=%v, baidu=%v, duckduckgo=%v",
+		attemptErrorOrEmpty(bingAttempt),
+		attemptErrorOrEmpty(baiduAttempt),
+		fallbackSearchError(duckErr),
+	)
+}
+
+func (bridge *Bridge) searchBingAndBaidu(client *http.Client, searchTerm string) (webSearchAttempt, webSearchAttempt) {
+	var bingAttempt, baiduAttempt webSearchAttempt
+	var waitGroup sync.WaitGroup
+	waitGroup.Add(2)
+	go func() {
+		defer waitGroup.Done()
+		references, _, err := bridge.tryBingWebSearch(client, searchTerm)
+		bingAttempt = webSearchAttempt{name: "bing", references: references, err: err}
+	}()
+	go func() {
+		defer waitGroup.Done()
+		references, _, err := bridge.tryBaiduWebSearch(client, searchTerm)
+		baiduAttempt = webSearchAttempt{name: "baidu", references: references, err: err}
+	}()
+	waitGroup.Wait()
+	return bingAttempt, baiduAttempt
+}
+
+func attemptErrorOrEmpty(attempt webSearchAttempt) error {
+	if attempt.err != nil {
+		return attempt.err
 	}
-	return nil, "", fmt.Errorf("web search returned no parseable results")
+	if len(attempt.references) == 0 {
+		return fmt.Errorf("%s returned no parseable results", attempt.name)
+	}
+	return nil
+}
+
+func fallbackSearchError(err error) error {
+	if err != nil {
+		return err
+	}
+	return fmt.Errorf("returned no parseable results")
 }
 
 func (bridge *Bridge) tryBaiduWebSearch(client *http.Client, searchTerm string) ([]*agentv1.WebSearchReference, string, error) {
