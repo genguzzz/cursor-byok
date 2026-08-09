@@ -385,6 +385,16 @@ func (server *Server) finishResponseBody(id, path, codec string, captured []byte
 	if decodeErr == nil {
 		decodedJSON, kind, decodeErr = decodeUnaryResponse(path, decodePayload)
 	}
+	if decodesUnaryResponse(path) && len(decodePayload) > 0 && (decodeErr != nil || decodedJSON == "") {
+		if unwrapped, unwrapErr := maybeUnwrapConnectUnary(decodePayload, codec); unwrapErr == nil &&
+			len(unwrapped) > 0 && len(unwrapped) != len(decodePayload) {
+			altJSON, altKind, altErr := decodeUnaryResponse(path, unwrapped)
+			if altErr == nil && altJSON != "" {
+				decodedJSON, kind, decodeErr = altJSON, altKind, nil
+				decodePayload = unwrapped
+			}
+		}
+	}
 	var offlineFrames []FrameView
 	if messageType := runSSEMessageType(path, true); messageType != "" && len(captured) > 0 {
 		offlineFrames = decodeConnectFramesOffline(messageType, codec, server.maxFrames(), captured)
@@ -409,6 +419,10 @@ func (server *Server) finishResponseBody(id, path, codec string, captured []byte
 			if exchange.ResponseKind == "" {
 				exchange.ResponseKind = firstNonEmptyFrameKind(offlineFrames)
 			}
+		}
+		// Unary aiserver RPCs: synthesize a response frame when typed decode succeeded.
+		if len(exchange.Response.Frames) == 0 && decodedJSON != "" && decodesUnaryResponse(path) {
+			exchange.Response.Frames = []FrameView{syntheticUnaryFrame(path, kind, "", decodedJSON, len(decodePayload))}
 		}
 		if len(exchange.Response.Frames) > 0 {
 			exchange.FrameCount = len(exchange.Response.Frames)

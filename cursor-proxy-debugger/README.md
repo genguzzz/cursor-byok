@@ -83,6 +83,7 @@ GET /api/exchanges/{id}/raw?side=request|response&format=hex|bin|json
 - 列表有 **Server** 列：`本地`（经本地助手 / MITM）与 `官方`（直连或 backend 回源官方）；可用顶部过滤只看一侧。
 - `RunSSE` 按 5 字节 Connect 帧头增量拆帧，支持逐帧 gzip 解压；流式写入按批发布 SSE，避免每帧锁/刷新卡死。
 - `BidiAppend` 是 **unary**（不是 Connect 流）：正文解压后解码为 `decodedJson`；并合成 1 条 `request.frames`，避免被误判为「0 帧未解码」。也兼容 Connect unary envelope。
+- 其它常见 `aiserver.v1.*` unary（Dashboard / Analytics / Repository / BackgroundComposer / AiService.ServerTime 等）同样走本调试器 MITM，按 `application/proto` 做类型化解码（不是「没进 server」）。未登记 path 仍保留 raw。
 - `BidiAppendRequest.data` 会继续解码为 `agent.v1.AgentClientMessage`。
 - Fork Chat 相关的 `ForkBackgroundComposer`、`NotifyConversationClone` 和 `UploadConversationBlobs` 会双向解码为 protobuf JSON。
 - 内存：默认 200MiB 字节预算淘汰最早记录；成功帧不保留 rawHex；查询默认不扫大 body。

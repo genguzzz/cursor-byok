@@ -207,6 +207,49 @@ func TestFinishRequestBodyDecodesCompressedCloneRequest(t *testing.T) {
 	}
 }
 
+func TestDecodeCommonAiserverUnaryRPCs(t *testing.T) {
+	t.Parallel()
+	req, err := proto.Marshal(&aiserverv1.ServerTimeRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded, kind, _, err := decodeUnaryRequest("/aiserver.v1.AiService/ServerTime", req)
+	if err != nil || kind != "server_time_request" || decoded == "" {
+		t.Fatalf("ServerTime request: kind=%q err=%v decoded=%q", kind, err, decoded)
+	}
+	resp, err := proto.Marshal(&aiserverv1.GetGithubAccessTokenForReposResponse{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded, kind, err = decodeUnaryResponse("/aiserver.v1.BackgroundComposerService/GetGithubAccessTokenForRepos", resp)
+	if err != nil || kind != "get_github_access_token_for_repos_response" || decoded == "" {
+		t.Fatalf("github token response: kind=%q err=%v", kind, err)
+	}
+
+	handshake, err := proto.Marshal(&aiserverv1.FastRepoInitHandshakeV2Request{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var compressed bytes.Buffer
+	writer := gzip.NewWriter(&compressed)
+	if _, err := writer.Write(handshake); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	server := &Server{store: newExchangeStore(defaultMaxStoreBytes, 0), config: Config{}.normalized()}
+	server.store.create(&Exchange{ExchangeSummary: ExchangeSummary{ID: "repo", StartedAt: time.Now()}})
+	server.finishRequestBody("repo", "/aiserver.v1.RepositoryService/FastRepoInitHandshakeV2", "gzip", compressed.Bytes(), int64(compressed.Len()), false, nil)
+	ex, ok := server.store.get("repo")
+	if !ok {
+		t.Fatal("missing")
+	}
+	if ex.RequestKind != "fast_repo_init_handshake_v2_request" || ex.Request.DecodedJSON == "" || ex.FrameCount < 1 {
+		t.Fatalf("unary aiserver decode failed: kind=%q frames=%d err=%q", ex.RequestKind, ex.FrameCount, ex.Request.DecodeError)
+	}
+}
+
 func TestMaybeUnwrapConnectUnaryExactEnvelope(t *testing.T) {
 	t.Parallel()
 	inner := []byte("hello-proto")

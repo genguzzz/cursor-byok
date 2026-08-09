@@ -218,9 +218,13 @@ func syntheticUnaryFrame(path, kind, requestID, decodedJSON string, length int) 
 		messageType = "agent.v1.NotifyConversationCloneRequest"
 	case uploadConversationBlobsPath:
 		messageType = "agent.v1.UploadConversationBlobsRequest"
+	default:
+		if path != "" {
+			messageType = strings.TrimPrefix(path, "/") + "#unary"
+		}
 	}
 	if kind == "" {
-		kind = "unary_request"
+		kind = "unary_message"
 	}
 	return FrameView{
 		Index:       0,
@@ -284,6 +288,27 @@ func unaryRequestMessage(path string) (proto.Message, string) {
 		return &agentv1.NotifyConversationCloneRequest{}, "notify_conversation_clone_request"
 	case uploadConversationBlobsPath:
 		return &agentv1.UploadConversationBlobsRequest{}, "upload_conversation_blobs_request"
+	// Common Cursor aiserver unary RPCs (application/proto, not Connect streams).
+	case "/aiserver.v1.AiService/ServerTime":
+		return &aiserverv1.ServerTimeRequest{}, "server_time_request"
+	case "/aiserver.v1.AnalyticsService/SubmitLogs":
+		return &aiserverv1.SubmitLogsRequest{}, "submit_logs_request"
+	case "/aiserver.v1.AnalyticsService/Batch":
+		return &aiserverv1.BatchRequest{}, "analytics_batch_request"
+	case "/aiserver.v1.DashboardService/GetUsageLimitStatusAndActiveGrants":
+		return &aiserverv1.GetUsageLimitStatusAndActiveGrantsRequest{}, "get_usage_limit_status_request"
+	case "/aiserver.v1.DashboardService/GetTeamAdminSettingsOrEmptyIfNotInTeam":
+		return &aiserverv1.GetTeamAdminSettingsRequest{}, "get_team_admin_settings_request"
+	case "/aiserver.v1.RepositoryService/FastRepoInitHandshakeV2":
+		return &aiserverv1.FastRepoInitHandshakeV2Request{}, "fast_repo_init_handshake_v2_request"
+	case "/aiserver.v1.RepositoryService/FastRepoSyncComplete":
+		return &aiserverv1.FastRepoSyncCompleteRequest{}, "fast_repo_sync_complete_request"
+	case "/aiserver.v1.BackgroundComposerService/GetGithubAccessTokenForRepos":
+		return &aiserverv1.GetGithubAccessTokenForReposRequest{}, "get_github_access_token_for_repos_request"
+	case "/aiserver.v1.BackgroundComposerService/ListPersonalEnvironments":
+		return &aiserverv1.ListPersonalEnvironmentsRequest{}, "list_personal_environments_request"
+	case "/aiserver.v1.BackgroundComposerService/ListTeamEnvironments":
+		return &aiserverv1.ListTeamEnvironmentsRequest{}, "list_team_environments_request"
 	default:
 		return nil, ""
 	}
@@ -295,6 +320,26 @@ func unaryResponseMessage(path string) (proto.Message, string) {
 		return &agentv1.NotifyConversationCloneResponse{}, "notify_conversation_clone_response"
 	case uploadConversationBlobsPath:
 		return &agentv1.UploadConversationBlobsResponse{}, "upload_conversation_blobs_response"
+	case "/aiserver.v1.AiService/ServerTime":
+		return &aiserverv1.ServerTimeResponse{}, "server_time_response"
+	case "/aiserver.v1.AnalyticsService/SubmitLogs":
+		return &aiserverv1.SubmitLogsResponse{}, "submit_logs_response"
+	case "/aiserver.v1.AnalyticsService/Batch":
+		return &aiserverv1.BatchResponse{}, "analytics_batch_response"
+	case "/aiserver.v1.DashboardService/GetUsageLimitStatusAndActiveGrants":
+		return &aiserverv1.GetUsageLimitStatusAndActiveGrantsResponse{}, "get_usage_limit_status_response"
+	case "/aiserver.v1.DashboardService/GetTeamAdminSettingsOrEmptyIfNotInTeam":
+		return &aiserverv1.GetTeamAdminSettingsResponse{}, "get_team_admin_settings_response"
+	case "/aiserver.v1.RepositoryService/FastRepoInitHandshakeV2":
+		return &aiserverv1.FastRepoInitHandshakeV2Response{}, "fast_repo_init_handshake_v2_response"
+	case "/aiserver.v1.RepositoryService/FastRepoSyncComplete":
+		return &aiserverv1.FastRepoSyncCompleteResponse{}, "fast_repo_sync_complete_response"
+	case "/aiserver.v1.BackgroundComposerService/GetGithubAccessTokenForRepos":
+		return &aiserverv1.GetGithubAccessTokenForReposResponse{}, "get_github_access_token_for_repos_response"
+	case "/aiserver.v1.BackgroundComposerService/ListPersonalEnvironments":
+		return &aiserverv1.ListPersonalEnvironmentsResponse{}, "list_personal_environments_response"
+	case "/aiserver.v1.BackgroundComposerService/ListTeamEnvironments":
+		return &aiserverv1.ListTeamEnvironmentsResponse{}, "list_team_environments_response"
 	default:
 		return nil, ""
 	}
