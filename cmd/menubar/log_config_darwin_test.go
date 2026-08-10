@@ -71,3 +71,63 @@ func TestReadDebugLogEnabledMissingFile(t *testing.T) {
 		t.Fatal("missing file should mean disabled")
 	}
 }
+
+func TestDebugSyncActionFrom(t *testing.T) {
+	t.Parallel()
+	if got := debugSyncActionFrom(true, false); got != debugSyncStart {
+		t.Fatalf("log on / debug off -> start, got %d", got)
+	}
+	if got := debugSyncActionFrom(false, true); got != debugSyncStop {
+		t.Fatalf("log off / debug on -> stop, got %d", got)
+	}
+	if got := debugSyncActionFrom(true, true); got != debugSyncNone {
+		t.Fatalf("both on -> none, got %d", got)
+	}
+	if got := debugSyncActionFrom(false, false); got != debugSyncNone {
+		t.Fatalf("both off -> none, got %d", got)
+	}
+}
+
+func TestStopDebugLockedRestartKeepsLogConfig(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, []byte("log: true\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	debugLogConfigFileOverride = path
+	t.Cleanup(func() { debugLogConfigFileOverride = "" })
+
+	resetDebugState()
+	debugMu.Lock()
+	defer debugMu.Unlock()
+	debugState.enabled = true
+	stopDebugLocked(false)
+	enabled, err := readDebugLogEnabledFromFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !enabled {
+		t.Fatal("restart stop should keep log: true")
+	}
+}
+
+func TestStopDebugLockedPersistClearsLogConfig(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, []byte("log: true\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	debugLogConfigFileOverride = path
+	t.Cleanup(func() { debugLogConfigFileOverride = "" })
+
+	resetDebugState()
+	debugMu.Lock()
+	defer debugMu.Unlock()
+	debugState.enabled = true
+	stopDebugLocked(true)
+	enabled, err := readDebugLogEnabledFromFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if enabled {
+		t.Fatal("real stop should persist log: false")
+	}
+}

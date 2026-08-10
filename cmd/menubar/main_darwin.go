@@ -75,15 +75,11 @@ func main() {
 	defer runtime.UnlockOSThread()
 
 	logger.Init()
+	logger.ApplyDebugLogFromConfig()
 
 	// 读取初始代理状态。
 	proxyEnabled = readProxyEnabled()
 	C.setProxyMenuItemEnabled(boolToInt(proxyEnabled))
-
-	// 调试日志已与调试模式合并，由调试模式开关同时控制
-	// debugLogEnabled := readDebugLogEnabled()
-	// logger.SetDebugEnabled(debugLogEnabled)
-	// C.setDebugLogMenuItemEnabled(boolToInt(debugLogEnabled))
 
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
@@ -102,9 +98,43 @@ func main() {
 	C.setupMenubar()
 	go warmupProxyService()
 	go handleActions()
-	// install 重启后：若 Cursor 仍指向本地代理，自动拉起服务，避免必须重启 Cursor。
-	go maybeAutoStartLocalMode()
+	// install 重启后先拉起本地模式，再按 config.log 对齐调试模式，避免 9092 抢在 18080 前写入 Cursor 代理。
+	go func() {
+		maybeAutoStartLocalMode()
+		syncDebugModeFromConfig(false)
+		watchDebugLogConfig()
+	}()
 	C.runEventLoop()
+}
+
+const debugLogConfigPollInterval = 500 * time.Millisecond
+
+func syncDebugModeFromConfig(openBrowserTab bool) {
+	want, err := readDebugLogEnabledFromFile(debugLogConfigPath())
+	if err != nil {
+		logger.Errorf("menubar: read debug log config failed: %v", err)
+		return
+	}
+	debugMu.Lock()
+	switch debugSyncActionFrom(want, debugState.enabled) {
+	case debugSyncStart:
+		startDebugLocked(openBrowserTab)
+	case debugSyncStop:
+		stopDebugLocked(true)
+	default:
+		logger.SetDebugEnabled(want)
+	}
+	enabled := debugState.enabled
+	debugMu.Unlock()
+	C.setDebugMenuItemEnabled(boolToInt(enabled))
+}
+
+func watchDebugLogConfig() {
+	ticker := time.NewTicker(debugLogConfigPollInterval)
+	defer ticker.Stop()
+	for range ticker.C {
+		syncDebugModeFromConfig(false)
+	}
 }
 
 func handleActions() {
