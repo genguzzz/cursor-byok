@@ -2613,6 +2613,13 @@ func buildRunEntries(intent InboundIntent, effectiveMode agentv1.AgentMode, turn
 			Kind:      "user_message",
 			Payload:   payload,
 		})
+		if rulesMessage, ok := promptengine.BuildSelectedCursorRulesReplayMessage(normalized); ok {
+			entries = append(entries, newPromptContextEntry(turnSeq, intent.RequestID, newPromptContextMessage(
+				promptContextSourceSelectedCursorRules,
+				modeladapter.Message{Role: rulesMessage.Role, Content: rulesMessage.Content},
+				true,
+			)))
+		}
 		if commandMessage, ok := promptengine.BuildSelectedCursorCommandsReplayMessage(normalized); ok {
 			entries = append(entries, newPromptContextEntry(turnSeq, intent.RequestID, newPromptContextMessage(
 				promptContextSourceSelectedCursorCommands,

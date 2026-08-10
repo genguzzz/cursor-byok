@@ -32,8 +32,8 @@ const (
 	promptGuardRulesTotalChars          = 24000
 	promptGuardRulesMaxCount            = 40
 	promptGuardSkillDescriptionChars    = 800
-	promptGuardSkillDescriptionsTotal   = 16000
-	promptGuardSkillDescriptorsMaxCount = 32
+	promptGuardSkillDescriptionsTotal   = 64000
+	promptGuardSkillDescriptorsMaxCount = 128
 	promptGuardAgentSkillContentChars   = 6000
 	promptGuardAgentSkillsMaxCount      = 16
 	promptGuardRealtimeTextChars        = 12000
@@ -231,9 +231,39 @@ func guardSelectedContext(selectedContext *agentv1.SelectedContext) *agentv1.Sel
 	}
 	cloned.Files = guardSelectedFiles(cloned.GetFiles())
 	cloned.CursorCommands = guardSelectedCursorCommands(cloned.GetCursorCommands())
+	cloned.CursorRules = guardSelectedCursorRules(cloned.GetCursorRules())
 	cloned.SelectedSkills = guardAgentSkills(cloned.GetSelectedSkills())
 	cloned.ExtraContext = guardStringSlice(cloned.GetExtraContext(), "selected_context.extra_context", promptGuardRealtimeTextChars, promptGuardRealtimeTextChars, promptGuardAgentSkillsMaxCount)
 	return cloned
+}
+
+func guardSelectedCursorRules(rules []*agentv1.SelectedCursorRule) []*agentv1.SelectedCursorRule {
+	if len(rules) == 0 {
+		return nil
+	}
+	result := make([]*agentv1.SelectedCursorRule, 0, minInt(len(rules), promptGuardCursorCommandsMaxCount))
+	remaining := promptGuardCursorCommandsTotalChars
+	for _, item := range rules {
+		if item == nil || item.GetRule() == nil || len(result) >= promptGuardCursorCommandsMaxCount {
+			continue
+		}
+		content := strings.TrimSpace(item.GetRule().GetContent())
+		if content == "" {
+			continue
+		}
+		limit := minInt(promptGuardCursorCommandChars, remaining)
+		if limit <= 0 {
+			break
+		}
+		cloned, ok := proto.Clone(item).(*agentv1.SelectedCursorRule)
+		if !ok || cloned == nil || cloned.GetRule() == nil {
+			continue
+		}
+		cloned.Rule.Content = truncatePromptGuardText("selected_context.cursor_rules.content", content, limit)
+		remaining -= promptGuardRuneCount(cloned.GetRule().GetContent())
+		result = append(result, cloned)
+	}
+	return result
 }
 
 func guardSelectedCursorCommands(commands []*agentv1.SelectedCursorCommand) []*agentv1.SelectedCursorCommand {
