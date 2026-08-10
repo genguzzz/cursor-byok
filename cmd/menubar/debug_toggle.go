@@ -2,11 +2,15 @@
 
 // debug_toggle.go 在 menubar 进程内一键管理 cursor-proxy-debugger。
 //
+// 调试模式与 config.yaml 的 log 是同一开关：开菜单栏调试 = log:true（JSONL + slog Debug），
+// 关调试 = log:false；启动或手工改 yaml 也会把另一侧拉齐。
+//
 // 开启后：
 //   - 代理监听 127.0.0.1:9092（避开 Proxyman 常用 9090）
 //   - UI 监听 http://127.0.0.1:9091，并自动打开浏览器
 //   - 写入 Cursor http.proxy / disableHttp2，并确保本机 CA 已信任
 //   - 若本地模式已运行，则 UpstreamProxy=http://127.0.0.1:18080，抓本地协议
+//   - 持久化 log: true，打开 history debug JSONL 与 app.log Debug
 
 package main
 
@@ -35,12 +39,50 @@ const (
 
 var debugMu sync.Mutex
 
+// debugLogConfigFileOverride 仅测试注入；空则读写正式 config.yaml。
+var debugLogConfigFileOverride string
+
 var debugState = struct {
 	enabled          bool
 	server           *proxydebugger.Server
 	prevProxyURL     string
 	wroteCursorProxy bool
 }{}
+
+func debugLogConfigPath() string {
+	if trimmed := strings.TrimSpace(debugLogConfigFileOverride); trimmed != "" {
+		return trimmed
+	}
+	return configPath()
+}
+
+func persistDebugLogEnabled(enable bool) {
+	if err := writeDebugLogEnabledToFile(debugLogConfigPath(), enable); err != nil {
+		logger.Errorf("menubar: write debug log config failed: %v", err)
+		logger.SetDebugEnabled(enable)
+		return
+	}
+	logger.SetDebugEnabled(enable)
+}
+
+type debugSyncAction int
+
+const (
+	debugSyncNone debugSyncAction = iota
+	debugSyncStart
+	debugSyncStop
+)
+
+func debugSyncActionFrom(logEnabled, debugRunning bool) debugSyncAction {
+	switch {
+	case logEnabled && !debugRunning:
+		return debugSyncStart
+	case !logEnabled && debugRunning:
+		return debugSyncStop
+	default:
+		return debugSyncNone
+	}
+}
 
 // toggleDebug 切换调试模式。
 func toggleDebug() {
@@ -104,18 +146,12 @@ func startDebugLocked(openBrowserTab bool) bool {
 		debugState.wroteCursorProxy = true
 	}
 
+	persistDebugLogEnabled(true)
 	debugState.enabled = true
 	debugState.server = server
 	logger.Infof("menubar: 调试代理已启动 proxy=%s ui=%s upstream=%q",
 		server.ProxyAddr(), server.UIURL(), upstream)
-
-	// 调试模式下同时开启调试日志（写入 app.log；含 shell 流式诊断）
-	if err := writeDebugLogEnabledToFile(configPath(), true); err != nil {
-		logger.Errorf("menubar: write debug log config failed: %v", err)
-	} else {
-		logger.SetDebugEnabled(true)
-		logger.Infof("调试日志已开启")
-	}
+	logger.Infof("调试日志已开启（config.log=true）")
 
 	if openBrowserTab {
 		_ = browser.OpenURL(server.UIURL())
@@ -170,12 +206,8 @@ func stopDebugLocked(restoreProxy bool) {
 		logger.Infof("menubar: 调试代理已停止")
 	}
 	debugState.enabled = false
-
-	// 关闭调试模式时同时关闭调试日志
-	if err := writeDebugLogEnabledToFile(configPath(), false); err != nil {
-		logger.Errorf("menubar: write debug log config failed: %v", err)
-	} else {
-		logger.SetDebugEnabled(false)
+	if restoreProxy {
+		persistDebugLogEnabled(false)
 	}
 
 	if !restoreProxy {
