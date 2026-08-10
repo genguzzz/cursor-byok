@@ -58,7 +58,7 @@ jobs:
         run: |
           protoc \
             --go_out=. \
-            --go_opt=paths=source_relative \
+            --go_opt=module=cursor \
             -I proto \
             proto/aiserver_v1.proto \
             proto/agent_v1.proto
@@ -127,7 +127,7 @@ jobs:
         run: |
           protoc \
             --go_out=. \
-            --go_opt=paths=source_relative \
+            --go_opt=module=cursor \
             -I proto \
             proto/aiserver_v1.proto \
             proto/agent_v1.proto
