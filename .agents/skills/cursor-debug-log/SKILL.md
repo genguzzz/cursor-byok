@@ -198,7 +198,8 @@ debug 证据缺失时，回退到 `state.json`、`context.json`、`usage.json`�
 - 默认内存预算约 **200MiB**（`maxStoreBytes`），超出丢弃最早记录；不是只留 200 条。
 - 单侧 raw 默认最多约 **16MiB**（过小会截断大 RunSSE）。
 - 进程退出后抓包消失；**不会**自动写入 `history/*/debug/`。
-- 本地 `log: true` 的 JSONL 与调试器是两套证据：前者落盘会话目录，后者是实时协议 MITM。
+- 菜单栏「调试模式」与 `config.yaml` 的 `log` 是同一开关（开调试会写 `log: true`，关调试写 `false`；启动或改 yaml 也会把另一侧拉齐）。
+- 本地 `log: true` 的 JSONL 与调试器仍是两套证据：前者落盘会话目录，后者是实时协议 MITM。
 
 ### 分析流程（优先用 query API）
 
