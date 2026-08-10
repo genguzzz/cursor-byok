@@ -41,6 +41,27 @@ jobs:
         with:
           go-version-file: go.mod
 
+      - name: Install protoc
+        run: |
+          PROTOC_VERSION=29.3
+          PROTOC_ZIP="protoc-${PROTOC_VERSION}-linux-x86_64.zip"
+          curl -sLO "https://github.com/protocolbuffers/protobuf/releases/download/v${PROTOC_VERSION}/${PROTOC_ZIP}"
+          unzip -qo "${PROTOC_ZIP}" -d /usr/local
+          rm "${PROTOC_ZIP}"
+          protoc --version
+
+      - name: Install protoc-gen-go
+        run: go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
+
+      - name: Generate protobuf code
+        run: |
+          protoc \
+            --go_out=. \
+            --go_opt=paths=source_relative \
+            -I proto \
+            proto/aiserver_v1.proto \
+            proto/agent_v1.proto
+
       - name: Build CLI
         env:
           GOOS: ${{ matrix.goos }}
@@ -87,6 +108,27 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+
+      - name: Install protoc
+        run: |
+          PROTOC_VERSION=29.3
+          PROTOC_ZIP="protoc-${PROTOC_VERSION}-osx-universal_binary.zip"
+          curl -sLO "https://github.com/protocolbuffers/protobuf/releases/download/v${PROTOC_VERSION}/${PROTOC_ZIP}"
+          unzip -qo "${PROTOC_ZIP}" -d /usr/local
+          rm "${PROTOC_ZIP}"
+          protoc --version
+
+      - name: Install protoc-gen-go
+        run: go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
+
+      - name: Generate protobuf code
+        run: |
+          protoc \
+            --go_out=. \
+            --go_opt=paths=source_relative \
+            -I proto \
+            proto/aiserver_v1.proto \
+            proto/agent_v1.proto
 
       - name: Build Menubar
         env:
