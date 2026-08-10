@@ -1,6 +1,7 @@
 package execbridge
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -27,7 +28,7 @@ func TestConvertMcpResultServerNotFoundIncludesAvailableServers(t *testing.T) {
 	if !strings.Contains(text, "mcp server not found: chrome") {
 		t.Fatalf("missing server name: %s", text)
 	}
-	if !strings.Contains(text, "available servers:") {
+	if !strings.Contains(text, "available servers (") {
 		t.Fatalf("missing available servers header: %s", text)
 	}
 	if !strings.Contains(text, "user-chrome-devtools") {
@@ -38,30 +39,49 @@ func TestConvertMcpResultServerNotFoundIncludesAvailableServers(t *testing.T) {
 	}
 }
 
-func TestConvertMcpResultToolNotFoundIncludesAvailableTools(t *testing.T) {
+func TestConvertMcpResultToolNotFoundKeepsLookupNameOnly(t *testing.T) {
 	t.Parallel()
 
 	got := convertMcpResult(&agentv1.McpResult{
 		Result: &agentv1.McpResult_ToolNotFound{
 			ToolNotFound: &agentv1.McpToolNotFound{
-				Name: "chrome-devtools-list_pages",
+				Name: "user-tapd_mcp_http-bugs_get",
 				AvailableTools: []string{
 					"cursor-ide-browser-browser_navigate",
-					"user-chrome-devtools-list_pages",
-					"user-chrome-devtools-navigate_page",
+					"user-tapd_mcp_http-lookup_tapd_tool",
+					"user-tapd_mcp_http-proxy_execute_tool",
 				},
 			},
 		},
 	})
 	text := summarizeMcpResult(got)
-	if !strings.Contains(text, "tool not found: chrome-devtools-list_pages") {
-		t.Fatalf("missing tool name: %s", text)
+	if text != "tool not found: user-tapd_mcp_http-bugs_get" {
+		t.Fatalf("should forward client lookup name only: %s", text)
 	}
-	if !strings.Contains(text, "available tools:") {
-		t.Fatalf("missing available tools header: %s", text)
+}
+
+func TestConvertMcpResultToolNotFoundDoesNotDumpCatalog(t *testing.T) {
+	t.Parallel()
+
+	tools := make([]string, 0, 40)
+	for i := 0; i < 30; i++ {
+		tools = append(tools, fmt.Sprintf("cursor-ide-browser-browser_extra_%d", i))
 	}
-	if !strings.Contains(text, "user-chrome-devtools-list_pages") {
-		t.Fatalf("dropped available tool list: %s", text)
+	tools = append(tools, "user-tapd_mcp_http-lookup_tapd_tool", "user-knot-knowledgebase_search")
+	got := convertMcpResult(&agentv1.McpResult{
+		Result: &agentv1.McpResult_ToolNotFound{
+			ToolNotFound: &agentv1.McpToolNotFound{
+				Name:           "user-tapd_mcp_http-bugs_get",
+				AvailableTools: tools,
+			},
+		},
+	})
+	text := summarizeMcpResult(got)
+	if strings.Contains(text, "closest tools:") || strings.Contains(text, "available MCP servers") || strings.Contains(text, "available tools:") {
+		t.Fatalf("must not invent catalog from available_tools: %s", text)
+	}
+	if strings.Contains(text, "browser_extra_0") || strings.Contains(text, "lookup_tapd_tool") {
+		t.Fatalf("catalog leaked into model-visible error: %s", text)
 	}
 }
 
@@ -190,7 +210,10 @@ func TestApplyExecClientMessageMCPToolNotFoundKeepsLookupName(t *testing.T) {
 	if !applied.IsTerminal {
 		t.Fatal("tool_not_found should complete the MCP exec")
 	}
-	if !strings.Contains(applied.ToolResultPayload, "user-chrome-devtools-list_pages") {
-		t.Fatalf("model-visible payload dropped available tools: %s", applied.ToolResultPayload)
+	if !strings.Contains(applied.ToolResultPayload, "tool not found: chrome-devtools-list_pages") {
+		t.Fatalf("model-visible payload dropped lookup name: %s", applied.ToolResultPayload)
+	}
+	if strings.Contains(applied.ToolResultPayload, "user-chrome-devtools-list_pages") {
+		t.Fatalf("must not dump client available_tools into model context: %s", applied.ToolResultPayload)
 	}
 }

@@ -948,17 +948,7 @@ func (bridge *Bridge) openMcp(toolCall runtimecore.ToolInvocation) (*agentv1.Age
 	if err != nil {
 		return nil, runtimecore.PendingExec{}, fmt.Errorf("decode CallMcpTool args failed: %w", err)
 	}
-	serverIdentifier := strings.TrimSpace(input.Server)
-	if serverIdentifier == "" {
-		serverIdentifier = strings.TrimSpace(input.ProviderIdentifier)
-	}
-	toolName := strings.TrimSpace(input.ToolName)
-	if toolName == "" {
-		toolName = runtimecore.InferMCPToolName(serverIdentifier, input.Name)
-	}
-	if serverIdentifier == "" && strings.TrimSpace(input.Name) != "" {
-		serverIdentifier = runtimecore.InferMCPServerIdentifier(input.Name)
-	}
+	serverIdentifier, toolName, args := runtimecore.ResolveMCPToolInvocation(input)
 	messageID := bridge.nextID()
 	execID := fmt.Sprintf("exec-mcp-%d", time.Now().UnixNano())
 	serverMessage := &agentv1.AgentServerMessage{
@@ -969,7 +959,7 @@ func (bridge *Bridge) openMcp(toolCall runtimecore.ToolInvocation) (*agentv1.Age
 				Message: &agentv1.ExecServerMessage_McpArgs{
 					McpArgs: &agentv1.McpArgs{
 						Name:               canonicalMCPToolLookupName(serverIdentifier, toolName),
-						Args:               buildStructValueMap(input.Arguments),
+						Args:               buildStructValueMap(args),
 						ToolCallId:         toolCall.CallID,
 						ProviderIdentifier: serverIdentifier,
 						ToolName:           toolName,
@@ -1394,6 +1384,8 @@ func mcpToolResultError(message string) *agentv1.McpToolResult {
 	}
 }
 
+const mcpNotFoundServerListLimit = 16
+
 func formatMCPServerNotFound(item *agentv1.McpServerNotFound) string {
 	name := "?"
 	var servers []string
@@ -1403,27 +1395,38 @@ func formatMCPServerNotFound(item *agentv1.McpServerNotFound) string {
 		}
 		servers = item.GetAvailableServers()
 	}
-	message := fmt.Sprintf("mcp server not found: %s", name)
-	if len(servers) > 0 {
-		message += "\navailable servers: " + strings.Join(servers, ", ")
+	lines := []string{fmt.Sprintf("mcp server not found: %s", name)}
+	if name != "?" && !strings.HasPrefix(name, "user-") && !strings.HasPrefix(name, "cursor-") {
+		lines = append(lines, `User MCP servers are prefixed with "user-", e.g. user-tapd_mcp_http.`)
 	}
-	return message
+	// AvailableServers 来自客户端本次执行回包，不是 mcp.json 静态配置。
+	if len(servers) > 0 {
+		lines = append(lines, formatMCPIdentifierList("available servers", servers, mcpNotFoundServerListLimit))
+	}
+	return strings.Join(lines, "\n")
 }
 
 func formatMCPToolNotFound(item *agentv1.McpToolNotFound) string {
 	name := "?"
-	var tools []string
 	if item != nil {
 		if trimmed := strings.TrimSpace(item.GetName()); trimmed != "" {
 			name = trimmed
 		}
-		tools = item.GetAvailableTools()
 	}
-	message := fmt.Sprintf("tool not found: %s", name)
-	if len(tools) > 0 {
-		message += "\navailable tools: " + strings.Join(tools, ", ")
+	// 只回传客户端执行结果。不要根据 available_tools 猜测 closest / server 列表：
+	// 那既不是 mcp.json 权威源，也会在 createClient 超时后误导模型以为 catalog 空了。
+	lines := []string{fmt.Sprintf("tool not found: %s", name)}
+	if name == "?" {
+		lines = append(lines, `CallMcpTool lookup name was empty. Pass camelCase server + toolName (not tool_name / tool_args). User MCP servers use a "user-" prefix, e.g. server="user-tapd_mcp_http" toolName="lookup_tapd_tool".`)
 	}
-	return message
+	return strings.Join(lines, "\n")
+}
+
+func formatMCPIdentifierList(label string, values []string, limit int) string {
+	if limit <= 0 || len(values) <= limit {
+		return fmt.Sprintf("%s (%d): %s", label, len(values), strings.Join(values, ", "))
+	}
+	return fmt.Sprintf("%s (%d): %s … +%d more", label, len(values), strings.Join(values[:limit], ", "), len(values)-limit)
 }
 
 func truncateMcpToolResultForReplay(result *agentv1.McpToolResult) *agentv1.McpToolResult {
@@ -2319,23 +2322,13 @@ func buildLsCompletedToolCall(toolCallID string, argsJSON []byte, result *agentv
 // buildMcpCompletedToolCall 构造 CallMcpTool 对应的完成态 ToolCall。
 func buildMcpCompletedToolCall(toolCallID string, argsJSON []byte, result *agentv1.McpToolResult) *agentv1.ToolCall {
 	input, _ := runtimecore.DecodeMCPToolPayload(argsJSON)
-	serverIdentifier := strings.TrimSpace(input.Server)
-	if serverIdentifier == "" {
-		serverIdentifier = strings.TrimSpace(input.ProviderIdentifier)
-	}
-	toolName := strings.TrimSpace(input.ToolName)
-	if toolName == "" {
-		toolName = runtimecore.InferMCPToolName(serverIdentifier, input.Name)
-	}
-	if serverIdentifier == "" && strings.TrimSpace(input.Name) != "" {
-		serverIdentifier = runtimecore.InferMCPServerIdentifier(input.Name)
-	}
+	serverIdentifier, toolName, args := runtimecore.ResolveMCPToolInvocation(input)
 	return &agentv1.ToolCall{
 		Tool: &agentv1.ToolCall_McpToolCall{
 			McpToolCall: &agentv1.McpToolCall{
 				Args: &agentv1.McpArgs{
 					Name:               canonicalMCPToolLookupName(serverIdentifier, toolName),
-					Args:               buildStructValueMap(input.Arguments),
+					Args:               buildStructValueMap(args),
 					ToolCallId:         toolCallID,
 					ProviderIdentifier: serverIdentifier,
 					ToolName:           toolName,
