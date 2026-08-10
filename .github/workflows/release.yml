@@ -1,0 +1,135 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-cli:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+            binary: cursor-local-assistant
+            suffix: .tar.gz
+          - goos: linux
+            goarch: arm64
+            binary: cursor-local-assistant
+            suffix: .tar.gz
+          - goos: darwin
+            goarch: amd64
+            binary: cursor-local-assistant
+            suffix: .tar.gz
+          - goos: darwin
+            goarch: arm64
+            binary: cursor-local-assistant
+            suffix: .tar.gz
+          - goos: windows
+            goarch: amd64
+            binary: cursor-local-assistant.exe
+            suffix: .zip
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build CLI
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: 0
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          ARTIFACT="dist/cursor-byok-cli-${VERSION}-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.suffix }}"
+
+          go build \
+            -tags cli \
+            -trimpath \
+            -buildvcs=false \
+            -ldflags="-s -w -X cursor/internal/buildinfo.Version=${VERSION}" \
+            -o '${{ matrix.binary }}' \
+            ./cmd/cli
+
+          mkdir -p dist
+
+          case "${{ matrix.suffix }}" in
+            .zip)
+              zip "${ARTIFACT}" '${{ matrix.binary }}'
+              ;;
+            *)
+              tar czf "${ARTIFACT}" '${{ matrix.binary }}'
+              ;;
+          esac
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cli-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: dist/*
+
+  build-menubar:
+    runs-on: macos-latest
+    strategy:
+      matrix:
+        include:
+          - goarch: arm64
+          - goarch: amd64
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build Menubar
+        env:
+          GOOS: darwin
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: 1
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          ARTIFACT="dist/cursor-byok-menubar-${VERSION}-macos-${{ matrix.goarch }}.tar.gz"
+
+          go build \
+            -tags cli \
+            -trimpath \
+            -buildvcs=false \
+            -ldflags="-s -w -X cursor/internal/buildinfo.Version=${VERSION}" \
+            -o cursor-menubar \
+            ./cmd/menubar
+
+          mkdir -p dist
+          tar czf "${ARTIFACT}" cursor-menubar
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: menubar-macos-${{ matrix.goarch }}
+          path: dist/*
+
+  release:
+    needs: [build-cli, build-menubar]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Flatten artifacts
+        run: |
+          mkdir -p release-assets
+          find artifacts -type f | while read f; do
+            cp "$f" release-assets/
+          done
+          ls -la release-assets/
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: release-assets/*
+          generate_release_notes: true
