@@ -81,6 +81,19 @@ func BuildSelectedCursorCommandsReplayMessage(userMessage *agentv1.UserMessage) 
 	return Message{Role: "user", Content: content}, true
 }
 
+// BuildSelectedCursorRulesReplayMessage 把 slash / 显式附加的 cursor_rules、selected_skills
+// 收成独立 history 条目。不要并进 user_message：升级后端后不应改写旧 user_query 的模型可见含义。
+func BuildSelectedCursorRulesReplayMessage(userMessage *agentv1.UserMessage) (Message, bool) {
+	if userMessage == nil {
+		return Message{}, false
+	}
+	content := buildSelectedCursorRulesPromptSection(userMessage.GetSelectedContext())
+	if content == "" {
+		return Message{}, false
+	}
+	return Message{Role: "user", Content: content}, true
+}
+
 func buildSelectedCursorCommandsPromptSection(selectedContext *agentv1.SelectedContext) string {
 	if selectedContext == nil || len(selectedContext.GetCursorCommands()) == 0 {
 		return ""
@@ -105,6 +118,58 @@ func buildSelectedCursorCommandsPromptSection(selectedContext *agentv1.SelectedC
 		return ""
 	}
 	return "<cursor_commands>\n" + strings.Join(entries, "\n\n") + "\n</cursor_commands>"
+}
+
+func buildSelectedCursorRulesPromptSection(selectedContext *agentv1.SelectedContext) string {
+	if selectedContext == nil {
+		return ""
+	}
+	type attachedRule struct {
+		path    string
+		content string
+	}
+	seen := make(map[string]struct{})
+	entries := make([]attachedRule, 0, len(selectedContext.GetCursorRules())+len(selectedContext.GetSelectedSkills()))
+	add := func(path string, content string) {
+		path = strings.TrimSpace(path)
+		content = strings.TrimSpace(content)
+		if content == "" {
+			return
+		}
+		key := path
+		if key == "" {
+			key = content
+		}
+		if _, ok := seen[key]; ok {
+			return
+		}
+		seen[key] = struct{}{}
+		entries = append(entries, attachedRule{path: path, content: content})
+	}
+	for _, item := range selectedContext.GetCursorRules() {
+		if item == nil || item.GetRule() == nil {
+			continue
+		}
+		add(item.GetRule().GetFullPath(), item.GetRule().GetContent())
+	}
+	for _, skill := range selectedContext.GetSelectedSkills() {
+		if skill == nil {
+			continue
+		}
+		add(skill.GetFullPath(), skill.GetContent())
+	}
+	if len(entries) == 0 {
+		return ""
+	}
+	blocks := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		if entry.path == "" {
+			blocks = append(blocks, "<cursor_rule>\n"+entry.content+"\n</cursor_rule>")
+			continue
+		}
+		blocks = append(blocks, fmt.Sprintf("<cursor_rule fullPath=\"%s\">\n%s\n</cursor_rule>", escapePromptXML(entry.path), entry.content))
+	}
+	return "<cursor_rules_context>\n" + strings.Join(blocks, "\n\n") + "\n</cursor_rules_context>"
 }
 
 func buildSelectedIDEStatePromptSection(selectedContext *agentv1.SelectedContext) string {

@@ -9,7 +9,10 @@ import (
 	modeladapter "cursor/internal/backend/agent/model"
 )
 
-const promptContextSourceSelectedCursorCommands = "selected_cursor_commands"
+const (
+	promptContextSourceSelectedCursorCommands = "selected_cursor_commands"
+	promptContextSourceSelectedCursorRules    = "selected_cursor_rules"
+)
 
 func newPromptContextMessage(source string, message modeladapter.Message, persist bool) PromptContextMessage {
 	context := PromptContextMessage{
