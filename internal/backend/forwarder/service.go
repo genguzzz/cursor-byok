@@ -15,6 +15,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"connectrpc.com/connect"
 	"github.com/google/uuid"
@@ -1089,6 +1090,11 @@ func (service *Service) handleExecResult(intent InboundIntent) error {
 			strings.TrimSpace(intent.RequestID), execID, pending.ExecKind, err)
 		return err
 	}
+	// Shell 输出可能包含非法 UTF-8 字节（如 gh --json body 输出），
+	// protobuf string 字段要求合法 UTF-8，否则 stream.Send 会 marshal 失败并终止 RunSSE，
+	// 导致排在 shell_output_delta 之后的 tool_call_delta 全部丢失，用户看不到 shell 输出。
+	result.ShellOutputDelta = sanitizeShellOutputDelta(result.ShellOutputDelta)
+	result.ToolResultPayload = sanitizeUTF8(result.ToolResultPayload)
 	if result.ShellOutputDelta != nil {
 		deltaKind := shellOutputDeltaEventKind(result.ShellOutputDelta)
 		toolCallID := firstNonEmpty(strings.TrimSpace(result.ToolCallID), strings.TrimSpace(pending.ToolCallID))
@@ -4265,6 +4271,41 @@ func shellStreamTextFromOutputUpdate(delta *agentv1.ShellOutputDeltaUpdate) (con
 		return content, "stderr", true
 	default:
 		return "", "", false
+	}
+}
+
+// sanitizeUTF8 将可能包含非法 UTF-8 字节的字符串转换为合法 UTF-8。
+// protobuf string 字段要求合法 UTF-8，否则 marshal 会失败并终止 RunSSE 流。
+func sanitizeUTF8(value string) string {
+	if utf8.ValidString(value) {
+		return value
+	}
+	return strings.ToValidUTF8(value, "�")
+}
+
+// sanitizeShellOutputDelta 清洗 ShellOutputDeltaUpdate 中 stdout/stderr 的数据，
+// 防止非法 UTF-8 字节进入 protobuf 消息导致 stream.Send 失败。
+func sanitizeShellOutputDelta(delta *agentv1.ShellOutputDeltaUpdate) *agentv1.ShellOutputDeltaUpdate {
+	if delta == nil {
+		return nil
+	}
+	switch event := delta.GetEvent().(type) {
+	case *agentv1.ShellOutputDeltaUpdate_Stdout:
+		if event.Stdout == nil {
+			return delta
+		}
+		cloned := *event.Stdout
+		cloned.Data = sanitizeUTF8(cloned.Data)
+		return &agentv1.ShellOutputDeltaUpdate{Event: &agentv1.ShellOutputDeltaUpdate_Stdout{Stdout: &cloned}}
+	case *agentv1.ShellOutputDeltaUpdate_Stderr:
+		if event.Stderr == nil {
+			return delta
+		}
+		cloned := *event.Stderr
+		cloned.Data = sanitizeUTF8(cloned.Data)
+		return &agentv1.ShellOutputDeltaUpdate{Event: &agentv1.ShellOutputDeltaUpdate_Stderr{Stderr: &cloned}}
+	default:
+		return delta
 	}
 }
 
