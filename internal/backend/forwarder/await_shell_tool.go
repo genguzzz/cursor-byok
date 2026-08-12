@@ -66,11 +66,92 @@ func (service *Service) handleAwaitShellToolInvocation(stream *ActiveStream, inv
 		return service.completeImmediateToolResult(stream, invocation, string(payload), buildAwaitShellToolCall(buildAwaitArgsFromAwaitShellArgs(args), buildAwaitShellProtoResult(result)))
 	}
 	result := service.awaitShellSnapshot(stream, args)
+
+	// 当 shell 仍在运行、block_until_ms > 0 且未匹配 pattern 时，延迟交付结果。
+	// 客户端已在 handleToolInvocation 中收到 tool_call_started（含 block_until_ms 参数），
+	// 因此会显示倒计时。定时器到期后再 snapshot 并交付结果，避免模型 tight-loop 轮询。
+	if service.shouldDeferAwaitShellResult(args, result) {
+		return service.deferAwaitShellResult(stream, invocation, args)
+	}
+
 	payload, err := json.Marshal(result)
 	if err != nil {
 		return err
 	}
 	return service.completeImmediateToolResult(stream, invocation, string(payload), buildAwaitShellToolCall(buildAwaitArgsFromAwaitShellArgs(args), buildAwaitShellProtoResult(result)))
+}
+
+const awaitShellMaxDeferMS = int64(60_000)
+const awaitShellPollInterval = 500 * time.Millisecond
+
+func (service *Service) shouldDeferAwaitShellResult(args awaitShellArgs, result awaitShellResult) bool {
+	blockUntilMS := int64(0)
+	if args.BlockUntilMS != nil {
+		blockUntilMS = *args.BlockUntilMS
+	}
+	if blockUntilMS <= 0 {
+		return false
+	}
+	if isBackgroundShellTerminalStatus(result.Status) || result.Matched {
+		return false
+	}
+	return true
+}
+
+func (service *Service) deferAwaitShellResult(stream *ActiveStream, invocation runtimecore.ToolInvocation, args awaitShellArgs) error {
+	blockUntilMS := int64(30000)
+	if args.BlockUntilMS != nil && *args.BlockUntilMS > 0 {
+		blockUntilMS = *args.BlockUntilMS
+	}
+	if blockUntilMS > awaitShellMaxDeferMS {
+		blockUntilMS = awaitShellMaxDeferMS
+	}
+	deadline := time.Now().Add(time.Duration(blockUntilMS) * time.Millisecond)
+	key := "await_shell:" + strings.TrimSpace(invocation.CallID)
+	stream.mu.Lock()
+	stream.PendingAwaitShell = &pendingAwaitShell{
+		Invocation: invocation,
+		Args:       args,
+		Deadline:   deadline,
+	}
+	stream.UpdatedAt = time.Now().UTC()
+	stream.mu.Unlock()
+	logger.Debugf("[shell-debug] AwaitShell defer request_id=%s shell_id=%s block_until_ms=%d poll_interval=%s call_id=%s",
+		strings.TrimSpace(stream.RequestID), strings.TrimSpace(args.ShellID), blockUntilMS, awaitShellPollInterval, strings.TrimSpace(invocation.CallID))
+	service.scheduleStreamTimer(stream, key, awaitShellPollInterval, streamTimerAwaitShell, "", 0, "await_shell_poll")
+	return nil
+}
+
+func (service *Service) handleAwaitShellTimerFired(stream *ActiveStream) error {
+	stream.mu.Lock()
+	pending := stream.PendingAwaitShell
+	stream.mu.Unlock()
+	if pending == nil {
+		return nil
+	}
+	result := service.awaitShellSnapshot(stream, pending.Args)
+	if service.shouldDeferAwaitShellResult(pending.Args, result) && time.Now().Before(pending.Deadline) {
+		remaining := time.Until(pending.Deadline)
+		nextPoll := awaitShellPollInterval
+		if remaining < nextPoll {
+			nextPoll = remaining
+		}
+		key := "await_shell:" + strings.TrimSpace(pending.Invocation.CallID)
+		logger.Debugf("[shell-debug] AwaitShell poll reschedule request_id=%s shell_id=%s status=%s remaining=%s next_poll=%s",
+			strings.TrimSpace(stream.RequestID), strings.TrimSpace(result.ShellID), result.Status, remaining, nextPoll)
+		service.scheduleStreamTimer(stream, key, nextPoll, streamTimerAwaitShell, "", 0, "await_shell_poll")
+		return nil
+	}
+	stream.mu.Lock()
+	stream.PendingAwaitShell = nil
+	stream.mu.Unlock()
+	payload, err := json.Marshal(result)
+	if err != nil {
+		return err
+	}
+	logger.Debugf("[shell-debug] AwaitShell deliver request_id=%s shell_id=%s status=%s matched=%v timed_out=%v stdout_len=%d",
+		strings.TrimSpace(stream.RequestID), strings.TrimSpace(result.ShellID), result.Status, result.Matched, result.TimedOut, len(result.Stdout))
+	return service.completeImmediateToolResult(stream, pending.Invocation, string(payload), buildAwaitShellToolCall(buildAwaitArgsFromAwaitShellArgs(pending.Args), buildAwaitShellProtoResult(result)))
 }
 
 func decodeAwaitShellArgs(raw []byte) (awaitShellArgs, error) {
@@ -83,6 +164,8 @@ func decodeAwaitShellArgs(raw []byte) (awaitShellArgs, error) {
 		TaskID:  strings.TrimSpace(runtimecore.ReadStringArg(argsMap, "task_id")),
 		Pattern: strings.TrimSpace(runtimecore.ReadStringArg(argsMap, "pattern")),
 	}
+	logger.Debugf("[shell-debug] decodeAwaitShellArgs raw_len=%d shell_id=%q task_id=%q pattern=%q block_until_ms_present=%v",
+		len(raw), result.ShellID, result.TaskID, result.Pattern, result.BlockUntilMS != nil)
 	if result.ShellID == "" {
 		result.ShellID = result.TaskID
 	}
@@ -97,6 +180,8 @@ func decodeAwaitShellArgs(raw []byte) (awaitShellArgs, error) {
 	if result.BlockUntilMS != nil && *result.BlockUntilMS == 0 && strings.TrimSpace(result.ShellID) == "" {
 		return result, fmt.Errorf("AwaitShell shell_id is required when block_until_ms is 0")
 	}
+	logger.Debugf("[shell-debug] decodeAwaitShellArgs raw_len=%d shell_id=%q task_id=%q pattern=%q block_until_ms=%v",
+		len(raw), result.ShellID, result.TaskID, result.Pattern, result.BlockUntilMS)
 	return result, nil
 }
 
@@ -418,6 +503,9 @@ func mergeBackgroundShellStdoutFromTerminalOutput(state *BackgroundShellState, o
 		if state.UIStdoutOffset > len(state.StdoutBuffer) {
 			state.UIStdoutOffset = len(state.StdoutBuffer)
 		}
+	} else {
+		logger.Debugf("[shell-debug] TerminalOutputMergeSkipped shell_id=%s existing_len=%d new_output_len=%d (shorter and not a prefix — possible terminal file truncation)",
+			state.ShellID, len(state.StdoutBuffer), len(output))
 	}
 	return len(state.StdoutBuffer) > before
 }

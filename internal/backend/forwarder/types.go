@@ -186,11 +186,18 @@ type ActiveStream struct {
 	BackgroundShellsByMessageID map[uint32]string
 	BackgroundShellsByExecID    map[string]string
 	BackgroundShellActions      map[string]time.Time
+	PendingAwaitShell           *pendingAwaitShell
 	TerminalCleanupTimer        *time.Timer
 	TerminalCleanupSeq          atomic.Uint64
 
 	CreatedAt time.Time
 	UpdatedAt time.Time
+}
+
+type pendingAwaitShell struct {
+	Invocation runtimecore.ToolInvocation
+	Args       awaitShellArgs
+	Deadline   time.Time
 }
 
 type BackgroundShellState struct {
