@@ -540,13 +540,20 @@ func (service *Service) RunSSE(ctx context.Context, req *connect.Request[aiserve
 							"message":      protoJSONDebugPayload(event.Message),
 							"error":        err.Error(),
 						})
-						return err
+						// marshal 类错误只影响单条消息（例如非法 UTF-8），不代表连接已断。
+						// 直接 return 会终止整条 RunSSE，把后续 shell 输出和终态全部吞掉。
+						if !isNonFatalStreamSendError(err) {
+							return err
+						}
+						logger.Errorf("[shell-debug] RunSSE skip unsendable message request_id=%s cursor=%d case=%s err=%v",
+							requestID, cursor, agentServerMessageCase(event.Message), err)
+					} else {
+						service.debug.LogRunSSE(ctx, requestID, "", "send_message", map[string]any{
+							"cursor":       cursor,
+							"message_case": agentServerMessageCase(event.Message),
+							"message":      protoJSONDebugPayload(event.Message),
+						})
 					}
-					service.debug.LogRunSSE(ctx, requestID, "", "send_message", map[string]any{
-						"cursor":       cursor,
-						"message_case": agentServerMessageCase(event.Message),
-						"message":      protoJSONDebugPayload(event.Message),
-					})
 				}
 				cursor++
 				if event.End {
@@ -4132,6 +4139,8 @@ func (service *Service) publishShellToolCallUIDeltas(requestID string, toolCallI
 			requestID, toolCallID, source, len(content))
 		return nil
 	}
+	// 先清洗成合法 UTF-8，再分片：否则分片边界计算和 protobuf marshal 都可能失败。
+	content = sanitizeUTF8(content)
 	if ensureStarted {
 		if started := buildStartedToolCall(runtimecore.ToolInvocation{
 			CallID:      toolCallID,
@@ -4283,6 +4292,17 @@ func sanitizeUTF8(value string) string {
 	return strings.ToValidUTF8(value, "�")
 }
 
+// isNonFatalStreamSendError 判断 stream.Send 失败是否只影响当前这一条消息。
+// 典型场景是 protobuf marshal 失败（非法 UTF-8），此时连接仍然可用，
+// 应该跳过该条消息继续投递后续事件，而不是终止整条 RunSSE。
+func isNonFatalStreamSendError(err error) bool {
+	if err == nil {
+		return false
+	}
+	text := strings.ToLower(err.Error())
+	return strings.Contains(text, "marshal") || strings.Contains(text, "invalid utf-8")
+}
+
 // sanitizeShellOutputDelta 清洗 ShellOutputDeltaUpdate 中 stdout/stderr 的数据，
 // 防止非法 UTF-8 字节进入 protobuf 消息导致 stream.Send 失败。
 func sanitizeShellOutputDelta(delta *agentv1.ShellOutputDeltaUpdate) *agentv1.ShellOutputDeltaUpdate {
@@ -4310,6 +4330,9 @@ func sanitizeShellOutputDelta(delta *agentv1.ShellOutputDeltaUpdate) *agentv1.Sh
 }
 
 // chunkShellStreamText 把超长 shell 输出拆成多段，避免单包过大。
+// 切分必须落在 UTF-8 rune 边界上：protobuf string 字段要求合法 UTF-8，
+// 单行 JSON（如 gh --json 输出中文）在字节位置切开会产生半个 rune，
+// 导致 stream.Send marshal 失败并终止整条 RunSSE，用户完全看不到 shell 输出。
 func chunkShellStreamText(content string, limit int) []string {
 	if content == "" {
 		return nil
@@ -4320,19 +4343,33 @@ func chunkShellStreamText(content string, limit int) []string {
 	chunks := make([]string, 0, (len(content)+limit-1)/limit)
 	for len(content) > 0 {
 		n := limit
-		if n > len(content) {
-			n = len(content)
+		if n >= len(content) {
+			chunks = append(chunks, content)
+			break
 		}
 		// 尽量在换行处切开，减少半行撕裂。
-		if n < len(content) {
-			if cut := strings.LastIndex(content[:n], "\n"); cut >= limit/2 {
-				n = cut + 1
-			}
+		if cut := strings.LastIndex(content[:n], "\n"); cut >= limit/2 {
+			n = cut + 1
+		} else {
+			n = alignUTF8ChunkEnd(content, n)
 		}
 		chunks = append(chunks, content[:n])
 		content = content[n:]
 	}
 	return chunks
+}
+
+// alignUTF8ChunkEnd 把切分点回退到最近的 rune 起始字节，避免撕裂多字节字符。
+func alignUTF8ChunkEnd(content string, end int) int {
+	if end <= 0 || end >= len(content) {
+		return end
+	}
+	for offset := end; offset > 0; offset-- {
+		if utf8.RuneStart(content[offset]) {
+			return offset
+		}
+	}
+	return end
 }
 
 // shellToolCallDeltaFromStreamText 按 stdout/stderr 构造 UI 可消费的 ToolCallDelta。
