@@ -68,6 +68,7 @@ const (
 	streamTimerShellForeground      streamTimerKind = "shell_foreground"
 	streamTimerShellTransportClose  streamTimerKind = "shell_transport_close"
 	streamTimerBackgroundShellUI    streamTimerKind = "background_shell_ui"
+	streamTimerAwaitShell           streamTimerKind = "await_shell"
 	streamTimerCheckpointBlobs      streamTimerKind = "checkpoint_blobs"
 	streamTimerOrphanCancel         streamTimerKind = "orphan_cancel"
 )
@@ -388,6 +389,7 @@ func (service *Service) reconcileStream(stream *ActiveStream) error {
 	providerActive := stream.ProviderActive
 	pendingExecCount := len(stream.PendingExecs)
 	pendingInteractionCount := len(stream.PendingInteractions)
+	hasPendingAwaitShell := stream.PendingAwaitShell != nil
 	hasPendingCompaction := stream.PendingCompaction != nil
 	action := stream.PendingProviderAction
 	completion := stream.PendingProviderCompletion
@@ -396,7 +398,7 @@ func (service *Service) reconcileStream(stream *ActiveStream) error {
 	if providerActive {
 		return nil
 	}
-	if pendingExecCount+pendingInteractionCount > 0 {
+	if pendingExecCount+pendingInteractionCount > 0 || hasPendingAwaitShell {
 		if hasPendingAwaitingUserInteraction(stream) {
 			service.setTurnPhase(stream, TurnPhaseAwaitingUser)
 		} else if hasPendingCompaction {
@@ -1043,6 +1045,8 @@ func (service *Service) handleTimerEvent(stream *ActiveStream, payload *streamTi
 	case streamTimerBackgroundShellUI:
 		_, err := service.pollBackgroundShellUI(stream, payload.ExecID)
 		return err
+	case streamTimerAwaitShell:
+		return service.handleAwaitShellTimerFired(stream)
 	case streamTimerCheckpointBlobs:
 		return service.handleCheckpointBlobTimeout(stream)
 	case streamTimerOrphanCancel:
@@ -1076,6 +1080,7 @@ func (service *Service) scheduleOrphanCancelActor(requestID string, reason strin
 		!stream.ProviderActive &&
 		len(stream.PendingExecs) == 0 &&
 		len(stream.PendingInteractions) == 0 &&
+		stream.PendingAwaitShell == nil &&
 		len(stream.Backlog) == 0
 	terminal := isTerminalStreamStatus(stream.Status)
 	stream.mu.Unlock()

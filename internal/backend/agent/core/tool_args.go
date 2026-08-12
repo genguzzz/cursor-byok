@@ -37,6 +37,9 @@ func DecodeArgsMap(raw []byte) (map[string]any, error) {
 }
 
 // ReadStringArg reads the first string value matching one of the provided keys.
+// When the model emits a JSON number (e.g. `shell_id: 340173`), DecodeArgsMap
+// preserves it as a json.Number; we coerce numeric values to their string
+// spelling so callers that expect a string identifier still resolve correctly.
 func ReadStringArg(args map[string]any, keys ...string) string {
 	for _, key := range keys {
 		value, ok := args[key]
@@ -45,6 +48,9 @@ func ReadStringArg(args map[string]any, keys ...string) string {
 		}
 		if text, ok := value.(string); ok {
 			return text
+		}
+		if number, ok := value.(json.Number); ok {
+			return number.String()
 		}
 	}
 	return ""

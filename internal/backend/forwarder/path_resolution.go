@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"cursor/gen/agentv1"
+	"cursor/internal/logger"
 )
 
 type streamPathContext struct {
@@ -28,6 +29,13 @@ func updateStreamRequestContextData(stream *ActiveStream, requestContext *agentv
 		workspacePaths = compactWorkspacePaths(env.GetWorkspacePaths(), env.GetProjectFolder())
 		terminalsFolder = strings.TrimSpace(env.GetTerminalsFolder())
 		fileContents = cloneStringMap(requestContext.GetFileContents())
+	}
+
+	if terminalsFolder == "" && len(workspacePaths) > 0 {
+		if derived := deriveCursorTerminalsFolder(workspacePaths[0]); derived != "" {
+			terminalsFolder = derived
+			logger.Debugf("[shell-debug] TerminalsFolderFallback derived=%q from_workspace=%q", derived, workspacePaths[0])
+		}
 	}
 
 	stream.mu.Lock()
@@ -73,6 +81,56 @@ func compactWorkspacePaths(workspacePaths []string, projectFolder string) []stri
 		result = append(result, cleaned)
 	}
 	return result
+}
+
+// deriveCursorTerminalsFolder 在客户端未提供 terminals_folder 时，
+// 按 Cursor 标准目录约定从 workspace 路径推导终端文件目录：
+// ~/.cursor/projects/<encoded-workspace>/terminals
+// 编码规则：将路径分隔符替换为短横线，去掉前导短横线。
+// 例: /Users/gengu/Code/logic-mono → Users-gengu-Code-logic-mono
+func deriveCursorTerminalsFolder(workspacePath string) string {
+	trimmed := strings.TrimSpace(workspacePath)
+	if trimmed == "" {
+		return ""
+	}
+	cleaned := filepath.Clean(trimmed)
+	home, err := os.UserHomeDir()
+	if err != nil || strings.TrimSpace(home) == "" {
+		return ""
+	}
+	encoded := encodeCursorProjectName(cleaned)
+	if encoded == "" {
+		return ""
+	}
+	return filepath.Join(home, ".cursor", "projects", encoded, "terminals")
+}
+
+// encodeCursorProjectName 将绝对路径编码为 Cursor 项目目录名。
+// 规则：将路径分隔符替换为短横线，去掉前导短横线。
+func encodeCursorProjectName(absPath string) string {
+	if absPath == "" {
+		return ""
+	}
+	encoded := absPath
+	// 统一路径分隔符为 /
+	encoded = filepath.ToSlash(encoded)
+	// 去掉卷标 (Windows)
+	volume := filepath.VolumeName(encoded)
+	if volume != "" {
+		encoded = strings.TrimPrefix(encoded, volume)
+		// 去掉卷标中的冒号，保留盘符
+		volume = strings.ReplaceAll(volume, ":", "")
+	}
+	// 将所有 / 替换为 -
+	encoded = strings.ReplaceAll(encoded, "/", "-")
+	// 去掉前导 -
+	encoded = strings.TrimLeft(encoded, "-")
+	// 拼回卷标（如 C）
+	if volume != "" {
+		volume = strings.TrimSuffix(volume, "-")
+		encoded = volume + "-" + encoded
+	}
+	return encoded
 }
 
 func cloneStringMap(input map[string]string) map[string]string {
