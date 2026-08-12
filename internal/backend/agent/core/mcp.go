@@ -16,7 +16,7 @@ type MCPToolPayload struct {
 
 // DecodeMCPToolPayload 解析 CallMcpTool 参数，并兼容字符串化的 arguments 对象。
 //
-// 模型常把 TAPD proxy 风格（tool_name / tool_args）或整包塞进 args，
+// 模型可能混用 snake_case、嵌套形态，或把整包塞进 args，
 // 导致 lookup name 为空、客户端回 tool not found: ?。这里按官方 camelCase
 // 为主，同时接受 snake_case 与嵌套形态。
 func DecodeMCPToolPayload(raw []byte) (MCPToolPayload, error) {
@@ -106,8 +106,7 @@ func liftMCPToolPayloadFromNestedArguments(payload *MCPToolPayload) {
 
 // NormalizeMCPServerIdentifier 把模型漏写的 user- 前缀补上。
 //
-// 客户端注册名是 user-tapd_mcp_http / cursor-ide-browser；只写 tapd_mcp_http
-// 会变成 tapd_mcp_http-lookup_tapd_tool 而查无此工具。
+// 客户端注册名形如 user-xxx / cursor-xxx；漏写前缀会导致 lookup name 查无此工具。
 func NormalizeMCPServerIdentifier(server string) string {
 	trimmed := strings.TrimSpace(server)
 	if trimmed == "" {
@@ -121,8 +120,8 @@ func NormalizeMCPServerIdentifier(server string) string {
 
 // InferMCPServerIdentifier 从 canonical lookup name 中反推出 server identifier。
 //
-// 注册名形如 user-tapd_mcp_http-lookup_tapd_tool；工具名通常不含 '-'。
-// 按最后一个 '-' 切开，避免把 user-tapd_mcp_http 误切成 user。
+// 注册名形如 user-<server>-<tool>；工具名通常不含 '-'。
+// 按最后一个 '-' 切开，避免把 user-<server> 误切成 user。
 func InferMCPServerIdentifier(name string) string {
 	trimmed := strings.TrimSpace(name)
 	if trimmed == "" {
@@ -172,43 +171,7 @@ func ResolveMCPToolInvocation(payload MCPToolPayload) (server string, toolName s
 	if args == nil {
 		args = map[string]any{}
 	}
-	toolName, args = RewriteTAPDProxyMCPTool(server, toolName, args)
 	return server, toolName, args
-}
-
-var tapdMCPFacadeToolNames = map[string]struct{}{
-	"lookup_tapd_tool":         {},
-	"lookup_tool_param_schema": {},
-	"proxy_execute_tool":       {},
-	"tql_syntax_reference":     {},
-}
-
-// RewriteTAPDProxyMCPTool 把 TAPD 内部 API 名（bugs_get 等）改写成 proxy_execute_tool。
-//
-// TAPD MCP 只暴露 lookup / proxy / schema / tql 四个门面；bugs_get 不是 MCP tool。
-func RewriteTAPDProxyMCPTool(server string, toolName string, args map[string]any) (string, map[string]any) {
-	if !isTAPDMCPServer(server) {
-		return toolName, args
-	}
-	name := strings.TrimSpace(toolName)
-	if name == "" {
-		return toolName, args
-	}
-	if _, ok := tapdMCPFacadeToolNames[name]; ok {
-		return name, args
-	}
-	if args == nil {
-		args = map[string]any{}
-	}
-	return "proxy_execute_tool", map[string]any{
-		"tool_name": name,
-		"tool_args": args,
-	}
-}
-
-func isTAPDMCPServer(server string) bool {
-	trimmed := strings.ToLower(strings.TrimSpace(server))
-	return strings.Contains(trimmed, "tapd_mcp")
 }
 
 func firstDecodedString(values map[string]any, keys ...string) string {

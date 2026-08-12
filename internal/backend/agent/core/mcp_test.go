@@ -90,56 +90,6 @@ func TestDecodeMCPToolPayloadKeepsOfficialProxyArguments(t *testing.T) {
 		t.Fatal(err)
 	}
 	if got.ToolName != "proxy_execute_tool" || got.Arguments["tool_name"] != "bugs_get" {
-		t.Fatalf("must not steal nested TAPD proxy fields: %+v", got)
-	}
-}
-
-func TestRewriteTAPDProxyMCPToolWrapsInternalAPIName(t *testing.T) {
-	t.Parallel()
-
-	toolName, args := RewriteTAPDProxyMCPTool("user-tapd_mcp_http", "bugs_get", map[string]any{
-		"id":           "1170212961161778438",
-		"workspace_id": "70212961",
-	})
-	if toolName != "proxy_execute_tool" {
-		t.Fatalf("toolName=%q", toolName)
-	}
-	if args["tool_name"] != "bugs_get" {
-		t.Fatalf("args=%v", args)
-	}
-	inner, _ := args["tool_args"].(map[string]any)
-	if inner["workspace_id"] != "70212961" {
-		t.Fatalf("tool_args=%v", args)
-	}
-}
-
-func TestRewriteTAPDProxyMCPToolKeepsFacadeTools(t *testing.T) {
-	t.Parallel()
-
-	args := map[string]any{"task_description": "查缺陷"}
-	toolName, got := RewriteTAPDProxyMCPTool("user-tapd_mcp_http", "lookup_tapd_tool", args)
-	if toolName != "lookup_tapd_tool" {
-		t.Fatalf("toolName=%q", toolName)
-	}
-	if got["task_description"] != "查缺陷" {
-		t.Fatalf("args mutated: %v", got)
-	}
-}
-
-func TestResolveMCPToolInvocationRewritesBugsGet(t *testing.T) {
-	t.Parallel()
-
-	server, toolName, args := ResolveMCPToolInvocation(MCPToolPayload{
-		Server:   "tapd_mcp_http",
-		ToolName: "bugs_get",
-		Arguments: map[string]any{
-			"id": "1",
-		},
-	})
-	if server != "user-tapd_mcp_http" || toolName != "proxy_execute_tool" {
-		t.Fatalf("server=%q toolName=%q", server, toolName)
-	}
-	if args["tool_name"] != "bugs_get" {
-		t.Fatalf("args=%v", args)
+		t.Fatalf("must not steal nested proxy fields: %+v", got)
 	}
 }
