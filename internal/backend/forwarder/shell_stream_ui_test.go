@@ -1,9 +1,11 @@
 package forwarder
 
 import (
+	"errors"
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"cursor/gen/agentv1"
 	runtimecore "cursor/internal/backend/agent/core"
@@ -179,6 +181,44 @@ func TestBackgroundedMarksUIStartedEnsured(t *testing.T) {
 }
 
 func boolPtr(v bool) *bool { return &v }
+
+func TestChunkShellStreamTextKeepsRuneBoundaries(t *testing.T) {
+	t.Parallel()
+
+	// 单行 JSON + 中文，模拟 gh --json 输出：8KB 内没有换行，必须按 rune 边界切。
+	input := `[{"body":"` + strings.Repeat("摘要中文内容", 3000) + `"}]`
+	chunks := chunkShellStreamText(input, shellToolCallDeltaChunkLimit)
+	if len(chunks) < 2 {
+		t.Fatalf("expected multiple chunks, got %d", len(chunks))
+	}
+	var joined strings.Builder
+	for i, chunk := range chunks {
+		if chunk == "" {
+			t.Fatalf("empty chunk at %d", i)
+		}
+		if !utf8.ValidString(chunk) {
+			t.Fatalf("chunk %d is not valid UTF-8", i)
+		}
+		joined.WriteString(chunk)
+	}
+	if joined.String() != input {
+		t.Fatal("chunks lost or reordered data")
+	}
+}
+
+func TestIsNonFatalStreamSendError(t *testing.T) {
+	t.Parallel()
+
+	if !isNonFatalStreamSendError(errors.New("internal: marshal message: string field contains invalid UTF-8")) {
+		t.Fatal("marshal error must be treated as non-fatal")
+	}
+	if isNonFatalStreamSendError(errors.New("write tcp 127.0.0.1: broken pipe")) {
+		t.Fatal("transport error must stay fatal")
+	}
+	if isNonFatalStreamSendError(nil) {
+		t.Fatal("nil error is not a send failure")
+	}
+}
 
 func TestChunkShellStreamText(t *testing.T) {
 	t.Parallel()
