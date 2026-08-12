@@ -1,0 +1,13 @@
+# cursor-byok project rules
+
+## Git commit conventions
+
+- Author: `genguzzz <genguzzz@qq.com>`
+- Use English conventional commit format: `type(scope): subject`
+  - type: `feat` | `fix` | `refactor` | `test` | `perf` | `docs` | `ci` | `chore`
+  - scope: module name (e.g. `forwarder`, `menubar`, `mcp`, `prompt`, `ci`, `config`)
+  - subject: concise English description, lowercase, no trailing period
+- Body (optional): English, explain why and what changed
+- No `Co-authored-by` or tool attribution lines
+- No `--story=` or `--bug=` trailers
+- No Chinese `【公版】` prefix or Chinese commit messages
