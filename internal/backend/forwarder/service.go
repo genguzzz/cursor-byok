@@ -15,6 +15,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"connectrpc.com/connect"
 	"github.com/google/uuid"
@@ -1089,6 +1090,8 @@ func (service *Service) handleExecResult(intent InboundIntent) error {
 			strings.TrimSpace(intent.RequestID), execID, pending.ExecKind, err)
 		return err
 	}
+	result.ShellOutputDelta = sanitizeShellOutputDelta(result.ShellOutputDelta)
+	result.ToolResultPayload = sanitizeUTF8(result.ToolResultPayload)
 	if result.ShellOutputDelta != nil {
 		deltaKind := shellOutputDeltaEventKind(result.ShellOutputDelta)
 		toolCallID := firstNonEmpty(strings.TrimSpace(result.ToolCallID), strings.TrimSpace(pending.ToolCallID))
@@ -4268,7 +4271,38 @@ func shellStreamTextFromOutputUpdate(delta *agentv1.ShellOutputDeltaUpdate) (con
 	}
 }
 
-// chunkShellStreamText 把超长 shell 输出拆成多段，避免单包过大。
+func sanitizeUTF8(value string) string {
+	if utf8.ValidString(value) {
+		return value
+	}
+	return strings.ToValidUTF8(value, "�")
+}
+
+func sanitizeShellOutputDelta(delta *agentv1.ShellOutputDeltaUpdate) *agentv1.ShellOutputDeltaUpdate {
+	if delta == nil {
+		return nil
+	}
+	switch event := delta.GetEvent().(type) {
+	case *agentv1.ShellOutputDeltaUpdate_Stdout:
+		if event.Stdout == nil {
+			return delta
+		}
+		copy := *event.Stdout
+		copy.Data = sanitizeUTF8(copy.Data)
+		return &agentv1.ShellOutputDeltaUpdate{Event: &agentv1.ShellOutputDeltaUpdate_Stdout{Stdout: &copy}}
+	case *agentv1.ShellOutputDeltaUpdate_Stderr:
+		if event.Stderr == nil {
+			return delta
+		}
+		copy := *event.Stderr
+		copy.Data = sanitizeUTF8(copy.Data)
+		return &agentv1.ShellOutputDeltaUpdate{Event: &agentv1.ShellOutputDeltaUpdate_Stderr{Stderr: &copy}}
+	default:
+		return delta
+	}
+}
+
+// chunkShellStreamText 把超长 shell 输出拆成多段，避免单包过大.
 func chunkShellStreamText(content string, limit int) []string {
 	if content == "" {
 		return nil

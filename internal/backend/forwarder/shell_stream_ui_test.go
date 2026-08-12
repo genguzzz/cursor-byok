@@ -148,9 +148,9 @@ func TestBackgroundedMarksUIStartedEnsured(t *testing.T) {
 	t.Parallel()
 
 	stream := &ActiveStream{
-		BackgroundShells:           map[string]*BackgroundShellState{},
+		BackgroundShells:            map[string]*BackgroundShellState{},
 		BackgroundShellsByMessageID: map[uint32]string{},
-		BackgroundShellsByExecID:   map[string]string{},
+		BackgroundShellsByExecID:    map[string]string{},
 	}
 	pending := runtimecore.PendingExec{
 		ToolCallID:            "tc_bg",
@@ -175,6 +175,24 @@ func TestBackgroundedMarksUIStartedEnsured(t *testing.T) {
 	}
 	if !state.UIStartedEnsured {
 		t.Fatal("backgrounded must mark UIStartedEnsured to avoid re-started after completed")
+	}
+}
+
+func TestSanitizeUTF8ShellOutput(t *testing.T) {
+	t.Parallel()
+
+	if got := sanitizeUTF8("ok\xffdone"); got != "ok�done" {
+		t.Fatalf("sanitizeUTF8 = %q", got)
+	}
+
+	delta := &agentv1.ShellOutputDeltaUpdate{
+		Event: &agentv1.ShellOutputDeltaUpdate_Stdout{
+			Stdout: &agentv1.ShellStreamStdout{Data: "ok\xffdone"},
+		},
+	}
+	got := sanitizeShellOutputDelta(delta)
+	if got.GetStdout().GetData() != "ok�done" {
+		t.Fatalf("sanitized stdout = %q", got.GetStdout().GetData())
 	}
 }
 
