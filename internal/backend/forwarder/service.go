@@ -843,6 +843,7 @@ func (service *Service) handleRunIntent(intent InboundIntent) error {
 	}
 	updateStreamRequestContextData(stream, intent.RequestContext)
 	service.updateStreamMCPToolServers(stream, intent.RequestContext)
+	service.updateStreamStaticManifest(stream, intent.RequestContext)
 	clearPendingProviderCompletion(stream)
 	stream.mu.Lock()
 	stream.ThinkingEffort = strings.TrimSpace(intent.ThinkingEffort)
@@ -3592,6 +3593,20 @@ func (service *Service) updateStreamMCPToolServers(stream *ActiveStream, request
 		}
 		stream.MCPToolServers[trimmedToolName] = trimmedServerIdentifier
 	}
+	stream.UpdatedAt = time.Now().UTC()
+	stream.mu.Unlock()
+}
+
+func (service *Service) updateStreamStaticManifest(stream *ActiveStream, requestContext *agentv1.RequestContext) {
+	if stream == nil {
+		return
+	}
+	manifest := extractStaticManifest(requestContext)
+	if manifest == nil {
+		return
+	}
+	stream.mu.Lock()
+	stream.LatestStaticManifest = manifest
 	stream.UpdatedAt = time.Now().UTC()
 	stream.mu.Unlock()
 }

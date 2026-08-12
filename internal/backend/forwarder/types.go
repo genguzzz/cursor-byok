@@ -178,6 +178,7 @@ type ActiveStream struct {
 	PartialToolCallIDs          map[string]struct{}
 	PatchEditQueues             map[string][]queuedPatchEditOperation
 	MCPToolServers              map[string]string
+	LatestStaticManifest        *agentv1.RequestContext
 	WorkspacePaths              []string
 	TerminalsFolder             string
 	RequestFileContents         map[string]string
@@ -268,6 +269,7 @@ type PendingCompaction struct {
 	HookMessage               string
 	SummaryModelCallID        string
 	StartedAt                 time.Time
+	StaticManifest            *agentv1.RequestContext
 }
 
 type ProviderRequest struct {

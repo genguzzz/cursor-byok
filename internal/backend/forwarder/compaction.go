@@ -288,7 +288,11 @@ func (service *Service) beginPendingCompaction(stream *ActiveStream, plan *compa
 	stream.mu.Lock()
 	pendingExec.ModelCallID = strings.TrimSpace(stream.CurrentModelCallID)
 	pendingExec.ProviderPass = stream.ProviderPassCount
-	stream.PendingCompaction = newPendingCompaction(plan)
+	pending := newPendingCompaction(plan)
+	if pending != nil {
+		pending.StaticManifest = stream.LatestStaticManifest
+	}
+	stream.PendingCompaction = pending
 	stream.PendingProviderAction = providerActionNone
 	stream.PendingExecs[pendingExec.ExecID] = pendingExec
 	stream.Phase = TurnPhaseCompacting
@@ -661,6 +665,9 @@ func buildCompactedContextEntries(conversation *ConversationFile, plan *PendingC
 		return nil, nil
 	}
 	entries := []HistoryEntry{newCompactionSummaryEntry(plan, summaryText)}
+	if manifestEntry, ok := buildCompactedManifestEntry(conversation, plan); ok {
+		entries = append(entries, manifestEntry)
+	}
 	runtimeEntry, ok, err := newCompactedRuntimeStateEntry(conversation, plan)
 	if err != nil {
 		return nil, err
@@ -745,6 +752,89 @@ func newCompactedRuntimeStateEntry(conversation *ConversationFile, plan *Pending
 		Kind:      "runtime_state",
 		Payload:   encoded,
 	}, true, nil
+}
+
+// buildCompactedManifestEntry re-injects the static skill/MCP/rules manifest into
+// the compacted history so that post-compaction replays keep advertising the
+// agent's available skills and MCP tools. Without this, compaction drops the
+// turn-1 request_context entry (the only carrier of the static <agent_skills> and
+// <mcp_file_system> sections) and the model can no longer tell what capabilities
+// it has.
+func buildCompactedManifestEntry(conversation *ConversationFile, plan *PendingCompaction) (HistoryEntry, bool) {
+	if plan == nil {
+		return HistoryEntry{}, false
+	}
+	// Prefer the manifest captured from the current turn's request context: it
+	// reflects the live skill/rule/MCP surface (including changes after a Cursor
+	// restart). Only fall back to the earliest stored request_context when the
+	// current turn did not carry a static manifest.
+	manifest := extractStaticManifest(plan.StaticManifest)
+	if manifest == nil {
+		manifest = collectCompactionStaticManifest(conversation)
+	}
+	if manifest == nil {
+		return HistoryEntry{}, false
+	}
+	payload, err := protojson.Marshal(manifest)
+	if err != nil {
+		return HistoryEntry{}, false
+	}
+	return HistoryEntry{
+		TurnSeq:   plan.CurrentTurnSeq,
+		RequestID: strings.TrimSpace(plan.CurrentRequestID),
+		Role:      "user",
+		Kind:      "request_context",
+		Payload:   payload,
+	}, true
+}
+
+// extractStaticManifest keeps only the durable capability surface (skill
+// descriptors and MCP file-system options) from a request context, dropping
+// realtime fields that are recompiled per turn.
+func extractStaticManifest(source *agentv1.RequestContext) *agentv1.RequestContext {
+	if source == nil {
+		return nil
+	}
+	manifest := &agentv1.RequestContext{}
+	hasContent := false
+	if options := source.GetSkillOptions(); options != nil && len(options.GetSkillDescriptors()) > 0 {
+		manifest.SkillOptions = proto.Clone(options).(*agentv1.SkillOptions)
+		hasContent = true
+	} else if descriptors := collectSkillDescriptors(source); len(descriptors) > 0 {
+		manifest.SkillOptions = &agentv1.SkillOptions{SkillDescriptors: descriptors}
+		hasContent = true
+	}
+	if options := source.GetMcpFileSystemOptions(); options != nil &&
+		(options.GetEnabled() || len(options.GetMcpDescriptors()) > 0) {
+		manifest.McpFileSystemOptions = proto.Clone(options).(*agentv1.McpFileSystemOptions)
+		hasContent = true
+	}
+	if !hasContent {
+		return nil
+	}
+	return manifest
+}
+
+// collectCompactionStaticManifest scans conversation history for the earliest
+// stored request_context and extracts its static capability manifest. This is
+// only a fallback for when the current turn did not carry a live manifest.
+func collectCompactionStaticManifest(conversation *ConversationFile) *agentv1.RequestContext {
+	if conversation == nil {
+		return nil
+	}
+	for _, entry := range conversation.Entries {
+		if strings.TrimSpace(entry.Kind) != "request_context" {
+			continue
+		}
+		source := &agentv1.RequestContext{}
+		if err := protojson.Unmarshal(entry.Payload, source); err != nil {
+			continue
+		}
+		if manifest := extractStaticManifest(source); manifest != nil {
+			return manifest
+		}
+	}
+	return nil
 }
 
 func newCompactionRequestEntry(plan *PendingCompaction) HistoryEntry {
@@ -1025,6 +1115,7 @@ func clonePendingCompaction(plan *PendingCompaction) *PendingCompaction {
 		HookMessage:               plan.HookMessage,
 		SummaryModelCallID:        plan.SummaryModelCallID,
 		StartedAt:                 plan.StartedAt,
+		StaticManifest:            plan.StaticManifest,
 	}
 }
 
