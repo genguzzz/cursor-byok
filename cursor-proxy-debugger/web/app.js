@@ -142,7 +142,7 @@ function filteredExchanges() {
       if (state.endpoint === "bidiappend" && !item.path.toLowerCase().includes("bidiappend")) return false;
       if (state.endpoint === "cmdk" && !item.path.toLowerCase().includes("cmdkservice")) return false;
       if (state.endpoint === "fork" && !isForkTrafficPath(item.path)) return false;
-      if (state.server !== "all" && resolveServer(item) !== state.server) return false;
+  if (state.server !== "all" && resolveServer(item) !== state.server) return false;
       if (requestId && !String(item.requestId || "").toLowerCase().includes(requestId)) return false;
       if (!query) return true;
       return [item.url, item.host, item.server, item.captureSource, item.requestId, item.requestKind, item.responseKind, item.state, String(item.status)]
@@ -171,7 +171,9 @@ function resolveServer(item) {
 }
 
 function serverLabel(server) {
-  return server === "local" ? t("server.local") : t("server.official");
+  if (server === "local") return t("server.local");
+  if (server === "provider") return t("server.provider");
+  return t("server.official");
 }
 
 function renderList() {

@@ -148,6 +148,30 @@ type LLMArtifactPaths struct {
 	SummaryPath  string
 }
 
+// ProviderTrafficHop describes one outbound request from the local server to a model provider.
+type ProviderTrafficHop struct {
+	StartedAt      time.Time
+	Duration       time.Duration
+	Method         string
+	URL            string
+	Host           string
+	Path           string
+	Status         int
+	RequestID      string
+	ModelCallID    string
+	Provider       string
+	RequestHeader  map[string][]string
+	ResponseHeader map[string][]string
+	RequestBody    []byte
+	ResponseBody   []byte
+	Error          string
+}
+
+// ProviderTrafficCapture receives local-server outbound provider traffic.
+type ProviderTrafficCapture interface {
+	CaptureProvider(hop ProviderTrafficHop)
+}
+
 // LLMArtifactObserver 定义模型调用原始工件写入接口。
 type LLMArtifactObserver interface {
 	RecordLLMRequest(requestID string, runID string, modelCallID string, payload map[string]any) (string, error)

@@ -3,7 +3,9 @@ package modeladapter
 
 import (
 	"context"
+	"io"
 	"net/http"
+	"time"
 )
 
 // DoProviderRequestWithRetry 保留旧入口名；本地模式不在服务端重试 provider 请求。
@@ -29,6 +31,7 @@ func doProviderRequestWithRetry(
 	if client == nil {
 		client = http.DefaultClient
 	}
+	startedAt := time.Now().UTC()
 	httpReq, err := buildRequest(ctx)
 	if err != nil {
 		return nil, err
@@ -39,6 +42,29 @@ func doProviderRequestWithRetry(
 			_ = resp.Body.Close()
 		}
 		return nil, err
+	}
+	hop := ProviderTrafficHop{
+		StartedAt:      startedAt,
+		Method:         httpReq.Method,
+		URL:            httpReq.URL.String(),
+		Host:           httpReq.URL.Host,
+		Path:           httpReq.URL.Path,
+		RequestID:      requestID,
+		ModelCallID:    modelCallID,
+		Provider:       provider,
+		Status:         resp.StatusCode,
+		RequestHeader:  cloneHeader(httpReq.Header),
+		ResponseHeader: cloneHeader(resp.Header),
+	}
+	if httpReq.GetBody != nil {
+		if body, bodyErr := httpReq.GetBody(); bodyErr == nil {
+			hop.RequestBody, _ = io.ReadAll(body)
+			_ = body.Close()
+		}
+	}
+	resp.Body = &providerResponseCapture{
+		ReadCloser: resp.Body,
+		hop:        hop,
 	}
 	return resp, nil
 }
