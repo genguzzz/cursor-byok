@@ -91,7 +91,7 @@ func (broker *StreamBroker) OpenStream(requestID string, conversationID string, 
 			existing.BackgroundShellActions = make(map[string]time.Time)
 		}
 		if existing.PendingCheckpointBlobWrites == nil {
-			existing.PendingCheckpointBlobWrites = make(map[uint32]string)
+			existing.PendingCheckpointBlobWrites = make(map[uint32]pendingCheckpointBlobWrite)
 		}
 		if existing.ConfirmedCheckpointBlobs == nil {
 			existing.ConfirmedCheckpointBlobs = make(map[string]struct{})
@@ -121,7 +121,7 @@ func (broker *StreamBroker) OpenStream(requestID string, conversationID string, 
 		BackgroundShellsByMessageID: make(map[uint32]string),
 		BackgroundShellsByExecID:    make(map[string]string),
 		BackgroundShellActions:      make(map[string]time.Time),
-		PendingCheckpointBlobWrites: make(map[uint32]string),
+		PendingCheckpointBlobWrites: make(map[uint32]pendingCheckpointBlobWrite),
 		ConfirmedCheckpointBlobs:    make(map[string]struct{}),
 		CreatedAt:                   now,
 		UpdatedAt:                   now,

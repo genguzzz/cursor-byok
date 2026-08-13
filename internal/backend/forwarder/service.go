@@ -2423,6 +2423,14 @@ func (service *Service) finishSuccessfulTurnAfterCheckpoint(stream *ActiveStream
 		return nil
 	}
 	requestID := firstNonEmpty(strings.TrimSpace(completion.RequestID), strings.TrimSpace(stream.RequestID))
+	conversationID := firstNonEmpty(strings.TrimSpace(completion.ConversationID), strings.TrimSpace(stream.ConversationID))
+	turnSeq := completion.TurnSeq
+	if turnSeq <= 0 {
+		turnSeq = stream.TurnSeq
+	}
+	if err := service.finalizeConversationLoopAfterCheckpoint(stream, conversationID, turnSeq, requestID); err != nil {
+		return err
+	}
 	usage := completion.Usage
 	if err := service.broker.Publish(requestID, StreamEvent{
 		Message: buildTurnEndedMessage(usage.InputTokens, usage.OutputTokens, usage.CacheReadTokens, usage.CacheWriteTokens),
@@ -2434,6 +2442,26 @@ func (service *Service) finishSuccessfulTurnAfterCheckpoint(stream *ActiveStream
 	}
 	service.setTurnPhase(stream, TurnPhaseCompleted)
 	return nil
+}
+
+func (service *Service) finalizeConversationLoopAfterCheckpoint(stream *ActiveStream, conversationID string, turnSeq int64, requestID string) error {
+	if service == nil || service.store == nil || stream == nil {
+		return nil
+	}
+	_, err := service.store.UpdateConversationMeta(conversationID, func(conversation *ConversationFile) error {
+		if conversation == nil {
+			return nil
+		}
+		if strings.TrimSpace(conversation.CurrentRequestID) != strings.TrimSpace(requestID) || conversation.CurrentTurnSeq != turnSeq {
+			return nil
+		}
+		conversation.CurrentLoopID = fmt.Sprintf("%d:%s", turnSeq, strings.TrimSpace(requestID))
+		conversation.CurrentLoopStatus = "completed"
+		conversation.CurrentRequestID = strings.TrimSpace(requestID)
+		conversation.CurrentTurnSeq = turnSeq
+		return nil
+	})
+	return err
 }
 
 func (service *Service) failStreamIfNonTerminal(stream *ActiveStream, terminalCode string, cause error) error {
