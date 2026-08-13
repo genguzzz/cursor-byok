@@ -12,11 +12,36 @@ import (
 	"cursor/gen/agentv1"
 )
 
-const checkpointBlobWriteTimeout = 5 * time.Second
+const (
+	checkpointBlobWriteBaseTimeout = 5 * time.Second
+	checkpointBlobWritePerBlob     = 500 * time.Millisecond
+	checkpointBlobWritePerMegabyte = 2 * time.Second
+	checkpointBlobWriteMaxTimeout  = 30 * time.Second
+)
+
+const checkpointBlobMegabyte int64 = 1 << 20
 
 type pendingCheckpointBlobWrite struct {
 	requestID uint32
 	blob      CheckpointBlob
+}
+
+// checkpointBlobWriteTimeoutFor scales the checkpoint acknowledgement deadline
+// with the number and total size of blobs still waiting for the client to
+// confirm. Large codebase file-tree snapshots take the client much longer to
+// write back, so a fixed deadline rejects healthy checkpoints too early.
+func checkpointBlobWriteTimeoutFor(pending map[uint32]pendingCheckpointBlobWrite) time.Duration {
+	var totalBytes int64
+	for _, write := range pending {
+		totalBytes += int64(len(write.blob.Data))
+	}
+	timeout := checkpointBlobWriteBaseTimeout +
+		time.Duration(len(pending))*checkpointBlobWritePerBlob +
+		time.Duration(totalBytes/checkpointBlobMegabyte)*checkpointBlobWritePerMegabyte
+	if timeout > checkpointBlobWriteMaxTimeout {
+		return checkpointBlobWriteMaxTimeout
+	}
+	return timeout
 }
 
 func clonePendingTurnCompletion(completion *pendingTurnCompletion) *pendingTurnCompletion {
@@ -38,7 +63,7 @@ func (service *Service) queueCheckpointProjection(stream *ActiveStream, projecti
 
 	stream.mu.Lock()
 	if stream.PendingCheckpointBlobWrites == nil {
-		stream.PendingCheckpointBlobWrites = make(map[uint32]string)
+		stream.PendingCheckpointBlobWrites = make(map[uint32]pendingCheckpointBlobWrite)
 	}
 	if stream.ConfirmedCheckpointBlobs == nil {
 		stream.ConfirmedCheckpointBlobs = make(map[string]struct{})
@@ -48,8 +73,8 @@ func (service *Service) queueCheckpointProjection(stream *ActiveStream, projecti
 	}
 	required := make(map[string]struct{}, len(projection.Blobs))
 	pendingKeys := make(map[string]struct{}, len(stream.PendingCheckpointBlobWrites))
-	for _, key := range stream.PendingCheckpointBlobWrites {
-		pendingKeys[key] = struct{}{}
+	for _, write := range stream.PendingCheckpointBlobWrites {
+		pendingKeys[string(write.blob.ID)] = struct{}{}
 	}
 	toWrite := make([]pendingCheckpointBlobWrite, 0, len(projection.Blobs))
 	for _, blob := range projection.Blobs {
@@ -69,7 +94,7 @@ func (service *Service) queueCheckpointProjection(stream *ActiveStream, projecti
 			stream.NextCheckpointBlobRequestID++
 		}
 		requestID := stream.NextCheckpointBlobRequestID
-		stream.PendingCheckpointBlobWrites[requestID] = key
+		stream.PendingCheckpointBlobWrites[requestID] = pendingCheckpointBlobWrite{requestID: requestID, blob: blob}
 		pendingKeys[key] = struct{}{}
 		toWrite = append(toWrite, pendingCheckpointBlobWrite{requestID: requestID, blob: blob})
 	}
@@ -81,6 +106,7 @@ func (service *Service) queueCheckpointProjection(stream *ActiveStream, projecti
 	if completion != nil {
 		stream.Phase = TurnPhaseCheckpointing
 	}
+	checkpointTimeout := checkpointBlobWriteTimeoutFor(stream.PendingCheckpointBlobWrites)
 	stream.UpdatedAt = time.Now().UTC()
 	stream.mu.Unlock()
 
@@ -104,7 +130,7 @@ func (service *Service) queueCheckpointProjection(stream *ActiveStream, projecti
 	service.scheduleStreamTimer(
 		stream,
 		providerTimerKey(streamTimerCheckpointBlobs, ""),
-		checkpointBlobWriteTimeout,
+		checkpointTimeout,
 		streamTimerCheckpointBlobs,
 		"",
 		0,
@@ -160,10 +186,11 @@ func (service *Service) handleCheckpointBlobResult(stream *ActiveStream, message
 		return nil
 	}
 	stream.mu.Lock()
-	key, ok := stream.PendingCheckpointBlobWrites[message.GetId()]
+	write, ok := stream.PendingCheckpointBlobWrites[message.GetId()]
 	if ok {
 		delete(stream.PendingCheckpointBlobWrites, message.GetId())
 	}
+	key := string(write.blob.ID)
 	required := false
 	if ok && stream.PendingCheckpoint != nil {
 		_, required = stream.PendingCheckpoint.Required[key]
@@ -244,7 +271,7 @@ func (service *Service) finishAfterCheckpointSyncFailure(stream *ActiveStream, c
 	stream.mu.Lock()
 	pending := stream.PendingCheckpoint
 	stream.PendingCheckpoint = nil
-	stream.PendingCheckpointBlobWrites = make(map[uint32]string)
+	stream.PendingCheckpointBlobWrites = make(map[uint32]pendingCheckpointBlobWrite)
 	stream.UpdatedAt = time.Now().UTC()
 	stream.mu.Unlock()
 	clearStreamTimer(stream, providerTimerKey(streamTimerCheckpointBlobs, ""))
@@ -252,35 +279,13 @@ func (service *Service) finishAfterCheckpointSyncFailure(stream *ActiveStream, c
 		log.Printf("forwarder checkpoint blob sync skipped request_id=%s conversation_id=%s err=%v", stream.RequestID, stream.ConversationID, cause)
 	}
 	if pending != nil && pending.Completion != nil {
-		if err := service.finishSuccessfulTurnAfterCheckpoint(stream, *pending.Completion); err != nil {
-			return err
-		}
-		return service.ensureTerminalStreamAfterCheckpointFailure(stream, "checkpoint_blob_timeout", cause)
+		// The turn already finished, so a checkpoint tail-sync timeout is a
+		// harmless miss. Complete the turn successfully instead of failing it.
+		return service.finishSuccessfulTurnAfterCheckpoint(stream, *pending.Completion)
 	}
-	return service.ensureTerminalStreamAfterCheckpointFailure(stream, "checkpoint_blob_timeout", cause)
-}
-
-// ensureTerminalStreamAfterCheckpointFailure prevents a timed-out checkpoint
-// from leaving the request non-terminal forever after the turn has completed.
-func (service *Service) ensureTerminalStreamAfterCheckpointFailure(stream *ActiveStream, terminalCode string, cause error) error {
-	if stream == nil {
-		return nil
-	}
-	stream.mu.Lock()
-	status := stream.Status
-	requestID := strings.TrimSpace(stream.RequestID)
-	stream.mu.Unlock()
-	if isTerminalStreamStatus(status) || requestID == "" {
-		return nil
-	}
-	message := terminalCode
-	if cause != nil {
-		message = cause.Error()
-	}
-	if err := service.broker.Fail(requestID, terminalCode, message); err != nil {
-		return err
-	}
-	service.setTurnPhase(stream, TurnPhaseFailed)
+	// Intermediate checkpoint while the model is still running: drop the
+	// snapshot and let the provider loop continue. Never fail a healthy
+	// in-flight request over a checkpoint acknowledgement deadline.
 	return nil
 }
 
@@ -290,7 +295,7 @@ func (service *Service) discardPendingCheckpoint(stream *ActiveStream, reason st
 	}
 	stream.mu.Lock()
 	stream.PendingCheckpoint = nil
-	stream.PendingCheckpointBlobWrites = make(map[uint32]string)
+	stream.PendingCheckpointBlobWrites = make(map[uint32]pendingCheckpointBlobWrite)
 	stream.UpdatedAt = time.Now().UTC()
 	stream.mu.Unlock()
 	clearStreamTimer(stream, providerTimerKey(streamTimerCheckpointBlobs, ""))

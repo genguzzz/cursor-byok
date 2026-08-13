@@ -166,7 +166,7 @@ type ActiveStream struct {
 	ProviderUsage                               turnUsageSnapshot
 	ProviderTerminalToolInvocation              bool
 	PendingCompaction                           *PendingCompaction
-	PendingCheckpointBlobWrites                 map[uint32]string
+	PendingCheckpointBlobWrites                 map[uint32]pendingCheckpointBlobWrite
 	ConfirmedCheckpointBlobs                    map[string]struct{}
 	NextCheckpointBlobRequestID                 uint32
 	PendingCheckpoint                           *pendingCheckpointPublish
