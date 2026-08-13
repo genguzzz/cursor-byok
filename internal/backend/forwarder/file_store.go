@@ -119,6 +119,24 @@ func (store *ConversationFileStore) LoadConversation(conversationID string) (*Co
 	return store.mutateConversation(conversationID, false, nil)
 }
 
+// LoadConversationMeta 只读 state.json（不含 context.json），返回会话元数据。
+// 启动 transcript 回填等仅需元数据的场景使用，避免把整个 context.json 读进内存。
+func (store *ConversationFileStore) LoadConversationMeta(conversationID string) (*ConversationFile, error) {
+	if store == nil {
+		return nil, fmt.Errorf("conversation file store is nil")
+	}
+	normalizedConversationID, err := validateConversationID(conversationID)
+	if err != nil {
+		return nil, err
+	}
+	release, err := acquireConversationLock(store.lockPath(normalizedConversationID))
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+	return store.readConversationMetaLocked(normalizedConversationID)
+}
+
 // AppendEntries 把已经发生的语义事件追加到 context.json，并同步 state.json。
 func (store *ConversationFileStore) AppendEntries(conversationID string, entries []HistoryEntry) (*ConversationFile, []HistoryEntry, error) {
 	if store == nil {
@@ -396,6 +414,22 @@ func (store *ConversationFileStore) mutateConversation(conversationID string, cr
 }
 
 func (store *ConversationFileStore) readConversationLocked(conversationID string) (*ConversationFile, error) {
+	conversation, err := store.readConversationMetaLocked(conversationID)
+	if err != nil || conversation == nil {
+		return conversation, err
+	}
+	context, err := store.readContextLocked(conversationID)
+	if err != nil {
+		return nil, err
+	}
+	conversation.Entries = context
+	normalizeLoadedConversation(conversationID, conversation)
+	return conversation, nil
+}
+
+// readConversationMetaLocked 只读 state.json（不含 context.json），返回会话元数据。
+// 用于启动 transcript 回填等仅需元数据的场景，避免把整个 context.json 读进内存。
+func (store *ConversationFileStore) readConversationMetaLocked(conversationID string) (*ConversationFile, error) {
 	stateBody, err := os.ReadFile(store.statePath(conversationID))
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -407,12 +441,6 @@ func (store *ConversationFileStore) readConversationLocked(conversationID string
 	if err := json.Unmarshal(stateBody, &conversation); err != nil {
 		return nil, fmt.Errorf("decode conversation state %q: %w", conversationID, err)
 	}
-	context, err := store.readContextLocked(conversationID)
-	if err != nil {
-		return nil, err
-	}
-	conversation.Entries = context
-	normalizeLoadedConversation(conversationID, &conversation)
 	return &conversation, nil
 }
 
@@ -428,7 +456,7 @@ func (store *ConversationFileStore) readContextLocked(conversationID string) ([]
 	if err := json.Unmarshal(body, &context); err != nil {
 		return nil, fmt.Errorf("decode conversation context %q: %w", conversationID, err)
 	}
-	return append([]HistoryEntry(nil), context.Items...), nil
+	return context.Items, nil
 }
 
 func (store *ConversationFileStore) writeConversationLocked(conversationID string, conversation *ConversationFile) error {
@@ -528,6 +556,23 @@ func (store *ConversationFileStore) SyncAllCursorTranscriptsBestEffort() {
 		return
 	}
 	for _, conversationID := range conversationIDs {
+		meta, err := store.LoadConversationMeta(conversationID)
+		if err != nil {
+			log.Printf("forwarder transcript backfill meta load failed conversation_id=%s err=%v", conversationID, err)
+			continue
+		}
+		if meta == nil {
+			continue
+		}
+		// 稳定态同步不写最后一个 turn 的 turn_ended 终态行，因此只有当 transcript 完整
+		// （以 turn_ended 结尾）且不落后于 context.json 时才可跳过；否则需全量加载回填。
+		// 历史会话（早已完成）会跳过，只有最近活跃或缺终态行的会话才回填，避免启动时全量读入 context.json。
+		if folder := normalizeAgentTranscriptsFolder(meta.AgentTranscriptsFolder); folder != "" {
+			transcriptPath, pathErr := cursorTranscriptPath(folder, conversationID)
+			if pathErr == nil && conversationTranscriptUpToDate(store.contextPath(conversationID), transcriptPath) {
+				continue
+			}
+		}
 		conversation, err := store.LoadConversation(conversationID)
 		if err != nil {
 			log.Printf("forwarder transcript backfill load failed conversation_id=%s err=%v", conversationID, err)
@@ -544,6 +589,56 @@ func (store *ConversationFileStore) SyncAllCursorTranscriptsBestEffort() {
 			log.Printf("forwarder transcript backfill failed conversation_id=%s err=%v", conversationID, err)
 		}
 	}
+}
+
+// conversationTranscriptUpToDate 判断 transcript 是否已完整且不落后于 context.json。
+// 两者写入都走原子 rename，因此 transcript 的 mtime 不早于 context.json 表示内容未落后；
+// 但稳定态同步（includeLatestStatus=false）不写最后一个 turn 的 turn_ended 终态行，
+// 所以还必须确认 transcript 已以 turn_ended 结尾，才能安全跳过回填。
+func conversationTranscriptUpToDate(contextPath string, transcriptPath string) bool {
+	contextInfo, err := os.Stat(contextPath)
+	if err != nil {
+		return false
+	}
+	transcriptInfo, err := os.Stat(transcriptPath)
+	if err != nil {
+		return false
+	}
+	if transcriptInfo.ModTime().Before(contextInfo.ModTime()) {
+		return false
+	}
+	return transcriptEndsWithTerminalLine(transcriptPath)
+}
+
+// transcriptEndsWithTerminalLine 读取 transcript 末尾判断最后一行是否为 turn_ended 终态行。
+func transcriptEndsWithTerminalLine(path string) bool {
+	file, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil {
+		return false
+	}
+	const transcriptTailBytes = 64 * 1024
+	offset := info.Size() - transcriptTailBytes
+	if offset < 0 {
+		offset = 0
+	}
+	tail := make([]byte, info.Size()-offset)
+	if _, err := file.ReadAt(tail, offset); err != nil {
+		return false
+	}
+	lastLine := lastNonEmptyJSONLLine(tail)
+	if len(lastLine) == 0 {
+		return false
+	}
+	var line cursorTranscriptLine
+	if json.Unmarshal(lastLine, &line) != nil {
+		return false
+	}
+	return line.Type == "turn_ended"
 }
 
 func contextVersionForEntries(entries []HistoryEntry) int64 {
