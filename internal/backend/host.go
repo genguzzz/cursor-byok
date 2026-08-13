@@ -38,7 +38,8 @@ type Host struct {
 
 	lastRunErr error
 
-	mux http.Handler
+	mux         http.Handler
+	agentModule *forwarder.Module
 }
 
 func NewHost(store *serverconfig.Store, controlPlaneAuth upstream.AuthorizationProvider) (*Host, error) {
@@ -199,6 +200,11 @@ func (host *Host) Stop(ctx context.Context) error {
 		return nil
 	}
 	err := serverInstance.Shutdown(ctx)
+	if host.agentModule != nil && host.agentModule.Service != nil {
+		if closeErr := host.agentModule.Service.Close(); err == nil {
+			err = closeErr
+		}
+	}
 	return err
 }
 
@@ -294,6 +300,7 @@ func (host *Host) rebuildLocked(cfg serverconfig.Config) error {
 		return host.configs.Current()
 	}
 	agentModule := forwarder.NewModuleWithConfig(appdata.HistoryRootPath(), host.configs, configLoader)
+	host.agentModule = agentModule
 	legacyBidiAppendProcedure := "/aiserver.v1.BidiService/BidiAppend"
 	legacyRunSSEProcedure := "/agent.v1.AgentService/RunSSE"
 	routeDeps := upstream.Dependencies{

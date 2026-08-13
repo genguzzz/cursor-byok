@@ -269,6 +269,8 @@ type Service struct {
 	execBridge                 execbridge.ExecBridge
 	interactionBridge          interactionbridge.InteractionBridge
 	appendSeq                  *appendSequenceTracker
+	closedMu                   sync.Mutex
+	closed                     bool
 	tabRenamerConfigLoader     TabRenamerConfigLoader
 	tabRenamerFullConfigLoader func() serverconfig.Config
 	// backgroundShellUIPollers 按 requestID\\0shellID 去重，独立于 stream actor 生命周期。
@@ -343,10 +345,30 @@ func newServiceWithDependencies(store *ConversationFileStore, projector *History
 	}
 }
 
+func (service *Service) Close() error {
+	if service == nil || service.broker == nil {
+		return nil
+	}
+	service.closedMu.Lock()
+	if service.closed {
+		service.closedMu.Unlock()
+		return nil
+	}
+	service.closed = true
+	service.closedMu.Unlock()
+	return service.broker.Close()
+}
+
 // BidiAppend 处理 legacy Bidi 上行，把用户输入和外部结果归一化后写入 history。
 func (service *Service) BidiAppend(ctx context.Context, req *connect.Request[aiserverv1.BidiAppendRequest]) (*connect.Response[aiserverv1.BidiAppendResponse], error) {
 	if service == nil {
 		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("forwarder service is nil"))
+	}
+	service.closedMu.Lock()
+	closed := service.closed
+	service.closedMu.Unlock()
+	if closed {
+		return nil, connect.NewError(connect.CodeUnavailable, fmt.Errorf("forwarder service is closed"))
 	}
 	requestID := protocol.NormalizeRequestID(protocol.ReadAppendRequestID(req.Msg))
 	if requestID == "" {
@@ -459,6 +481,12 @@ func (service *Service) RunSSE(ctx context.Context, req *connect.Request[aiserve
 	if service == nil {
 		return connect.NewError(connect.CodeInternal, fmt.Errorf("forwarder service is nil"))
 	}
+	service.closedMu.Lock()
+	closed := service.closed
+	service.closedMu.Unlock()
+	if closed {
+		return connect.NewError(connect.CodeUnavailable, fmt.Errorf("forwarder service is closed"))
+	}
 	requestID := protocol.NormalizeRequestID(protocol.ReadBidiRequestID(req.Msg))
 	if requestID == "" {
 		return buildRunSSECustomError(connect.CodeInvalidArgument, "请求参数无效", fmt.Errorf("request_id is required"))
@@ -487,7 +515,7 @@ func (service *Service) RunSSE(ctx context.Context, req *connect.Request[aiserve
 
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
-	cursor := 0
+	cursor := uint64(0)
 	isReconnect := service.broker.SubscriberCount(requestID) > 1
 	for {
 		backlog, err := service.broker.ReadFromCursor(requestID, cursor)
@@ -504,7 +532,7 @@ func (service *Service) RunSSE(ctx context.Context, req *connect.Request[aiserve
 					// 重连时跳过 InteractionUpdate（thinking/text delta），
 					// 避免已发送的思考文字重复显示。exec、checkpoint 等正常重放。
 					if isReconnect && isTransientReplaySafeEvent(event.Message) {
-						cursor++
+						cursor = event.Seq
 						continue
 					}
 					msgCase := agentServerMessageCase(event.Message)
@@ -555,7 +583,7 @@ func (service *Service) RunSSE(ctx context.Context, req *connect.Request[aiserve
 						})
 					}
 				}
-				cursor++
+				cursor = event.Seq
 				if event.End {
 					service.debug.LogRunSSE(ctx, requestID, "", "terminal", map[string]any{
 						"cursor":                 cursor,
@@ -576,7 +604,7 @@ func (service *Service) RunSSE(ctx context.Context, req *connect.Request[aiserve
 			})
 			if backlog, err := service.broker.ReadFromCursor(requestID, cursor); err == nil {
 				for _, event := range backlog {
-					cursor++
+					cursor = event.Seq
 					if event.End {
 						service.debug.LogRunSSE(context.Background(), requestID, "", "terminal_after_context_done", map[string]any{
 							"cursor":                 cursor,
@@ -3606,7 +3634,7 @@ func (service *Service) updateStreamStaticManifest(stream *ActiveStream, request
 		return
 	}
 	stream.mu.Lock()
-	stream.LatestStaticManifest = manifest
+	stream.LatestStaticManifest = mergeStaticManifest(manifest, stream.LatestStaticManifest)
 	stream.UpdatedAt = time.Now().UTC()
 	stream.mu.Unlock()
 }

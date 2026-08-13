@@ -108,6 +108,7 @@ const (
 )
 
 type StreamEvent struct {
+	Seq                  uint64 // 全局递增事件序号，用于有界 backlog 的 cursor 定位
 	Message              *agentv1.AgentServerMessage
 	End                  bool
 	TerminalErrorCode    string
@@ -170,7 +171,7 @@ type ActiveStream struct {
 	NextCheckpointBlobRequestID                 uint32
 	PendingCheckpoint                           *pendingCheckpointPublish
 
-	Backlog                     []StreamEvent
+	backlogNextSeq              uint64 // 下一个待分配的事件序号（从 1 开始）
 	Subscribers                 map[string]*StreamSubscriber
 	CheckpointConversation      *ConversationFile
 	PendingExecs                map[string]runtimecore.PendingExec

@@ -252,8 +252,35 @@ func (service *Service) finishAfterCheckpointSyncFailure(stream *ActiveStream, c
 		log.Printf("forwarder checkpoint blob sync skipped request_id=%s conversation_id=%s err=%v", stream.RequestID, stream.ConversationID, cause)
 	}
 	if pending != nil && pending.Completion != nil {
-		return service.finishSuccessfulTurnAfterCheckpoint(stream, *pending.Completion)
+		if err := service.finishSuccessfulTurnAfterCheckpoint(stream, *pending.Completion); err != nil {
+			return err
+		}
+		return service.ensureTerminalStreamAfterCheckpointFailure(stream, "checkpoint_blob_timeout", cause)
 	}
+	return service.ensureTerminalStreamAfterCheckpointFailure(stream, "checkpoint_blob_timeout", cause)
+}
+
+// ensureTerminalStreamAfterCheckpointFailure prevents a timed-out checkpoint
+// from leaving the request non-terminal forever after the turn has completed.
+func (service *Service) ensureTerminalStreamAfterCheckpointFailure(stream *ActiveStream, terminalCode string, cause error) error {
+	if stream == nil {
+		return nil
+	}
+	stream.mu.Lock()
+	status := stream.Status
+	requestID := strings.TrimSpace(stream.RequestID)
+	stream.mu.Unlock()
+	if isTerminalStreamStatus(status) || requestID == "" {
+		return nil
+	}
+	message := terminalCode
+	if cause != nil {
+		message = cause.Error()
+	}
+	if err := service.broker.Fail(requestID, terminalCode, message); err != nil {
+		return err
+	}
+	service.setTurnPhase(stream, TurnPhaseFailed)
 	return nil
 }
 

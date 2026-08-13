@@ -766,12 +766,11 @@ func buildCompactedManifestEntry(conversation *ConversationFile, plan *PendingCo
 	}
 	// Prefer the manifest captured from the current turn's request context: it
 	// reflects the live skill/rule/MCP surface (including changes after a Cursor
-	// restart). Only fall back to the earliest stored request_context when the
-	// current turn did not carry a static manifest.
-	manifest := extractStaticManifest(plan.StaticManifest)
-	if manifest == nil {
-		manifest = collectCompactionStaticManifest(conversation)
-	}
+	// restart). Fill any field the live manifest lacks from the earliest stored
+	// request_context so a later turn that only re-sent skills (but not the MCP
+	// file-system surface) never drops the MCP manifest captured on turn one.
+	live := extractStaticManifest(plan.StaticManifest)
+	manifest := mergeStaticManifest(live, collectCompactionStaticManifest(conversation))
 	if manifest == nil {
 		return HistoryEntry{}, false
 	}
@@ -788,9 +787,39 @@ func buildCompactedManifestEntry(conversation *ConversationFile, plan *PendingCo
 	}, true
 }
 
+// mergeStaticManifest merges two static capability manifests field by field.
+// The live manifest wins for every field it actually carries; fields the live
+// manifest lacks are filled from the fallback. This keeps a partial (skills-only)
+// live manifest from silently dropping the MCP surface captured earlier.
+func mergeStaticManifest(live, fallback *agentv1.RequestContext) *agentv1.RequestContext {
+	if live == nil {
+		return fallback
+	}
+	if fallback == nil {
+		return live
+	}
+	merged := proto.Clone(live).(*agentv1.RequestContext)
+	if merged.GetSkillOptions() == nil || len(merged.GetSkillOptions().GetSkillDescriptors()) == 0 {
+		if options := fallback.GetSkillOptions(); options != nil && len(options.GetSkillDescriptors()) > 0 {
+			merged.SkillOptions = proto.Clone(options).(*agentv1.SkillOptions)
+		}
+	}
+	if merged.GetMcpFileSystemOptions() == nil {
+		if options := fallback.GetMcpFileSystemOptions(); options != nil {
+			merged.McpFileSystemOptions = proto.Clone(options).(*agentv1.McpFileSystemOptions)
+		}
+	}
+	if merged.GetMcpMetaToolOptions() == nil {
+		if options := fallback.GetMcpMetaToolOptions(); options != nil {
+			merged.McpMetaToolOptions = proto.Clone(options).(*agentv1.McpMetaToolOptions)
+		}
+	}
+	return merged
+}
+
 // extractStaticManifest keeps only the durable capability surface (skill
-// descriptors and MCP file-system options) from a request context, dropping
-// realtime fields that are recompiled per turn.
+// descriptors, MCP file-system options, and MCP meta-tool options) from a
+// request context, dropping realtime fields that are recompiled per turn.
 func extractStaticManifest(source *agentv1.RequestContext) *agentv1.RequestContext {
 	if source == nil {
 		return nil
@@ -807,6 +836,11 @@ func extractStaticManifest(source *agentv1.RequestContext) *agentv1.RequestConte
 	if options := source.GetMcpFileSystemOptions(); options != nil &&
 		(options.GetEnabled() || len(options.GetMcpDescriptors()) > 0) {
 		manifest.McpFileSystemOptions = proto.Clone(options).(*agentv1.McpFileSystemOptions)
+		hasContent = true
+	}
+	if options := source.GetMcpMetaToolOptions(); options != nil &&
+		(options.GetEnabled() || len(options.GetMcpDescriptors()) > 0) {
+		manifest.McpMetaToolOptions = proto.Clone(options).(*agentv1.McpMetaToolOptions)
 		hasContent = true
 	}
 	if !hasContent {

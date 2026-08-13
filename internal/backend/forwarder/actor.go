@@ -1080,10 +1080,10 @@ func (service *Service) scheduleOrphanCancelActor(requestID string, reason strin
 		!stream.ProviderActive &&
 		len(stream.PendingExecs) == 0 &&
 		len(stream.PendingInteractions) == 0 &&
-		stream.PendingAwaitShell == nil &&
-		len(stream.Backlog) == 0
+		stream.PendingAwaitShell == nil
 	terminal := isTerminalStreamStatus(stream.Status)
 	stream.mu.Unlock()
+	placeholder = placeholder && service.broker.backlogEmpty(stream.RequestID)
 	if placeholder || terminal {
 		return false
 	}
