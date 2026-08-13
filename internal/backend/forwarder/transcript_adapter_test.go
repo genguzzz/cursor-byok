@@ -133,6 +133,37 @@ func TestConversationFileStoreBackfillsTranscriptOnStartup(t *testing.T) {
 	}
 }
 
+func TestConversationFileStoreBackfillsTranscriptWhenTerminalLineMissing(t *testing.T) {
+	historyRoot := filepath.Join(t.TempDir(), "history")
+	transcriptsFolder := filepath.Join(t.TempDir(), "agent-transcripts")
+	if err := os.MkdirAll(transcriptsFolder, 0o755); err != nil {
+		t.Fatalf("create transcript root: %v", err)
+	}
+	store := NewConversationFileStore(historyRoot)
+	conversation := transcriptTestConversation(nil)
+	conversation.AgentTranscriptsFolder = transcriptsFolder
+	// SaveConversationWithEntries 走稳定态同步（includeLatestStatus=false），
+	// transcript 已生成但缺最后一个 turn 的 turn_ended 终态行，mtime 新于 context.json。
+	if _, err := store.SaveConversationWithEntries(conversation.ConversationID, conversation, []HistoryEntry{
+		transcriptTestUserMessageEntry(t, 1, "request-1", "hello"),
+		newAssistantTextEntry(1, "request-1", "hi", "", ""),
+		newMetadataEntry(1, "request-1", "turn_completed", nil),
+	}); err != nil {
+		t.Fatalf("SaveConversationWithEntries() error = %v", err)
+	}
+	path := filepath.Join(transcriptsFolder, conversation.ConversationID, conversation.ConversationID+".jsonl")
+
+	store.SyncAllCursorTranscriptsBestEffort()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read backfilled transcript: %v", err)
+	}
+	lines := decodeCursorTranscriptLines(t, data)
+	if len(lines) != 3 || lines[2].Type != "turn_ended" || lines[2].Status != "success" {
+		t.Fatalf("backfilled transcript = %s", data)
+	}
+}
+
 func TestNormalizeAgentTranscriptsFolderRejectsUnexpectedPaths(t *testing.T) {
 	root := t.TempDir()
 	if got := normalizeAgentTranscriptsFolder(filepath.Join(root, "agent-transcripts")); got == "" {
