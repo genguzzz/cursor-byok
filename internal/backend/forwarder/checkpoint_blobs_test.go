@@ -1,6 +1,7 @@
 package forwarder
 
 import (
+	"path/filepath"
 	"testing"
 
 	"google.golang.org/protobuf/encoding/protojson"
@@ -156,7 +157,7 @@ func TestCancellationKeepsPublishedCheckpointAndIgnoresLateAcknowledgements(t *t
 
 func testCheckpointBlobProjection(t *testing.T) (*Service, *ActiveStream, *CheckpointProjection) {
 	t.Helper()
-	broker := NewStreamBroker()
+	broker := newStreamBrokerWithPath(filepath.Join(t.TempDir(), "backlog.db"))
 	service := &Service{
 		store:     NewConversationFileStore(t.TempDir()),
 		projector: NewHistoryProjector(),

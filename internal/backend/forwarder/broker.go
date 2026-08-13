@@ -3,12 +3,14 @@ package forwarder
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"cursor/gen/agentv1"
+	"cursor/internal/appdata"
 	runtimecore "cursor/internal/backend/agent/core"
 )
 
@@ -20,13 +22,25 @@ type StreamBroker struct {
 	mu      sync.RWMutex
 	streams map[string]*ActiveStream
 	nextID  atomic.Uint64
+	store   *backlogStore
 }
 
-// NewStreamBroker 创建活动流注册表。
+// NewStreamBroker 创建活动流注册表，backlog 落到 SQLite 文件。
 func NewStreamBroker() *StreamBroker {
+	return newStreamBrokerWithPath(backlogDBPath())
+}
+
+// newStreamBrokerWithPath 供测试指定隔离的 store 路径。
+func newStreamBrokerWithPath(dbPath string) *StreamBroker {
 	return &StreamBroker{
 		streams: make(map[string]*ActiveStream),
+		store:   newBacklogStore(dbPath),
 	}
+}
+
+// backlogDBPath 返回 backlog 库路径。
+func backlogDBPath() string {
+	return filepath.Join(appdata.DataRootPath(), "backlog.db")
 }
 
 // OpenStream 打开或复用指定 request 的活动流，并刷新其最新上下文。
@@ -96,7 +110,6 @@ func (broker *StreamBroker) OpenStream(requestID string, conversationID string, 
 		Mode:                        normalizedMode,
 		LatestUserText:              strings.TrimSpace(latestUserText),
 		Status:                      StreamStatusCreated,
-		Backlog:                     make([]StreamEvent, 0, 64),
 		Subscribers:                 make(map[string]*StreamSubscriber),
 		PendingExecs:                make(map[string]runtimecore.PendingExec),
 		PendingInteractions:         make(map[string]runtimecore.PendingInteraction),
@@ -297,7 +310,6 @@ func (broker *StreamBroker) RemoveIfIdle(requestID string) bool {
 	stream.mu.Lock()
 	subscriberCount := len(stream.Subscribers)
 	isActive := stream.ProviderActive
-	hasBacklog := len(stream.Backlog) > 0
 	hasConversation := strings.TrimSpace(stream.ConversationID) != ""
 	status := stream.Status
 	if status == StreamStatusCompleted || status == StreamStatusCanceled || status == StreamStatusFailed {
@@ -309,12 +321,15 @@ func (broker *StreamBroker) RemoveIfIdle(requestID string) bool {
 	}
 	if status == StreamStatusCompleted || status == StreamStatusCanceled || status == StreamStatusFailed {
 		delete(broker.streams, normalizedRequestID)
+		_ = broker.store.remove(normalizedRequestID)
 		return true
 	}
+	hasBacklog := broker.store.count(normalizedRequestID) > 0
 	if isActive || hasBacklog || hasConversation {
 		return false
 	}
 	delete(broker.streams, normalizedRequestID)
+	_ = broker.store.remove(normalizedRequestID)
 	return true
 }
 
@@ -326,15 +341,19 @@ func (broker *StreamBroker) Publish(requestID string, event StreamEvent) error {
 	}
 	stream.mu.Lock()
 	if !event.End && isTerminalStreamStatus(stream.Status) {
-		// 后台 shell 可能在 turn/cancel 之后仍在跑；若 RunSSE 订阅者还在，
-		// 允许继续投递 shell UI delta，否则客户端只能依赖终端订阅（本地模式常不可靠）。
 		if !allowShellUIPublishAfterTerminalLocked(stream, event) {
 			stream.mu.Unlock()
 			return nil
 		}
 	}
 	event.PublishedAt = time.Now().UTC()
-	stream.Backlog = append(stream.Backlog, event)
+	stream.backlogNextSeq++
+	event.Seq = stream.backlogNextSeq
+	stream.mu.Unlock()
+	if err := broker.store.enqueue(requestID, event); err != nil {
+		return err
+	}
+	stream.mu.Lock()
 	stream.UpdatedAt = time.Now().UTC()
 	subscribers := make([]*StreamSubscriber, 0, len(stream.Subscribers))
 	for _, subscriber := range stream.Subscribers {
@@ -355,7 +374,7 @@ func (broker *StreamBroker) Publish(requestID string, event StreamEvent) error {
 }
 
 // allowShellUIPublishAfterTerminalLocked 在 stream 已终态时，仍允许投递 shell UI delta
-//（调用方必须已持有 stream.mu）。
+// （调用方必须已持有 stream.mu）。
 func allowShellUIPublishAfterTerminalLocked(stream *ActiveStream, event StreamEvent) bool {
 	if stream == nil || len(stream.Subscribers) == 0 || event.Message == nil {
 		return false
@@ -367,21 +386,29 @@ func allowShellUIPublishAfterTerminalLocked(stream *ActiveStream, event StreamEv
 	return iu.GetToolCallDelta() != nil
 }
 
-// ReadFromCursor 返回从 cursor 开始尚未消费的 backlog 事件副本。
-func (broker *StreamBroker) ReadFromCursor(requestID string, cursor int) ([]StreamEvent, error) {
-	stream, ok := broker.Get(requestID)
-	if !ok || stream == nil {
+// ReadFromCursor 返回序号大于 cursorSeq 的未消费 backlog 事件，按 seq 升序，
+// 最多 backlogReadBatchSize 条。cursorSeq 是「最后已消费事件的 Seq」，0 表示从头开始
+// （含重连 replay）。事件本体从 SQLite 顺序读取，不常驻内存。
+func (broker *StreamBroker) ReadFromCursor(requestID string, cursorSeq uint64) ([]StreamEvent, error) {
+	if _, ok := broker.Get(requestID); !ok {
 		return nil, fmt.Errorf("request is not active: %s", strings.TrimSpace(requestID))
 	}
-	stream.mu.Lock()
-	defer stream.mu.Unlock()
-	if cursor < 0 {
-		cursor = 0
+	return broker.store.readAfter(requestID, cursorSeq)
+}
+
+// backlogEmpty 判断指定 request 的 backlog 是否为空（用于占位流判定）。
+func (broker *StreamBroker) backlogEmpty(requestID string) bool {
+	if broker == nil || broker.store == nil {
+		return true
 	}
-	if cursor >= len(stream.Backlog) {
-		return nil, nil
+	return broker.store.count(requestID) == 0
+}
+
+func (broker *StreamBroker) Close() error {
+	if broker == nil || broker.store == nil {
+		return nil
 	}
-	return append([]StreamEvent(nil), stream.Backlog[cursor:]...), nil
+	return broker.store.close()
 }
 
 // Complete 把活动流标记为成功完成，并发布一个成功 endstream 事件。
@@ -391,10 +418,6 @@ func (broker *StreamBroker) Complete(requestID string, terminalCode string, term
 		return fmt.Errorf("request is not active: %s", strings.TrimSpace(requestID))
 	}
 	stream.mu.Lock()
-	if stream.Status == StreamStatusCanceled || stream.Status == StreamStatusFailed || stream.Status == StreamStatusCompleted {
-		stream.mu.Unlock()
-		return nil
-	}
 	broker.stopTerminalCleanupTimerLocked(stream)
 	stream.Status = StreamStatusCompleted
 	subscriberCount := len(stream.Subscribers)
@@ -405,6 +428,15 @@ func (broker *StreamBroker) Complete(requestID string, terminalCode string, term
 		TerminalErrorCode:    strings.TrimSpace(terminalCode),
 		TerminalErrorMessage: strings.TrimSpace(terminalMessage),
 	}); err != nil {
+		stream.mu.Lock()
+		stream.Status = StreamStatusFailed
+		stream.mu.Unlock()
+		return err
+	}
+	if err := broker.store.flushBarrier(); err != nil {
+		stream.mu.Lock()
+		stream.Status = StreamStatusFailed
+		stream.mu.Unlock()
 		return err
 	}
 	if subscriberCount == 0 {
@@ -430,6 +462,15 @@ func (broker *StreamBroker) Fail(requestID string, terminalCode string, terminal
 		TerminalErrorCode:    strings.TrimSpace(terminalCode),
 		TerminalErrorMessage: strings.TrimSpace(terminalMessage),
 	}); err != nil {
+		stream.mu.Lock()
+		stream.Status = StreamStatusFailed
+		stream.mu.Unlock()
+		return err
+	}
+	if err := broker.store.flushBarrier(); err != nil {
+		stream.mu.Lock()
+		stream.Status = StreamStatusFailed
+		stream.mu.Unlock()
 		return err
 	}
 	if subscriberCount == 0 {
