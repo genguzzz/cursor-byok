@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"sync"
@@ -26,6 +27,56 @@ type exchangeContext struct {
 	id string
 }
 
+// trackingListener wraps a net.Listener and records every accepted connection
+// so Close can force-close hijacked (CONNECT/MITM) and long-lived (SSE)
+// connections that http.Server.Shutdown neither tracks nor closes.
+type trackingListener struct {
+	net.Listener
+	mu    sync.Mutex
+	conns map[net.Conn]struct{}
+}
+
+func newTrackingListener(listener net.Listener) *trackingListener {
+	return &trackingListener{Listener: listener, conns: make(map[net.Conn]struct{})}
+}
+
+func (listener *trackingListener) Accept() (net.Conn, error) {
+	conn, err := listener.Listener.Accept()
+	if err != nil {
+		return nil, err
+	}
+	tracked := &trackedConn{Conn: conn, listener: listener}
+	listener.mu.Lock()
+	listener.conns[tracked] = struct{}{}
+	listener.mu.Unlock()
+	return tracked, nil
+}
+
+func (listener *trackingListener) closeActive() {
+	listener.mu.Lock()
+	conns := make([]net.Conn, 0, len(listener.conns))
+	for conn := range listener.conns {
+		conns = append(conns, conn)
+	}
+	listener.mu.Unlock()
+	for _, conn := range conns {
+		_ = conn.Close()
+	}
+}
+
+type trackedConn struct {
+	net.Conn
+	listener *trackingListener
+}
+
+func (conn *trackedConn) Close() error {
+	err := conn.Conn.Close()
+	conn.listener.mu.Lock()
+	delete(conn.listener.conns, conn)
+	conn.listener.mu.Unlock()
+	return err
+}
+
 // Server runs the HTTPS debugging proxy and its local web UI.
 type Server struct {
 	config      Config
@@ -34,8 +85,9 @@ type Server struct {
 	counter     atomic.Uint64
 	proxyServer *http.Server
 	uiServer    *http.Server
-	proxyLn     net.Listener
-	uiLn        net.Listener
+	proxyLn     *trackingListener
+	uiLn        *trackingListener
+	upstreamTr  *http.Transport
 	runMu       sync.Mutex
 }
 
@@ -82,10 +134,10 @@ func (server *Server) Start() error {
 		_ = proxyListener.Close()
 		return fmt.Errorf("启动调试界面失败：%w", err)
 	}
-	server.proxyLn = proxyListener
-	server.uiLn = uiListener
-	go func() { _ = server.proxyServer.Serve(proxyListener) }()
-	go func() { _ = server.uiServer.Serve(uiListener) }()
+	server.proxyLn = newTrackingListener(proxyListener)
+	server.uiLn = newTrackingListener(uiListener)
+	go func() { _ = server.proxyServer.Serve(server.proxyLn) }()
+	go func() { _ = server.uiServer.Serve(server.uiLn) }()
 	return nil
 }
 
@@ -94,10 +146,23 @@ func (server *Server) Close(ctx context.Context) error {
 	server.runMu.Lock()
 	proxyServer := server.proxyServer
 	uiServer := server.uiServer
+	proxyLn := server.proxyLn
+	uiLn := server.uiLn
 	server.proxyLn = nil
 	server.uiLn = nil
 	server.runMu.Unlock()
 	var errorsList []error
+	// Force-close active (hijacked MITM tunnels + long-lived SSE streams) BEFORE
+	// Shutdown. Shutdown only waits for non-hijacked connections to go idle and
+	// never cancels their context, so the UI's never-idle /api/events stream
+	// would otherwise make Shutdown block for the full context deadline before
+	// these connections were reclaimed (the menubar passes a 3s context).
+	if proxyLn != nil {
+		proxyLn.closeActive()
+	}
+	if uiLn != nil {
+		uiLn.closeActive()
+	}
 	if proxyServer != nil {
 		if err := proxyServer.Shutdown(ctx); err != nil {
 			errorsList = append(errorsList, err)
@@ -108,6 +173,20 @@ func (server *Server) Close(ctx context.Context) error {
 			errorsList = append(errorsList, err)
 		}
 	}
+	// Release pooled upstream connections and captured exchanges immediately
+	// instead of waiting for GC/idle-timeout, so a stop/start cycle (e.g. the
+	// menubar's debug toggle) actually frees the bodies/frames/rawHex memory
+	// budget rather than letting it linger for IdleConnTimeout.
+	if server.upstreamTr != nil {
+		server.upstreamTr.CloseIdleConnections()
+	}
+	if server.store != nil {
+		server.store.clear()
+	}
+	// The capture store can hold up to MaxStoreBytes (default 200 MiB) of
+	// bodies/frames/rawHex. Go keeps that heap reserved for reuse after GC, so
+	// return it to the OS now that debug is being torn down.
+	debug.FreeOSMemory()
 	return errors.Join(errorsList...)
 }
 
@@ -135,7 +214,7 @@ func (server *Server) newProxyHandler() (*goproxy.ProxyHttpServer, error) {
 	if err != nil {
 		return nil, err
 	}
-	proxy.Tr = &http.Transport{
+	upstreamTransport := &http.Transport{
 		Proxy:                 proxyFunc,
 		DialContext:           (&net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
 		ForceAttemptHTTP2:     true,
@@ -145,6 +224,8 @@ func (server *Server) newProxyHandler() (*goproxy.ProxyHttpServer, error) {
 		ExpectContinueTimeout: 1 * time.Second,
 		TLSClientConfig:       tlsConfig,
 	}
+	proxy.Tr = upstreamTransport
+	server.upstreamTr = upstreamTransport
 
 	caCertificate, err := server.certManager.CATLSCertificate()
 	if err != nil {
