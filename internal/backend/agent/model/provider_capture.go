@@ -18,12 +18,14 @@ type providerResponseCapture struct {
 
 func (capture *providerResponseCapture) Read(buffer []byte) (int, error) {
 	count, err := capture.ReadCloser.Read(buffer)
-	if count > 0 && capture.body.Len() < providerTrafficCaptureLimit {
-		remaining := providerTrafficCaptureLimit - capture.body.Len()
-		if count > remaining {
-			count = remaining
+	if count > 0 {
+		written := count
+		if remaining := providerTrafficCaptureLimit - capture.body.Len(); written > remaining {
+			written = remaining
 		}
-		_, _ = capture.body.Write(buffer[:count])
+		if written > 0 {
+			_, _ = capture.body.Write(buffer[:written])
+		}
 	}
 	if err == io.EOF {
 		capture.emit("")

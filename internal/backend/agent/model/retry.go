@@ -41,6 +41,19 @@ func doProviderRequestWithRetry(
 		if resp != nil && resp.Body != nil {
 			_ = resp.Body.Close()
 		}
+		emitProviderTrafficCapture(ProviderTrafficHop{
+			StartedAt:     startedAt,
+			Duration:      time.Since(startedAt),
+			Method:        httpReq.Method,
+			URL:           httpReq.URL.String(),
+			Host:          httpReq.URL.Host,
+			Path:          httpReq.URL.Path,
+			RequestID:     requestID,
+			ModelCallID:   modelCallID,
+			Provider:      provider,
+			RequestHeader: cloneHeader(httpReq.Header),
+			Error:         err.Error(),
+		})
 		return nil, err
 	}
 	hop := ProviderTrafficHop{

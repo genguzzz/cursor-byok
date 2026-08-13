@@ -80,7 +80,7 @@ func (server *Server) IngestUpstreamHop(hop UpstreamHop) {
 		},
 		Response: Payload{
 			Headers:      sortedHeaders(hop.ResponseHeader),
-			ContentType:  firstHeader(hop.ResponseHeader, "Content-Type"),
+			ContentType:  firstHeaderMap(hop.ResponseHeader, "Content-Type"),
 			ContentCodec: respCodec,
 			Frames:       make([]FrameView, 0),
 		},
