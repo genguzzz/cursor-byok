@@ -298,7 +298,14 @@ func (host *Host) rebuildLocked(cfg serverconfig.Config) error {
 	legacyRunSSEProcedure := "/agent.v1.AgentService/RunSSE"
 	routeDeps := upstream.Dependencies{
 		SystemSettingService: &serverSystemSettings{configs: host.configs},
-		HTTPClient:           netproxy.NewHTTPClient(30000 * time.Second),
+		// BidiAppend/RunSSE can legitimately stream for a long time, so the
+		// client must not carry an overall Timeout (that would cut off an
+		// in-flight response body). ResponseHeaderTimeout still bounds how
+		// long a stalled/unreachable upstream can hold a request+goroutine
+		// open before headers ever arrive; 30000s previously covered both
+		// roles, which meant a hung upstream connection could pin a
+		// request/goroutine for up to 8+ hours.
+		HTTPClient: netproxy.NewStreamingHTTPClient(60 * time.Second),
 	}
 	mixedRouting := cfg.Features.MixedModelRouting.IsEnabled()
 	agentRouter := upstream.NewAgentRouter(agentModule.LocalBidiHandler, agentModule.LocalRunSSE, appdata.HistoryRootPath())

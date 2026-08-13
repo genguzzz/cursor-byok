@@ -54,18 +54,20 @@ func ForwardToUpstream(reqCtx *RequestContext, options ForwardOptions) (*Forward
 
 	upstreamResponse, err := upstreamClient.Do(upstreamRequest)
 	if err != nil {
-		emitTrafficCapture(TrafficHop{
-			StartedAt:     startedAt,
-			Duration:      time.Since(startedAt),
-			Method:        upstreamRequest.Method,
-			URL:           upstreamRequest.URL.String(),
-			Host:          upstreamRequest.URL.Host,
-			Path:          upstreamRequest.URL.Path,
-			RequestID:     reqCtx.HTTPRequestID,
-			RequestHeader: upstreamRequest.Header.Clone(),
-			RequestBody:   truncateCaptureBytes(requestBody),
-			Error:         err.Error(),
-		})
+		if trafficCaptureEnabled() {
+			emitTrafficCapture(TrafficHop{
+				StartedAt:     startedAt,
+				Duration:      time.Since(startedAt),
+				Method:        upstreamRequest.Method,
+				URL:           upstreamRequest.URL.String(),
+				Host:          upstreamRequest.URL.Host,
+				Path:          upstreamRequest.URL.Path,
+				RequestID:     reqCtx.HTTPRequestID,
+				RequestHeader: upstreamRequest.Header.Clone(),
+				RequestBody:   truncateCaptureBytes(requestBody),
+				Error:         err.Error(),
+			})
+		}
 		return nil, err
 	}
 	defer upstreamResponse.Body.Close()
@@ -73,14 +75,21 @@ func ForwardToUpstream(reqCtx *RequestContext, options ForwardOptions) (*Forward
 	copyResponseHeadersToClient(reqCtx.ResponseWriter.Header(), upstreamResponse.Header)
 	reqCtx.ResponseWriter.WriteHeader(upstreamResponse.StatusCode)
 
-	captureWriter := &captureLimitWriter{max: defaultTrafficCaptureBytes}
-	bodyReader := io.TeeReader(upstreamResponse.Body, captureWriter)
+	var captureWriter *captureLimitWriter
+	var bodyReader io.Reader = upstreamResponse.Body
+	if trafficCaptureEnabled() {
+		captureWriter = &captureLimitWriter{max: defaultTrafficCaptureBytes}
+		bodyReader = io.TeeReader(upstreamResponse.Body, captureWriter)
+	}
 	written, copyErr := copyResponse(reqCtx.ResponseWriter, bodyReader)
 	meta := &ForwardMeta{
 		StatusCode:   upstreamResponse.StatusCode,
 		Status:       upstreamResponse.Status,
 		ContentType:  upstreamResponse.Header.Get("content-type"),
 		ResponseSize: written,
+	}
+	if captureWriter == nil {
+		return meta, copyErr
 	}
 	hop := TrafficHop{
 		StartedAt:      startedAt,

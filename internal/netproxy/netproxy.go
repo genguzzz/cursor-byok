@@ -46,6 +46,22 @@ func NewHTTPClient(timeout time.Duration) *http.Client {
 	}
 }
 
+// NewStreamingHTTPClient creates an HTTP client suited for long-lived
+// streaming calls (BidiAppend/RunSSE): no overall client.Timeout — which
+// would otherwise cancel an in-flight response body once total request
+// duration crosses the threshold — but a bounded ResponseHeaderTimeout so a
+// stalled/unreachable upstream fails fast instead of leaving the request
+// (and its capture/decode goroutines) parked for the lifetime of the
+// connection.
+func NewStreamingHTTPClient(responseHeaderTimeout time.Duration) *http.Client {
+	if responseHeaderTimeout <= 0 {
+		responseHeaderTimeout = 60 * time.Second
+	}
+	transport := NewTransport(nil)
+	transport.ResponseHeaderTimeout = responseHeaderTimeout
+	return &http.Client{Transport: transport}
+}
+
 // NewTransport clones the given transport and installs proxy resolution on it.
 // When base is nil, it clones Go's original default transport.
 func NewTransport(base *http.Transport) *http.Transport {

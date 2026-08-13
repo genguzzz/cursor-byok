@@ -41,20 +41,30 @@ func doProviderRequestWithRetry(
 		if resp != nil && resp.Body != nil {
 			_ = resp.Body.Close()
 		}
-		emitProviderTrafficCapture(ProviderTrafficHop{
-			StartedAt:     startedAt,
-			Duration:      time.Since(startedAt),
-			Method:        httpReq.Method,
-			URL:           httpReq.URL.String(),
-			Host:          httpReq.URL.Host,
-			Path:          httpReq.URL.Path,
-			RequestID:     requestID,
-			ModelCallID:   modelCallID,
-			Provider:      provider,
-			RequestHeader: cloneHeader(httpReq.Header),
-			Error:         err.Error(),
-		})
+		if providerTrafficCaptureEnabled() {
+			emitProviderTrafficCapture(ProviderTrafficHop{
+				StartedAt:     startedAt,
+				Duration:      time.Since(startedAt),
+				Method:        httpReq.Method,
+				URL:           httpReq.URL.String(),
+				Host:          httpReq.URL.Host,
+				Path:          httpReq.URL.Path,
+				RequestID:     requestID,
+				ModelCallID:   modelCallID,
+				Provider:      provider,
+				RequestHeader: cloneHeader(httpReq.Header),
+				Error:         err.Error(),
+			})
+		}
 		return nil, err
+	}
+	// Skip the hop build, request-body read, and response-body wrapping when no
+	// capture sink is registered. Otherwise every LLM request would copy its
+	// full request body and buffer up to 16 MiB of the response stream even with
+	// the debug toggle off, which is exactly the always-on capture overhead this
+	// path is meant to avoid.
+	if !providerTrafficCaptureEnabled() {
+		return resp, nil
 	}
 	hop := ProviderTrafficHop{
 		StartedAt:      startedAt,
@@ -71,7 +81,7 @@ func doProviderRequestWithRetry(
 	}
 	if httpReq.GetBody != nil {
 		if body, bodyErr := httpReq.GetBody(); bodyErr == nil {
-			hop.RequestBody, _ = io.ReadAll(body)
+			hop.RequestBody, _ = io.ReadAll(io.LimitReader(body, providerTrafficCaptureLimit))
 			_ = body.Close()
 		}
 	}
