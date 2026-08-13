@@ -142,7 +142,7 @@ function filteredExchanges() {
       if (state.endpoint === "bidiappend" && !item.path.toLowerCase().includes("bidiappend")) return false;
       if (state.endpoint === "cmdk" && !item.path.toLowerCase().includes("cmdkservice")) return false;
       if (state.endpoint === "fork" && !isForkTrafficPath(item.path)) return false;
-  if (state.server !== "all" && resolveServer(item) !== state.server) return false;
+      if (state.server !== "all" && resolveServer(item) !== state.server) return false;
       if (requestId && !String(item.requestId || "").toLowerCase().includes(requestId)) return false;
       if (!query) return true;
       return [item.url, item.host, item.server, item.captureSource, item.requestId, item.requestKind, item.responseKind, item.state, String(item.status)]
@@ -164,7 +164,8 @@ function isForkTrafficPath(path) {
 }
 
 function resolveServer(item) {
-  if (item?.server === "local" || item?.server === "official") return item.server;
+  if (item?.server === "local" || item?.server === "official" || item?.server === "provider") return item.server;
+  if (item?.captureSource === "provider") return "provider";
   if (item?.captureSource === "upstream") return "official";
   if (state.status?.upstreamProxy) return "local";
   return "official";
