@@ -22,6 +22,7 @@ import (
 
 	proxydebugger "cursor/cursor-proxy-debugger"
 
+	modeladapter "cursor/internal/backend/agent/model"
 	upstreamcap "cursor/internal/backend/server/upstream"
 	"cursor/internal/certs"
 	"cursor/internal/cursor"
@@ -122,6 +123,7 @@ func startDebugLocked(openBrowserTab bool) bool {
 		return false
 	}
 	upstreamcap.SetTrafficCapture(&debugUpstreamCapture{server: server})
+	modeladapter.SetProviderTrafficCapture(&debugProviderCapture{server: server})
 
 	if err := ensureDebugCATrusted(); err != nil {
 		logger.Errorf("menubar: 调试 CA 准备失败: %v", err)
@@ -183,6 +185,7 @@ func closeDebugServer(server *proxydebugger.Server) {
 
 func stopDebugLocked(restoreProxy bool) {
 	upstreamcap.SetTrafficCapture(nil)
+	modeladapter.SetProviderTrafficCapture(nil)
 	if debugState.server != nil {
 		closeDebugServer(debugState.server)
 		debugState.server = nil
@@ -294,24 +297,15 @@ type debugUpstreamCapture struct {
 	server *proxydebugger.Server
 }
 
-func (c *debugUpstreamCapture) CaptureUpstream(hop upstreamcap.TrafficHop) {
-	if c == nil || c.server == nil {
+func (capture *debugUpstreamCapture) CaptureUpstream(hop upstreamcap.TrafficHop) {
+	if capture == nil || capture.server == nil {
 		return
 	}
-	c.server.IngestUpstreamHop(proxydebugger.UpstreamHop{
-		StartedAt:      hop.StartedAt,
-		Duration:       hop.Duration,
-		Method:         hop.Method,
-		URL:            hop.URL,
-		Host:           hop.Host,
-		Path:           hop.Path,
-		Status:         hop.Status,
-		RequestID:      hop.RequestID,
-		RequestHeader:  hop.RequestHeader,
-		ResponseHeader: hop.ResponseHeader,
-		RequestBody:    hop.RequestBody,
-		ResponseBody:   hop.ResponseBody,
-		Error:          hop.Error,
+	capture.server.IngestUpstreamHop(proxydebugger.UpstreamHop{
+		StartedAt: hop.StartedAt, Duration: hop.Duration, Method: hop.Method, URL: hop.URL,
+		Host: hop.Host, Path: hop.Path, Status: hop.Status, RequestID: hop.RequestID,
+		RequestHeader: hop.RequestHeader, ResponseHeader: hop.ResponseHeader,
+		RequestBody: hop.RequestBody, ResponseBody: hop.ResponseBody, Error: hop.Error,
 	})
 }
 

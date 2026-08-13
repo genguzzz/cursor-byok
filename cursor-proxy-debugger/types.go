@@ -9,7 +9,7 @@ const (
 	// 默认与桌面 MITM 白名单一致，抓全部 *.cursor.sh（mixed 多 server）。
 	defaultTargetHost = "*.cursor.sh"
 	// 默认按约 200 MiB 字节预算保留抓包；超出时丢弃最早的记录。
-	defaultMaxStoreBytes   = 200 << 20
+	defaultMaxStoreBytes = 200 << 20
 	// 单侧 raw 抓取上限；官方 RunSSE 常超过 2MiB，过小会导致 frames 残缺。
 	defaultMaxCaptureBytes = 16 << 20
 	defaultMaxFrames       = 2000
@@ -18,10 +18,12 @@ const (
 
 	CaptureSourceClient   = "client"
 	CaptureSourceUpstream = "upstream"
+	CaptureSourceProvider = "provider"
 
-	// ServerLocal / ServerOfficial 给面板「Server」列用：本地助手 vs 官方 Cursor。
+	// ServerLocal / ServerOfficial / ServerProvider 给面板「Server」列用。
 	ServerLocal    = "local"
 	ServerOfficial = "official"
+	ServerProvider = "provider"
 )
 
 // Config controls the standalone proxy debugger.
@@ -83,6 +85,7 @@ type ExchangeSummary struct {
 	RequestBytes  int64     `json:"requestBytes"`
 	ResponseBytes int64     `json:"responseBytes"`
 	RequestID     string    `json:"requestId,omitempty"`
+	ModelCallID   string    `json:"modelCallId,omitempty"`
 	RequestKind   string    `json:"requestKind,omitempty"`
 	ResponseKind  string    `json:"responseKind,omitempty"`
 	CaptureSource string    `json:"captureSource,omitempty"`
