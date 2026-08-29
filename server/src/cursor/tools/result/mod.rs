@@ -1,3 +1,4 @@
+pub(crate) mod await_shell;
 mod exec;
 mod gate;
 mod image;

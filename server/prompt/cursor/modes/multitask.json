@@ -1,7 +1,7 @@
 {
   "tools": [
     "AskQuestion", "CallMcpTool", "Delete", "FetchMcpResource", "Glob", "Grep",
-    "Read", "ReadLints", "Shell", "StrReplace", "SwitchMode", "Task",
+    "Read", "ReadLints", "Shell", "AwaitShell", "StrReplace", "SwitchMode", "Task",
     "TodoWrite", "WebFetch", "WebSearch", "Write", "GenerateImage",
     "SembleSearch", "SembleFindRelated"
   ]
