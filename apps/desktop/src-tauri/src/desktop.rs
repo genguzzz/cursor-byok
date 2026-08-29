@@ -195,6 +195,7 @@ pub fn run() {
             let shutdown = CancellationToken::new();
             let server_shutdown = shutdown.clone();
             let app_handle = app.handle().clone();
+            let harness = server.harness();
             let task = tauri::async_runtime::spawn(async move {
                 let result = server.serve_on(listener, server_shutdown).await;
                 if let Err(error) = &result {
@@ -215,7 +216,7 @@ pub fn run() {
                 window.show()?;
                 window.set_focus()?;
             }
-            tray::create(app)?;
+            tray::create(app, harness)?;
             Ok(())
         })
         .build(tauri::generate_context!())
@@ -233,6 +234,11 @@ pub fn run() {
                 if let Some(window) = app.get_webview_window(MAIN_WINDOW_LABEL) {
                     let _ = window.hide();
                 }
+                // Closing the window means "run in the background", so drop the
+                // dock icon and leave the tray as the only entry point.  The
+                // proxy keeps serving Cursor either way.
+                #[cfg(target_os = "macos")]
+                let _ = app.set_dock_visibility(false);
             }
         }
         RunEvent::ExitRequested { api, .. } => {

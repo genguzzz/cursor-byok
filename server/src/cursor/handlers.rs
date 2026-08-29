@@ -123,7 +123,15 @@ async fn bidi_append_handler(
 ) -> Result<Response<Body>> {
     let (parts, body) = buffered(request).await?;
     let request: ai::BidiAppendRequest = connect::decode_unary(&body)?;
-    let decoded = bidi_append::decode(&request)?;
+    let mut decoded = bidi_append::decode(&request)?;
+    // A child run is routed by its override model, so the body Cursor's own
+    // backend sees must agree with the model we routed on.
+    let rewritten = decoded
+        .apply_effective_child_model()
+        .then(|| bidi_append::encode(&request, &decoded, bidi_append::is_framed(&body)))
+        .transpose()?;
+    let rewrote_body = rewritten.is_some();
+    let body = rewritten.unwrap_or(body);
     let first_model = decoded.model_id().map(str::to_owned);
     let conversation_id = decoded.conversation_id().map(str::to_owned);
     let trace_metadata = decoded.trace_metadata();
@@ -186,6 +194,16 @@ async fn bidi_append_handler(
     if !local {
         if first_model.is_some() {
             registry.mark_upstream(&decoded.request_id).await;
+        }
+        let mut parts = parts;
+        // A rewritten body changes length; a stale Content-Length would make
+        // the upstream truncate or hang.
+        if rewrote_body {
+            parts.headers.insert(
+                header::CONTENT_LENGTH,
+                HeaderValue::from_str(&body.len().to_string())
+                    .expect("body length is always a valid header value"),
+            );
         }
         return proxy::forward(
             Extension(proxy),

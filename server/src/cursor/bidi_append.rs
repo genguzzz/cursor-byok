@@ -1,3 +1,4 @@
+use bytes::Bytes;
 use prost::Message;
 
 use crate::{
@@ -13,18 +14,52 @@ pub struct DecodedAppend {
     pub message: agent::AgentClientMessage,
 }
 
+/// Cursor and this server spell some subagent types differently.  Fold the
+/// known aliases so an override written one way still matches a run named the
+/// other.
+fn canonical_subagent_type(value: &str) -> &str {
+    match value {
+        "generalPurpose" => "explore",
+        "browserUse" => "browser-use",
+        other => other,
+    }
+}
+
+fn subagent_types_match(left: &str, right: &str) -> bool {
+    canonical_subagent_type(left) == canonical_subagent_type(right)
+}
+
 impl DecodedAppend {
+    fn run_request(&self) -> Option<&agent::AgentRunRequest> {
+        match self.message.message.as_ref()? {
+            agent::agent_client_message::Message::RunRequest(request) => Some(request),
+            _ => None,
+        }
+    }
+
+    fn run_request_mut(&mut self) -> Option<&mut agent::AgentRunRequest> {
+        match self.message.message.as_mut()? {
+            agent::agent_client_message::Message::RunRequest(request) => Some(request),
+            _ => None,
+        }
+    }
+
     pub fn model_id(&self) -> Option<&str> {
-        let agent::agent_client_message::Message::RunRequest(request) =
-            self.message.message.as_ref()?
-        else {
-            return None;
-        };
-        request
-            .requested_model
-            .as_ref()
+        let request = self.run_request()?;
+        // A child run carries the parent's `requested_model` while the real
+        // choice lives in `subagent_model_overrides`.  Routing on the parent
+        // model sends a local subagent to Cursor's cloud (and the reverse), so
+        // the override wins when one applies.
+        child_override_model(request)
             .map(|model| model.model_id.as_str())
             .filter(|model| !model.is_empty())
+            .or_else(|| {
+                request
+                    .requested_model
+                    .as_ref()
+                    .map(|model| model.model_id.as_str())
+                    .filter(|model| !model.is_empty())
+            })
             .or_else(|| {
                 request
                     .model_details
@@ -34,13 +69,31 @@ impl DecodedAppend {
             })
     }
 
-    pub fn conversation_id(&self) -> Option<&str> {
-        let agent::agent_client_message::Message::RunRequest(request) =
-            self.message.message.as_ref()?
-        else {
-            return None;
+    /// Copy the resolved child model into `requested_model` so both the local
+    /// forwarder and the official upstream see one coherent selection.
+    ///
+    /// Returns whether the message changed, i.e. whether the caller must
+    /// re-encode the request body.
+    pub fn apply_effective_child_model(&mut self) -> bool {
+        let Some(request) = self.run_request_mut() else {
+            return false;
         };
-        request.conversation_id.as_deref()
+        let Some(model) = child_override_model(request).cloned() else {
+            return false;
+        };
+        if request
+            .requested_model
+            .as_ref()
+            .is_some_and(|current| current == &model)
+        {
+            return false;
+        }
+        request.requested_model = Some(model);
+        true
+    }
+
+    pub fn conversation_id(&self) -> Option<&str> {
+        self.run_request()?.conversation_id.as_deref()
     }
 
     pub fn is_background_task_completion(&self) -> bool {
@@ -119,6 +172,28 @@ impl DecodedAppend {
     }
 }
 
+/// The model a child run should actually use, if an override applies.
+///
+/// Only `Selection::Model` redirects: `inherit` deliberately keeps the parent
+/// model, and `disabled` means the subagent will not run at all.
+fn child_override_model(request: &agent::AgentRunRequest) -> Option<&agent::RequestedModel> {
+    let subagent_type = request
+        .subagent_type_name
+        .as_deref()
+        .map(str::trim)
+        .filter(|name| !name.is_empty())?;
+    request
+        .subagent_model_overrides
+        .iter()
+        .find(|override_| subagent_types_match(&override_.subagent_type, subagent_type))
+        .and_then(|override_| match override_.selection.as_ref()? {
+            agent::subagent_model_override::Selection::Model(model) => Some(model),
+            _ => None,
+        })
+        // `default` is the client's way of spelling inherit.
+        .filter(|model| !model.model_id.is_empty() && model.model_id != "default")
+}
+
 fn client_message_type(message: &agent::agent_client_message::Message) -> &'static str {
     use agent::agent_client_message::Message;
     match message {
@@ -182,6 +257,37 @@ pub fn decode(request: &ai::BidiAppendRequest) -> Result<DecodedAppend> {
         seqno: request.append_seqno,
         message: agent::AgentClientMessage::decode(payload.as_slice())?,
     })
+}
+
+/// Re-encode a mutated append into the same wire shape it arrived in.
+///
+/// The `AgentClientMessage` lives hex-encoded inside `BidiAppendRequest.data`,
+/// so a rewrite has to re-hex the inner message and then re-frame the outer
+/// request exactly as the client framed it — a Connect envelope stays an
+/// envelope, a bare proto body stays bare.
+pub fn encode(
+    original: &ai::BidiAppendRequest,
+    decoded: &DecodedAppend,
+    framed: bool,
+) -> Result<Bytes> {
+    let rewritten = ai::BidiAppendRequest {
+        data: hex::encode(decoded.message.encode_to_vec()),
+        ..original.clone()
+    };
+    if framed {
+        return crate::cursor::connect::encode_message(&rewritten);
+    }
+    Ok(Bytes::from(rewritten.encode_to_vec()))
+}
+
+/// Whether a request body carries a Connect length-prefixed envelope.
+pub fn is_framed(body: &[u8]) -> bool {
+    if body.len() < 5 {
+        return false;
+    }
+    let flags = body[0];
+    let length = u32::from_be_bytes([body[1], body[2], body[3], body[4]]) as usize;
+    flags & crate::cursor::connect::END_STREAM_FLAG == 0 && length == body.len() - 5
 }
 
 pub async fn append(
@@ -289,5 +395,161 @@ mod tests {
         }))
         .unwrap();
         assert!(decoded.is_background_task_completion());
+    }
+
+    fn child_run(
+        subagent_type: &str,
+        parent_model: &str,
+        override_type: &str,
+        selection: Option<agent::subagent_model_override::Selection>,
+    ) -> agent::AgentRunRequest {
+        agent::AgentRunRequest {
+            requested_model: Some(agent::RequestedModel {
+                model_id: parent_model.into(),
+                ..Default::default()
+            }),
+            subagent_type_name: Some(subagent_type.into()),
+            subagent_model_overrides: vec![agent::SubagentModelOverride {
+                subagent_type: override_type.into(),
+                selection,
+            }],
+            ..Default::default()
+        }
+    }
+
+    fn model_selection(model_id: &str) -> Option<agent::subagent_model_override::Selection> {
+        Some(agent::subagent_model_override::Selection::Model(
+            agent::RequestedModel {
+                model_id: model_id.into(),
+                ..Default::default()
+            },
+        ))
+    }
+
+    #[test]
+    fn child_run_routes_on_its_override_not_the_parent_model() {
+        // An official parent spawning a local explore must route the child
+        // locally, and the reverse must route upstream.
+        let decoded = decode(&encoded(child_run(
+            "explore",
+            "cursor-grok-4.6",
+            "explore",
+            model_selection("0123456789abcdef"),
+        )))
+        .unwrap();
+        assert_eq!(decoded.model_id(), Some("0123456789abcdef"));
+
+        let decoded = decode(&encoded(child_run(
+            "explore",
+            "0123456789abcdef",
+            "explore",
+            model_selection("cursor-grok-4.6"),
+        )))
+        .unwrap();
+        assert_eq!(decoded.model_id(), Some("cursor-grok-4.6"));
+    }
+
+    #[test]
+    fn subagent_type_aliases_are_folded() {
+        let decoded = decode(&encoded(child_run(
+            "explore",
+            "parent",
+            "generalPurpose",
+            model_selection("child"),
+        )))
+        .unwrap();
+        assert_eq!(decoded.model_id(), Some("child"));
+
+        let decoded = decode(&encoded(child_run(
+            "browser-use",
+            "parent",
+            "browserUse",
+            model_selection("child"),
+        )))
+        .unwrap();
+        assert_eq!(decoded.model_id(), Some("child"));
+    }
+
+    #[test]
+    fn inherit_and_disabled_keep_the_parent_model() {
+        for selection in [
+            Some(agent::subagent_model_override::Selection::Inherit(true)),
+            Some(agent::subagent_model_override::Selection::Disabled(true)),
+            model_selection("default"),
+            None,
+        ] {
+            let decoded =
+                decode(&encoded(child_run("explore", "parent", "explore", selection))).unwrap();
+            assert_eq!(decoded.model_id(), Some("parent"));
+        }
+    }
+
+    #[test]
+    fn an_override_for_another_subagent_type_is_ignored() {
+        let decoded = decode(&encoded(child_run(
+            "explore",
+            "parent",
+            "shell",
+            model_selection("other-child"),
+        )))
+        .unwrap();
+        assert_eq!(decoded.model_id(), Some("parent"));
+    }
+
+    #[test]
+    fn a_root_run_never_consults_the_overrides() {
+        let mut run = child_run("explore", "parent", "explore", model_selection("child"));
+        run.subagent_type_name = None;
+        let mut decoded = decode(&encoded(run)).unwrap();
+        assert_eq!(decoded.model_id(), Some("parent"));
+        assert!(!decoded.apply_effective_child_model());
+    }
+
+    #[test]
+    fn applying_the_child_model_rewrites_requested_model_once() {
+        let request = encoded(child_run(
+            "explore",
+            "parent",
+            "explore",
+            model_selection("child"),
+        ));
+        let mut decoded = decode(&request).unwrap();
+
+        assert!(decoded.apply_effective_child_model());
+        assert_eq!(
+            decoded
+                .run_request()
+                .unwrap()
+                .requested_model
+                .as_ref()
+                .unwrap()
+                .model_id,
+            "child"
+        );
+        // Idempotent: a second pass has nothing left to change.
+        assert!(!decoded.apply_effective_child_model());
+    }
+
+    #[test]
+    fn rewritten_bodies_round_trip_in_both_wire_shapes() {
+        let request = encoded(child_run(
+            "explore",
+            "parent",
+            "explore",
+            model_selection("child"),
+        ));
+        let mut decoded = decode(&request).unwrap();
+        assert!(decoded.apply_effective_child_model());
+
+        for framed in [false, true] {
+            let body = encode(&request, &decoded, framed).unwrap();
+            assert_eq!(is_framed(&body), framed);
+            let reparsed: ai::BidiAppendRequest = crate::cursor::connect::decode_unary(&body)
+                .expect("rewritten body decodes");
+            let reparsed = decode(&reparsed).unwrap();
+            assert_eq!(reparsed.model_id(), Some("child"));
+            assert_eq!(reparsed.request_id, decoded.request_id);
+            assert_eq!(reparsed.seqno, decoded.seqno);
+        }
     }
 }
