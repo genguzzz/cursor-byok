@@ -35,6 +35,33 @@ pub struct CursorSessionHandle {
     trace: Option<CursorTraceRecorder>,
 }
 
+/// Whether a frame is superseded by later output rather than carrying state a
+/// reconnecting client still needs.
+///
+/// Only the streaming text/thinking/token/shell deltas qualify: they are
+/// purely incremental rendering. Tool call lifecycle, summaries, turn end,
+/// heartbeats, checkpoints and KV traffic all stay, because a replay that
+/// dropped them would leave the client with an incomplete conversation.
+fn is_transient(message: &pb::AgentServerMessage) -> bool {
+    let Some(pb::agent_server_message::Message::InteractionUpdate(update)) =
+        message.message.as_ref()
+    else {
+        return false;
+    };
+    use pb::interaction_update::Message;
+    matches!(
+        update.message.as_ref(),
+        Some(
+            Message::TextDelta(_)
+                | Message::ThinkingDelta(_)
+                | Message::TokenDelta(_)
+                | Message::ShellOutputDelta(_)
+                | Message::ToolCallDelta(_)
+                | Message::PartialToolCall(_)
+        )
+    )
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CursorParent {
     pub request_id: String,
@@ -87,7 +114,9 @@ impl CursorSessionHandle {
         self.output.emit(frame);
     }
     pub fn emit(&self, message: &pb::AgentServerMessage) -> Result<()> {
-        self.emit_frame(crate::cursor::connect::encode_message(message)?);
+        let transient = is_transient(message);
+        self.output
+            .emit_classified(crate::cursor::connect::encode_message(message)?, transient);
         Ok(())
     }
     pub fn cancel(&self) {
@@ -130,18 +159,45 @@ struct OutputHub {
 
 #[derive(Default)]
 struct OutputState {
-    history: Vec<Bytes>,
+    history: Vec<HistoryFrame>,
+    transient: usize,
     subscribers: Vec<mpsc::UnboundedSender<Bytes>>,
     closed: bool,
 }
 
+struct HistoryFrame {
+    frame: Bytes,
+    transient: bool,
+}
+
+/// How many superseded transient frames to keep for replay.
+///
+/// History exists so a late subscriber can replay a run from the start. Text
+/// and thinking deltas dominate that history by volume but carry no state a
+/// reconnecting client needs beyond the most recent few, so cap them; every
+/// other frame is retained in full.
+const TRANSIENT_HISTORY_LIMIT: usize = 256;
+
 impl OutputHub {
     fn emit(&self, frame: Bytes) {
+        self.emit_classified(frame, false);
+    }
+
+    fn emit_classified(&self, frame: Bytes, transient: bool) {
         let mut state = self.state.lock();
         if state.closed {
             return;
         }
-        state.history.push(frame.clone());
+        state.history.push(HistoryFrame {
+            frame: frame.clone(),
+            transient,
+        });
+        if transient {
+            state.transient += 1;
+            if state.transient > TRANSIENT_HISTORY_LIMIT {
+                state.trim_transient();
+            }
+        }
         state
             .subscribers
             .retain(|subscriber| subscriber.send(frame.clone()).is_ok());
@@ -150,8 +206,8 @@ impl OutputHub {
     fn subscribe(&self) -> mpsc::UnboundedReceiver<Bytes> {
         let (sender, receiver) = mpsc::unbounded_channel();
         let mut state = self.state.lock();
-        for frame in &state.history {
-            let _ = sender.send(frame.clone());
+        for entry in &state.history {
+            let _ = sender.send(entry.frame.clone());
         }
         if !state.closed {
             state.subscribers.push(sender);
@@ -175,6 +231,25 @@ impl OutputHub {
             }
             notified.await;
         }
+    }
+}
+
+impl OutputState {
+    /// Drop the oldest transient frames, preserving the relative order of
+    /// everything that stays.
+    fn trim_transient(&mut self) {
+        let mut excess = self.transient.saturating_sub(TRANSIENT_HISTORY_LIMIT);
+        if excess == 0 {
+            return;
+        }
+        self.history.retain(|entry| {
+            if entry.transient && excess > 0 {
+                excess -= 1;
+                return false;
+            }
+            true
+        });
+        self.transient = self.history.iter().filter(|entry| entry.transient).count();
     }
 }
 
@@ -378,5 +453,95 @@ impl CursorSessionRegistry {
             handle.cancel();
             let _ = crate::cursor::lifecycle::cancel(&handle);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn text_delta(text: &str) -> pb::AgentServerMessage {
+        crate::cursor::interaction::server_interaction(pb::interaction_update::Message::TextDelta(
+            pb::TextDeltaUpdate {
+                text: text.into(),
+                ..Default::default()
+            },
+        ))
+    }
+
+    fn turn_ended() -> pb::AgentServerMessage {
+        crate::cursor::interaction::server_interaction(pb::interaction_update::Message::TurnEnded(
+            pb::TurnEndedUpdate::default(),
+        ))
+    }
+
+    #[test]
+    fn streaming_deltas_are_transient_but_lifecycle_frames_are_not() {
+        assert!(is_transient(&text_delta("hello")));
+        assert!(!is_transient(&turn_ended()));
+        // A frame with no interaction payload is never transient.
+        assert!(!is_transient(&pb::AgentServerMessage {
+            ttft_breakdown: None,
+            message: None
+        }));
+    }
+
+    #[test]
+    fn history_keeps_every_durable_frame_while_bounding_transient_ones() {
+        let hub = OutputHub::default();
+        let durable = Bytes::from_static(b"durable");
+        for index in 0..(TRANSIENT_HISTORY_LIMIT * 3) {
+            hub.emit_classified(Bytes::from(index.to_string()), true);
+            if index % 100 == 0 {
+                hub.emit_classified(durable.clone(), false);
+            }
+        }
+
+        let state = hub.state.lock();
+        assert!(state.transient <= TRANSIENT_HISTORY_LIMIT);
+        assert_eq!(
+            state
+                .history
+                .iter()
+                .filter(|entry| !entry.transient)
+                .count(),
+            (TRANSIENT_HISTORY_LIMIT * 3).div_ceil(100)
+        );
+        // The retained transient frames are the most recent ones, in order.
+        let retained: Vec<_> = state
+            .history
+            .iter()
+            .filter(|entry| entry.transient)
+            .map(|entry| String::from_utf8(entry.frame.to_vec()).unwrap())
+            .collect();
+        let mut expected = retained.clone();
+        expected.sort_by_key(|value| value.parse::<usize>().unwrap());
+        assert_eq!(retained, expected);
+        assert_eq!(
+            retained.last().map(String::as_str),
+            Some((TRANSIENT_HISTORY_LIMIT * 3 - 1).to_string().as_str())
+        );
+    }
+
+    #[test]
+    fn a_late_subscriber_replays_bounded_history_in_order() {
+        let hub = OutputHub::default();
+        hub.emit_classified(Bytes::from_static(b"first"), false);
+        hub.emit_classified(Bytes::from_static(b"delta"), true);
+        hub.emit_classified(Bytes::from_static(b"last"), false);
+
+        let mut receiver = hub.subscribe();
+        let mut replayed = Vec::new();
+        while let Ok(frame) = receiver.try_recv() {
+            replayed.push(frame);
+        }
+        assert_eq!(
+            replayed,
+            vec![
+                Bytes::from_static(b"first"),
+                Bytes::from_static(b"delta"),
+                Bytes::from_static(b"last")
+            ]
+        );
     }
 }

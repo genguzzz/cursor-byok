@@ -18,6 +18,12 @@ pub enum Error {
     Store(String),
     #[error("run was cancelled")]
     Cancelled,
+    /// A client acknowledgement never arrived.
+    ///
+    /// Distinct from `Protocol` because the request itself was well-formed:
+    /// the client simply went quiet, which is often survivable.
+    #[error("timed out waiting for the client: {0}")]
+    ClientTimeout(String),
     #[error("run not found: {0}")]
     RunNotFound(String),
     #[error("database error: {0}")]
@@ -45,6 +51,7 @@ impl IntoResponse for Error {
             Self::RunNotFound(_) => StatusCode::NOT_FOUND,
             Self::Provider(_) | Self::Http(_) => StatusCode::BAD_GATEWAY,
             Self::Cancelled => StatusCode::CONFLICT,
+            Self::ClientTimeout(_) => StatusCode::GATEWAY_TIMEOUT,
             Self::Store(_)
             | Self::Database(_)
             | Self::Migration(_)
@@ -55,6 +62,7 @@ impl IntoResponse for Error {
             StatusCode::BAD_REQUEST => "invalid_argument",
             StatusCode::NOT_FOUND => "not_found",
             StatusCode::CONFLICT => "aborted",
+            StatusCode::GATEWAY_TIMEOUT => "deadline_exceeded",
             StatusCode::BAD_GATEWAY => "unavailable",
             _ => "internal",
         };

@@ -12,6 +12,7 @@ pub enum ConnectCode {
     InvalidArgument,
     NotFound,
     Unavailable,
+    DeadlineExceeded,
     Internal,
 }
 
@@ -22,6 +23,7 @@ impl ConnectCode {
             Self::InvalidArgument => "invalid_argument",
             Self::NotFound => "not_found",
             Self::Unavailable => "unavailable",
+            Self::DeadlineExceeded => "deadline_exceeded",
             Self::Internal => "internal",
         }
     }

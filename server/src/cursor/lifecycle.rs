@@ -25,6 +25,7 @@ pub fn fail(handle: &CursorSessionHandle, error: &Error) -> Result<()> {
         Error::Decode(_) | Error::Json(_) => plain_error(ConnectCode::InvalidArgument, error),
         Error::RunNotFound(_) => plain_error(ConnectCode::NotFound, error),
         Error::Cancelled => plain_error(ConnectCode::Canceled, error),
+        Error::ClientTimeout(_) => plain_error(ConnectCode::DeadlineExceeded, error),
         Error::Config(_)
         | Error::Store(_)
         | Error::Database(_)
