@@ -190,6 +190,14 @@ pub fn tool_placeholder(name: &str, call_id: &str) -> Result<pb::ToolCall> {
         }
         "awaitshell" => Tool::AwaitToolCall(pb::AwaitToolCall::default()),
         "getmcptools" => Tool::GetMcpToolsToolCall(pb::GetMcpToolsToolCall::default()),
+        "ls" => Tool::LsToolCall(pb::LsToolCall::default()),
+        "writeshellstdin" => Tool::WriteShellStdinToolCall(pb::WriteShellStdinToolCall::default()),
+        // ForceBackgroundShell has no dedicated ToolCall variant on the wire; it
+        // controls a running shell, so the shell card is the faithful projection.
+        "forcebackgroundshell" => Tool::ShellToolCall(pb::ShellToolCall::default()),
+        "creategoal" => Tool::CreateGoalToolCall(pb::CreateGoalToolCall::default()),
+        "updategoal" => Tool::UpdateGoalToolCall(pb::UpdateGoalToolCall::default()),
+        "setactivebranch" => Tool::SetActiveBranchToolCall(pb::SetActiveBranchToolCall::default()),
         _ => return Err(Error::Protocol(format!("unsupported tool: {name}"))),
     };
     Ok(pb::ToolCall {
@@ -457,6 +465,39 @@ pub fn render_tool_call(call: &ToolCall, completed: bool) -> Result<pb::ToolCall
                 chars: string("chars"),
             })
         }
+        Some(pb::tool_call::Tool::LsToolCall(tool)) => {
+            tool.args = Some(pb::LsArgs {
+                path: string("path"),
+                ignore: call
+                    .arguments
+                    .get("ignore")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .filter_map(Value::as_str)
+                    .map(str::to_string)
+                    .collect(),
+                tool_call_id: call.call_id.clone(),
+                sandbox_policy: None,
+                timeout_ms: None,
+            })
+        }
+        Some(pb::tool_call::Tool::CreateGoalToolCall(tool)) => {
+            tool.args = Some(pb::CreateGoalArgs {
+                objective: string("objective"),
+            })
+        }
+        Some(pb::tool_call::Tool::UpdateGoalToolCall(tool)) => {
+            tool.args = Some(pb::UpdateGoalArgs {
+                status: goal_status(optional("status").as_deref()),
+            })
+        }
+        Some(pb::tool_call::Tool::SetActiveBranchToolCall(tool)) => {
+            tool.args = Some(pb::SetActiveBranchArgs {
+                path: string("path"),
+                branch_name: string("branchName"),
+            })
+        }
         Some(pb::tool_call::Tool::GetMcpToolsToolCall(tool)) => {
             tool.args = Some(pb::GetMcpToolsArgs {
                 server: optional("server"),
@@ -513,6 +554,15 @@ fn execution_environment(value: Option<&str>) -> i32 {
         Some("cloud") => pb::SubagentExecutionEnvironment::Cloud as i32,
         Some("local") | None => pb::SubagentExecutionEnvironment::Local as i32,
         Some(_) => pb::SubagentExecutionEnvironment::Unspecified as i32,
+    }
+}
+
+fn goal_status(value: Option<&str>) -> i32 {
+    match value.map(str::trim) {
+        Some("complete") => pb::GoalStatus::Complete as i32,
+        Some("paused") => pb::GoalStatus::Paused as i32,
+        Some("cleared") => pb::GoalStatus::Cleared as i32,
+        _ => pb::GoalStatus::Active as i32,
     }
 }
 

@@ -63,6 +63,18 @@ pub(crate) fn from_exec(
         (Some(Tool::ReadLintsToolCall(tool)), Message::DiagnosticsResult(result)) => {
             tool.result = Some(render::diagnostics(result)?);
         }
+        (Some(Tool::LsToolCall(tool)), Message::LsResult(result)) => {
+            tool.result = Some(result.clone());
+        }
+        (Some(Tool::WriteShellStdinToolCall(tool)), Message::WriteShellStdinResult(result)) => {
+            tool.result = Some(result.clone());
+        }
+        (Some(Tool::ShellToolCall(tool)), Message::ForceBackgroundShellResult(result)) => {
+            // ForceBackgroundShell has no dedicated ToolCall variant; the
+            // official client reuses the shell card. Carry the now-backgrounded
+            // shell result (when present) through the shell card.
+            tool.result = result.shell_result.clone();
+        }
         (Some(Tool::McpToolCall(tool)), Message::McpResult(result)) => {
             tool.result = Some(render::mcp(result)?);
         }

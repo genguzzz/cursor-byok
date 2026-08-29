@@ -14,6 +14,9 @@ pub(crate) fn local(call: &ToolCall, message_index: usize) -> Result<ToolComplet
     match normalized(&call.name).as_str() {
         "todowrite" => todo_write(call),
         "updatecurrentstep" => update_current_step(call, message_index),
+        "creategoal" => create_goal(call),
+        "updategoal" => update_goal(call),
+        "setactivebranch" => set_active_branch(call),
         _ => Err(Error::Protocol(format!("unsupported tool: {}", call.name))),
     }
 }
