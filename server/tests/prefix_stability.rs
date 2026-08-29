@@ -195,7 +195,7 @@ fn every_prompt_mode_loads_the_captured_tool_set() {
             "SembleSearch",
             "SembleFindRelated",
         ],
-        "a69854320f10453fe0208e5e09c339bac5f3d43307801d763a8b2e1c9ca238cb",
+        "a250b6e269ad9da55c2c45ed8623bf67a3dcf0d1236c2fb9d8cdac78a5b7c7ce",
     );
     assert_mode(
         &assets,
@@ -218,7 +218,7 @@ fn every_prompt_mode_loads_the_captured_tool_set() {
             "SembleSearch",
             "SembleFindRelated",
         ],
-        "ba8ab13176bab6dfa551120abd617079eb25826afb5a6c1d66a39dc643d9aa01",
+        "5cee82d921d9050450d450e487b962e25d8979258b3a61dce32b43292f8b956e",
     );
     assert_mode(
         &assets,
@@ -243,7 +243,7 @@ fn every_prompt_mode_loads_the_captured_tool_set() {
             "SembleSearch",
             "SembleFindRelated",
         ],
-        "a69854320f10453fe0208e5e09c339bac5f3d43307801d763a8b2e1c9ca238cb",
+        "a250b6e269ad9da55c2c45ed8623bf67a3dcf0d1236c2fb9d8cdac78a5b7c7ce",
     );
     assert_mode(
         &assets,
@@ -258,6 +258,7 @@ fn every_prompt_mode_loads_the_captured_tool_set() {
             "Read",
             "ReadLints",
             "Shell",
+            "AwaitShell",
             "StrReplace",
             "SwitchMode",
             "Task",
@@ -269,13 +270,14 @@ fn every_prompt_mode_loads_the_captured_tool_set() {
             "SembleSearch",
             "SembleFindRelated",
         ],
-        "b7af3631fd476a6860cb162fe7ef8f03d1e127d479082e4b3ba184facc3139a3",
+        "aa02a07174b682bf8dc265840228b827a2ffe78d14b9d2ff5ea6fa77a0508f30",
     );
     assert_mode(
         &assets,
         Mode::Subagent,
         &[
             "Shell",
+            "AwaitShell",
             "Grep",
             "Delete",
             "WebSearch",
@@ -296,7 +298,7 @@ fn every_prompt_mode_loads_the_captured_tool_set() {
             "SembleSearch",
             "SembleFindRelated",
         ],
-        "e2b5b8f40d98f23f7034842c069e09c5641605c4ac5952ab5c2f466612107573",
+        "5f3f094529700c6d0d35f267309e5a3e1eb2ceb0167ee9c9efe05c9a35c1b6f4",
     );
     assert_mode(
         &assets,
@@ -306,7 +308,7 @@ fn every_prompt_mode_loads_the_captured_tool_set() {
     );
     assert_eq!(
         schema_digest(&assets.mode(Mode::Agent).tools),
-        "58da2ffc52ab21cf78e33492306aaf47abe0cb60845a9330f260ff912e99ced3"
+        "3bba2fed7e277bdc788899452209079628434b2e1c4a3a721c97333522874f51"
     );
     let task = assets
         .mode(Mode::Agent)
