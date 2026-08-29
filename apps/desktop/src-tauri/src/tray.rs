@@ -43,13 +43,7 @@ pub fn create(app: &mut App, harness: CursorHarness) -> tauri::Result<()> {
     )?;
     // Display-only line; disabled so it never looks clickable.
     let status = MenuItem::with_id(app, STATUS_MENU_ID, "状态: 读取中…", false, None::<&str>)?;
-    let restore = MenuItem::with_id(
-        app,
-        RESTORE_MENU_ID,
-        "恢复 Cursor 设置",
-        true,
-        None::<&str>,
-    )?;
+    let restore = MenuItem::with_id(app, RESTORE_MENU_ID, "恢复 Cursor 设置", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, QUIT_MENU_ID, "退出", true, None::<&str>)?;
     let menu = Menu::with_items(
         app,

@@ -741,8 +741,7 @@ impl ContextUsageAnchor {
 }
 
 fn compaction_reserve_tokens(context_window: u64) -> u64 {
-    let scaled = context_window
-        .saturating_mul(COMPACTION_RESERVE_NUMERATOR)
+    let scaled = context_window.saturating_mul(COMPACTION_RESERVE_NUMERATOR)
         / COMPACTION_RESERVE_DENOMINATOR;
     scaled.max(COMPACTION_RESERVE_TOKENS)
 }

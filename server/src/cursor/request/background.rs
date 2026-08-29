@@ -106,10 +106,9 @@ pub(super) fn project(
         }
     }
 
-    let (first, _) = completions
-        .values()
-        .next()
-        .ok_or_else(|| Error::Protocol("background task notification contains no finished task".into()))?;
+    let (first, _) = completions.values().next().ok_or_else(|| {
+        Error::Protocol("background task notification contains no finished task".into())
+    })?;
     let text = match (has_shell, has_subagent) {
         (true, false) => SHELL_FOLLOW_UP.into(),
         (false, true) => FOLLOW_UP.into(),

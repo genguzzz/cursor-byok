@@ -435,7 +435,10 @@ mod tests {
 
     #[test]
     fn short_output_stays_a_single_delta() {
-        assert_eq!(chunk_shell_output("ok\n", SHELL_DELTA_CHUNK_LIMIT), vec!["ok\n"]);
+        assert_eq!(
+            chunk_shell_output("ok\n", SHELL_DELTA_CHUNK_LIMIT),
+            vec!["ok\n"]
+        );
         assert!(chunk_shell_output("", SHELL_DELTA_CHUNK_LIMIT).is_empty());
     }
 

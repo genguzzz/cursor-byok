@@ -527,9 +527,7 @@ mod tests {
         let hash = "0123456789abcdef";
         assert_eq!(model_selector_candidates(hash), vec![hash]);
         assert_eq!(
-            model_selector_candidates(&format!(
-                "{hash}[context=200000,reasoning=high,fast=false]"
-            )),
+            model_selector_candidates(&format!("{hash}[context=200000,reasoning=high,fast=false]")),
             vec![
                 format!("{hash}[context=200000,reasoning=high,fast=false]"),
                 hash.to_string()

@@ -68,7 +68,11 @@ fn normalize_mcp_call(call: &ToolCall) -> ToolCall {
         return normalized;
     };
     lift_nested_identity(arguments);
-    canonicalize(arguments, "server", &["server_identifier", "serverIdentifier"]);
+    canonicalize(
+        arguments,
+        "server",
+        &["server_identifier", "serverIdentifier"],
+    );
     canonicalize(arguments, "toolName", &["tool_name"]);
     canonicalize(arguments, "arguments", &["tool_args", "toolArgs", "args"]);
     normalized
@@ -84,7 +88,10 @@ fn lift_nested_identity(arguments: &mut Map<String, Value>) {
         "toolName",
         "tool_name",
     ];
-    let Some(nested) = arguments.get_mut("arguments").and_then(Value::as_object_mut) else {
+    let Some(nested) = arguments
+        .get_mut("arguments")
+        .and_then(Value::as_object_mut)
+    else {
         return;
     };
     let lifted: Vec<(String, Value)> = IDENTITY
@@ -104,7 +111,11 @@ fn canonicalize(arguments: &mut Map<String, Value>, canonical: &str, aliases: &[
         return;
     }
     for alias in aliases {
-        if let Some(value) = arguments.get(*alias).filter(|value| !is_blank(value)).cloned() {
+        if let Some(value) = arguments
+            .get(*alias)
+            .filter(|value| !is_blank(value))
+            .cloned()
+        {
             arguments.insert(canonical.to_string(), value);
             return;
         }

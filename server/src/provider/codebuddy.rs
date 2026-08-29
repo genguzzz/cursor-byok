@@ -38,7 +38,8 @@ impl CallIdentity {
     /// sending dash-free hex.
     pub fn new(conversation_id: &str, request_id: &str, model_call_id: &str) -> Self {
         Self {
-            conversation_id: non_empty(conversation_id).unwrap_or_else(|| Uuid::new_v4().to_string()),
+            conversation_id: non_empty(conversation_id)
+                .unwrap_or_else(|| Uuid::new_v4().to_string()),
             conversation_request_id: compact_id(request_id),
             message_id: compact_id(model_call_id),
         }
@@ -172,9 +173,7 @@ fn user_id_from_api_key(api_key: &str) -> Option<String> {
         .unwrap_or(api_key.trim());
     let payload = token.split('.').nth(1)?;
     // JWT payloads are unpadded base64url, but be forgiving about padding.
-    let decoded = URL_SAFE_NO_PAD
-        .decode(payload.trim_end_matches('='))
-        .ok()?;
+    let decoded = URL_SAFE_NO_PAD.decode(payload.trim_end_matches('=')).ok()?;
     let claims: Value = serde_json::from_slice(&decoded).ok()?;
     claims
         .get("sub")
@@ -345,7 +344,10 @@ mod tests {
             headers["x-conversation-request-id"],
             "111111112222333344445555555555 55".replace(' ', "")
         );
-        assert_eq!(headers["x-request-id"], headers["x-conversation-message-id"]);
+        assert_eq!(
+            headers["x-request-id"],
+            headers["x-conversation-message-id"]
+        );
         assert_eq!(
             headers["x-root-request-id"],
             headers["x-conversation-request-id"]
@@ -365,10 +367,7 @@ mod tests {
             headers["traceparent"],
             format!("00-{trace}-{span}-01").as_str()
         );
-        assert_eq!(
-            headers["b3"],
-            format!("{trace}-{span}-1-{parent}").as_str()
-        );
+        assert_eq!(headers["b3"], format!("{trace}-{span}-1-{parent}").as_str());
     }
 
     #[test]

@@ -478,8 +478,10 @@ mod tests {
             model_selection("default"),
             None,
         ] {
-            let decoded =
-                decode(&encoded(child_run("explore", "parent", "explore", selection))).unwrap();
+            let decoded = decode(&encoded(child_run(
+                "explore", "parent", "explore", selection,
+            )))
+            .unwrap();
             assert_eq!(decoded.model_id(), Some("parent"));
         }
     }
@@ -544,8 +546,8 @@ mod tests {
         for framed in [false, true] {
             let body = encode(&request, &decoded, framed).unwrap();
             assert_eq!(is_framed(&body), framed);
-            let reparsed: ai::BidiAppendRequest = crate::cursor::connect::decode_unary(&body)
-                .expect("rewritten body decodes");
+            let reparsed: ai::BidiAppendRequest =
+                crate::cursor::connect::decode_unary(&body).expect("rewritten body decodes");
             let reparsed = decode(&reparsed).unwrap();
             assert_eq!(reparsed.model_id(), Some("child"));
             assert_eq!(reparsed.request_id, decoded.request_id);
