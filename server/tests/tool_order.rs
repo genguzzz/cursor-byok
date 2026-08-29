@@ -70,7 +70,9 @@ async fn results_commit_adjacent_pairs_in_arrival_order() {
     let messages = store.load_revision_messages(c.revision_id).await.unwrap();
     assert_eq!(messages.len(), 6);
     let ids = messages
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|pair| match (&pair[0].content, &pair[1].content) {
             (MessageContent::Assistant { tool_calls, .. }, MessageContent::ToolResult(result)) => {
                 assert_eq!(tool_calls[0].call_id, result.call_id);

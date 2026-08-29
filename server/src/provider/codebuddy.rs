@@ -178,7 +178,7 @@ fn user_id_from_api_key(api_key: &str) -> Option<String> {
     claims
         .get("sub")
         .and_then(Value::as_str)
-        .and_then(|sub| non_empty(sub))
+        .and_then(non_empty)
 }
 
 /// Body additions applied before the user's own `extra_params`, so a user can
@@ -212,7 +212,7 @@ fn verbosity(effort: Option<&str>) -> Option<&'static str> {
 /// pasted screenshot would vanish with no diagnostic.  Emitting the paths plus
 /// a nudge to call `Read` keeps the image reachable, since tool-result images
 /// *are* accepted.
-pub fn strip_user_inline_images(messages: &mut Vec<Value>) {
+pub fn strip_user_inline_images(messages: &mut [Value]) {
     for message in messages.iter_mut() {
         let Some(object) = message.as_object_mut() else {
             continue;

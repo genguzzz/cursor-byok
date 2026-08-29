@@ -16,7 +16,7 @@ use crate::{
     store::{RunStatus, Store},
 };
 
-use super::{consume_model_cycle, ModelCycleFailure, RunFailure, RunOutcome};
+use super::{consume_model_cycle, RunFailure, RunOutcome};
 
 const COMPACTION_RESERVE_TOKENS: u64 = 10_000;
 /// Compact once the estimated input crosses this fraction of the window.
@@ -335,18 +335,14 @@ impl RunEngine {
             };
             let cycle = match cycle {
                 Ok(cycle) => cycle,
-                Err(ModelCycleFailure {
-                    failure,
-                    usage: cycle_usage,
-                    ..
-                }) => {
-                    if let Some(cycle_usage) = cycle_usage {
+                Err(failure) => {
+                    if let Some(cycle_usage) = failure.usage {
                         accumulate_usage(&mut usage, cycle_usage);
                     }
                     if cancellation.is_cancelled() {
                         return (RunOutcome::Cancelled, usage);
                     }
-                    return (RunOutcome::Failed(failure), usage);
+                    return (RunOutcome::Failed(failure.failure), usage);
                 }
             };
             if let Some(cycle_usage) = cycle.usage {

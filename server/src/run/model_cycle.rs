@@ -40,7 +40,7 @@ pub async fn consume_model_cycle(
     mut stream: ProviderStream,
     client: &mpsc::Sender<ClientEvent>,
     cancellation: &CancellationToken,
-) -> std::result::Result<ModelCycleResult, ModelCycleFailure> {
+) -> std::result::Result<ModelCycleResult, Box<ModelCycleFailure>> {
     let mut model_call_id = None;
     let mut text = String::new();
     let mut reasoning = String::new();
@@ -361,11 +361,11 @@ fn failure(
     partial_text: String,
     partial_reasoning: String,
     usage: Option<Usage>,
-) -> ModelCycleFailure {
-    ModelCycleFailure {
+) -> Box<ModelCycleFailure> {
+    Box::new(ModelCycleFailure {
         failure,
         partial_text,
         partial_reasoning,
         usage,
-    }
+    })
 }

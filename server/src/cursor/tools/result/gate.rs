@@ -405,28 +405,25 @@ fn gate_mcp(tool: &mut pb::McpToolCall) {
     let mut remaining_text = MCP_TEXT_LIMIT;
     let mut content = Vec::with_capacity(success.content.len() + notices.len());
     for mut item in std::mem::take(&mut success.content) {
-        match item.content.as_mut() {
-            Some(pb::mcp_tool_result_content_item::Content::Text(text)) => {
-                let original = text.text.clone();
-                let next = truncate_text("MCP content item", &original, MCP_TEXT_LIMIT);
-                if remaining_text == 0 {
-                    notices.push(truncation_notice(
-                        "MCP text",
-                        MCP_TEXT_LIMIT,
-                        MCP_TEXT_LIMIT,
-                        MCP_TEXT_LIMIT.saturating_add(original.len()),
-                    ));
-                    continue;
-                }
-                text.text = truncate_text("MCP text", &next, remaining_text);
-                remaining_text = remaining_text.saturating_sub(text.text.len());
+        // MCP images are sent to the client as inline binary data. Truncating
+        // an encoded image at an arbitrary byte boundary corrupts the image
+        // and makes the client's image/screenshot fallback fail. The model
+        // receives only the textual MCP summary below, which is bounded by
+        // MCP_TEXT_LIMIT, so the image does not need this text-result gate.
+        if let Some(pb::mcp_tool_result_content_item::Content::Text(text)) = item.content.as_mut() {
+            let original = text.text.clone();
+            let next = truncate_text("MCP content item", &original, MCP_TEXT_LIMIT);
+            if remaining_text == 0 {
+                notices.push(truncation_notice(
+                    "MCP text",
+                    MCP_TEXT_LIMIT,
+                    MCP_TEXT_LIMIT,
+                    MCP_TEXT_LIMIT.saturating_add(original.len()),
+                ));
+                continue;
             }
-            // MCP images are sent to the client as inline binary data. Truncating
-            // an encoded image at an arbitrary byte boundary corrupts the image
-            // and makes the client's image/screenshot fallback fail. The model
-            // receives only the textual MCP summary below, which is bounded by
-            // MCP_TEXT_LIMIT, so the image does not need this text-result gate.
-            _ => {}
+            text.text = truncate_text("MCP text", &next, remaining_text);
+            remaining_text = remaining_text.saturating_sub(text.text.len());
         }
         content.push(item);
     }
