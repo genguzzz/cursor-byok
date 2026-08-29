@@ -56,14 +56,17 @@ pub(super) async fn start(
     let call = normalized_call.as_ref().unwrap_or(call);
 
     match normalized(&call.name).as_str() {
-        "shell" | "bash" | "read" | "delete" | "grep" | "glob" | "readlints" | "task"
+        "shell" | "bash" | "read" | "delete" | "grep" | "glob" | "readlints" | "ls"
+        | "writeshellstdin" | "forcebackgroundshell" | "task"
         | "callmcptool" | "fetchmcpresource" | "getmcptools" => {
             exec::start(runtime, call, context).await
         }
         "write" | "strreplace" | "editnotebook" => edit::start(runtime, call, context).await,
         "askquestion" | "websearch" | "webfetch" | "switchmode" | "createplan"
         | "generateimage" => interaction::start(runtime, call).await,
-        "todowrite" | "updatecurrentstep" => local::start(call, message_index),
+        "todowrite" | "updatecurrentstep" | "creategoal" | "updategoal" | "setactivebranch" => {
+            local::start(call, message_index)
+        }
         "awaitshell" => await_shell::start(
             results,
             call,

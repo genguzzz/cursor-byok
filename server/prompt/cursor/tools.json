@@ -922,6 +922,142 @@
           ]
         }
       }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "Ls",
+        "description": "Lists files and directories under a directory path.\n\nUse this tool when you need directory structure, especially top-level project layout or immediate children of a folder. Do not use Glob(\"*\") or recursive Glob patterns to list a directory; use Ls instead.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "description": "The absolute path of the directory to list.",
+              "type": "string"
+            },
+            "ignore": {
+              "description": "Optional ignore globs for directories or files that should be skipped while listing.",
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "path"
+          ]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "WriteShellStdin",
+        "description": "Writes literal characters to an existing background shell session. Use only when a previous Shell result returned a shell_id and the process is waiting for stdin. Include any needed newline in chars.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "shell_id": {
+              "description": "The shell_id returned by a backgrounded Shell command.",
+              "type": "integer"
+            },
+            "chars": {
+              "description": "Literal characters to write to stdin. Include \\n when submitting a line.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "shell_id",
+            "chars"
+          ]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "ForceBackgroundShell",
+        "description": "Force a foreground shell command to continue running in the background. Use this when a command you expected to finish is still running and you want to stop blocking on it.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "tool_call_id": {
+              "description": "The tool call id of the Shell call to move to the background.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "tool_call_id"
+          ]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "CreateGoal",
+        "description": "Create a long-running goal. Only use this tool when explicitly requested by the user; NEVER use this tool for ordinary tasks.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "objective": {
+              "description": "The objective of the long-running goal.",
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "objective"
+          ]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "UpdateGoal",
+        "description": "Update the existing goal's status. Set status to `complete` only when the objective has actually been achieved and no required work remains. You cannot use this tool to pause a goal; that is controlled by the user. However, if the user paused and asks you to resume, you can set it to `active`.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "status": {
+              "description": "The goal status to set.",
+              "enum": [
+                "active",
+                "complete"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "status"
+          ]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "SetActiveBranch",
+        "description": "Set active git branch metadata for the current conversation and client UI. This directly controls which merge-base diff and related pull requests are shown to the user. Call this tool immediately when you are making changes on an existing feature branch, and call it immediately after committing changes to a new branch.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "description": "Absolute repository path for this branch update.",
+              "type": "string"
+            },
+            "branchName": {
+              "description": "New active branch name.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "path",
+            "branchName"
+          ]
+        }
+      }
     }
   ],
   "variants": {}

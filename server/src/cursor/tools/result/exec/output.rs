@@ -12,6 +12,9 @@ pub(super) fn output(
         Message::DeleteResult(value) => delete(value),
         Message::GrepResult(value) => grep(value),
         Message::DiagnosticsResult(value) => diagnostics(value),
+        Message::LsResult(value) => ls(value),
+        Message::WriteShellStdinResult(value) => write_shell_stdin(value),
+        Message::ForceBackgroundShellResult(value) => force_background(value),
         Message::McpResult(value) => mcp(value),
         Message::ReadMcpResourceExecResult(value) => read_mcp(value),
         Message::SubagentResult(value) => task(value, call),
@@ -223,6 +226,54 @@ fn diagnostics(value: &pb::DiagnosticsResult) -> Result<(String, bool)> {
         R::Rejected(value) => Ok((value.reason.clone(), true)),
         R::FileNotFound(value) => Ok((format!("file not found: {}", value.path), true)),
         R::PermissionDenied(value) => Ok((format!("permission denied: {}", value.path), true)),
+    }
+}
+
+fn ls(value: &pb::LsResult) -> Result<(String, bool)> {
+    use pb::ls_result::Result as R;
+    match value.result.as_ref().ok_or_else(|| missing("ls"))? {
+        R::Success(success) => Ok((
+            format!(
+                "ls success path={} files={}",
+                success.directory_tree_root.as_ref().map_or("", |root| root.abs_path.as_str()),
+                success.directory_tree_root.as_ref().map_or(0, |root| root.num_files)
+            ),
+            false,
+        )),
+        R::Error(error) => Ok((error.error.clone(), true)),
+        R::Rejected(rejected) => Ok((rejected.reason.clone(), true)),
+        R::Timeout(timeout) => Ok((
+            format!(
+                "ls timeout path={}",
+                timeout.directory_tree_root.as_ref().map_or("", |root| root.abs_path.as_str())
+            ),
+            true,
+        )),
+    }
+}
+
+fn write_shell_stdin(value: &pb::WriteShellStdinResult) -> Result<(String, bool)> {
+    use pb::write_shell_stdin_result::Result as R;
+    match value.result.as_ref().ok_or_else(|| missing("write shell stdin"))? {
+        R::Success(success) => Ok((
+            format!(
+                "wrote input to shell {} (terminal file length before input: {})",
+                success.shell_id, success.terminal_file_length_before_input_written
+            ),
+            false,
+        )),
+        R::Error(error) => Ok((error.error.clone(), true)),
+    }
+}
+
+fn force_background(value: &pb::ForceBackgroundShellResult) -> Result<(String, bool)> {
+    use pb::ForceBackgroundShellStatus as Status;
+    let status = Status::try_from(value.status)
+        .map_err(|_| Error::Protocol(format!("unknown force background status: {}", value.status)))?;
+    match status {
+        Status::Accepted => Ok(("force background shell accepted".into(), false)),
+        Status::NotFound => Ok(("force background shell target not found".into(), true)),
+        Status::Unspecified => Ok(("force background shell completed".into(), true)),
     }
 }
 

@@ -116,6 +116,33 @@ pub fn request(id: u32, call: &ToolCall, context: &ExecContext) -> Result<pb::Ag
                 .into(),
             tool_call_id: call.call_id.clone(),
         }),
+        "ls" => Message::LsArgs(pb::LsArgs {
+            path: string("path")?,
+            ignore: call
+                .arguments
+                .get("ignore")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+                .map(str::to_string)
+                .collect(),
+            tool_call_id: call.call_id.clone(),
+            sandbox_policy: None,
+            timeout_ms: None,
+        }),
+        "writeshellstdin" => Message::WriteShellStdinArgs(pb::WriteShellStdinArgs {
+            shell_id: call
+                .arguments
+                .get("shell_id")
+                .and_then(Value::as_u64)
+                .ok_or_else(|| Error::Protocol("WriteShellStdin is missing shell_id".into()))?
+                as u32,
+            chars: string("chars")?,
+        }),
+        "forcebackgroundshell" => Message::ForceBackgroundShellArgs(pb::ForceBackgroundShellArgs {
+            tool_call_id: string("tool_call_id")?,
+        }),
         "task" => Message::SubagentArgs(pb::SubagentArgs {
             tool_call_id: call.call_id.clone(),
             subagent_type: optional_string("subagent_type").unwrap_or_default(),

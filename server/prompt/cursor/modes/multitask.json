@@ -3,6 +3,8 @@
     "AskQuestion", "CallMcpTool", "Delete", "FetchMcpResource", "Glob", "Grep",
     "Read", "ReadLints", "Shell", "AwaitShell", "StrReplace", "SwitchMode", "Task",
     "TodoWrite", "WebFetch", "WebSearch", "Write", "GenerateImage",
-    "SembleSearch", "SembleFindRelated"
+    "SembleSearch", "SembleFindRelated",
+    "Ls", "WriteShellStdin", "ForceBackgroundShell",
+    "CreateGoal", "UpdateGoal", "SetActiveBranch"
   ]
 }

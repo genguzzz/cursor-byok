@@ -2,8 +2,9 @@
   "tools": [
     "Shell", "AwaitShell", "Grep", "Delete", "WebSearch", "WebFetch", "GenerateImage",
     "EditNotebook", "TodoWrite", "StrReplace", "Write", "Read", "ReadLints",
-    "Glob", "AskQuestion", "Task", "GetMcpTools",
+    "Glob", "Ls", "AskQuestion", "Task", "GetMcpTools",
     "FetchMcpResource", "SwitchMode", "CallMcpTool", "SembleSearch",
-    "SembleFindRelated"
+    "SembleFindRelated", "WriteShellStdin", "ForceBackgroundShell",
+    "CreateGoal", "UpdateGoal", "SetActiveBranch"
   ]
 }
