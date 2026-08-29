@@ -97,6 +97,10 @@ fn gate_shell_result(result: &mut pb::ShellResult) {
 }
 
 fn gate_read(tool: &mut pb::ReadToolCall) {
+    use super::image::{
+        compress_read_image, is_image_payload, is_read_image_path, READ_IMAGE_BINARY_LIMIT,
+    };
+
     let Some(pb::read_tool_result::Result::Success(success)) = tool
         .result
         .as_mut()
@@ -115,10 +119,24 @@ fn gate_read(tool: &mut pb::ReadToolCall) {
                 success.exceeded_limit = true;
             }
         }
-        pb::read_tool_success::Output::Data(value) if value.len() > READ_BINARY_LIMIT => {
-            let notice = truncation_notice("Read binary data", READ_BINARY_LIMIT, 0, value.len());
-            success.output = Some(pb::read_tool_success::Output::Content(notice));
-            success.exceeded_limit = true;
+        pb::read_tool_success::Output::Data(value) => {
+            // Images get a much larger replay budget than arbitrary binary:
+            // they are re-encoded as JPEG for the model rather than surfaced as
+            // raw bytes, so a 100 KiB screenshot must survive intact.
+            let image_like = is_read_image_path(&success.path) || is_image_payload(value);
+            if image_like {
+                *value = compress_read_image(&success.path, value);
+            }
+            let limit = if image_like {
+                READ_IMAGE_BINARY_LIMIT
+            } else {
+                READ_BINARY_LIMIT
+            };
+            if value.len() > limit {
+                let notice = truncation_notice("Read binary data", limit, 0, value.len());
+                success.output = Some(pb::read_tool_success::Output::Content(notice));
+                success.exceeded_limit = true;
+            }
         }
         _ => {}
     }
@@ -806,6 +824,42 @@ mod tests {
         };
         assert!(output.len() <= READ_CONTENT_LIMIT);
         assert!(output.contains("[truncated: Read result exceeded"));
+    }
+
+    #[test]
+    fn read_image_binary_survives_up_to_the_image_limit() {
+        // A compressed JPEG-like payload that is larger than the plain binary
+        // limit but under the image limit must not be truncated away.
+        let image = std::iter::repeat_with(|| 0xFF_u8)
+            .take(40 * KIB)
+            .collect::<Vec<u8>>();
+        let mut tool = pb::tool_call::Tool::ReadToolCall(pb::ReadToolCall {
+            result: Some(pb::ReadToolResult {
+                result: Some(pb::read_tool_result::Result::Success(pb::ReadToolSuccess {
+                    path: "/tmp/screenshot.png".into(),
+                    output: Some(pb::read_tool_success::Output::Data(image.clone())),
+                    ..Default::default()
+                })),
+            }),
+            ..Default::default()
+        });
+        let mut content = String::new();
+
+        tool_completion("Read", &mut tool, &mut content);
+
+        let pb::tool_call::Tool::ReadToolCall(tool) = tool else {
+            unreachable!()
+        };
+        let Some(pb::read_tool_result::Result::Success(success)) =
+            tool.result.and_then(|result| result.result)
+        else {
+            panic!("expected read success")
+        };
+        assert!(!success.exceeded_limit);
+        let Some(pb::read_tool_success::Output::Data(output)) = success.output else {
+            panic!("expected binary output")
+        };
+        assert_eq!(output, image);
     }
 
     #[test]

@@ -1,5 +1,6 @@
 mod exec;
 mod gate;
+mod image;
 mod interaction;
 mod local;
 mod mcp;
