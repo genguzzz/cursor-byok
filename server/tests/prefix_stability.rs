@@ -139,7 +139,7 @@ fn every_prompt_mode_loads_the_captured_tool_set() {
             .as_path(),
     )
     .unwrap();
-    assert_eq!(assets.mode(Mode::Agent).tools.len(), 21);
+    assert_eq!(assets.mode(Mode::Agent).tools.len(), 22);
     assert_eq!(
         assets
             .mode(Mode::Agent)
@@ -149,6 +149,7 @@ fn every_prompt_mode_loads_the_captured_tool_set() {
             .collect::<Vec<_>>(),
         vec![
             "Shell",
+            "AwaitShell",
             "Grep",
             "Delete",
             "WebSearch",
@@ -184,6 +185,7 @@ fn every_prompt_mode_loads_the_captured_tool_set() {
             "Read",
             "ReadLints",
             "Shell",
+            "AwaitShell",
             "StrReplace",
             "Task",
             "TodoWrite",
@@ -200,6 +202,7 @@ fn every_prompt_mode_loads_the_captured_tool_set() {
         Mode::Plan,
         &[
             "Shell",
+            "AwaitShell",
             "Glob",
             "Grep",
             "Read",
@@ -230,6 +233,7 @@ fn every_prompt_mode_loads_the_captured_tool_set() {
             "Read",
             "ReadLints",
             "Shell",
+            "AwaitShell",
             "StrReplace",
             "Task",
             "TodoWrite",
@@ -528,6 +532,7 @@ fn subagent_uses_the_agent_prompt_and_only_the_captured_tool_delta() {
             .collect::<Vec<_>>(),
         vec![
             "Shell",
+            "AwaitShell",
             "Grep",
             "Delete",
             "WebSearch",

@@ -146,7 +146,7 @@ pub(super) async fn resume_interaction(
 }
 
 fn is_shell_tool(name: &str) -> bool {
-    matches!(normalized(name).as_str(), "shell" | "bash")
+    matches!(normalized(name).as_str(), "shell" | "bash" | "awaitshell")
 }
 
 pub(super) fn normalized(name: &str) -> String {
@@ -223,27 +223,6 @@ mod tests {
             error.to_string(),
             "protocol error: Shell block_until_ms is out of range"
         );
-    }
-
-    #[test]
-    fn retired_await_shell_does_not_become_a_protocol_error() {
-        let call = tool(
-            "AwaitShell",
-            serde_json::json!({"shell_id": "legacy-shell", "block_until_ms": 30_000}),
-        );
-        let started = unavailable_tool(&call);
-        let completion = started.completion.expect("compatibility completion");
-
-        assert!(started.messages.is_empty());
-        assert!(completion.result().is_error);
-        // The retirement message names the tool and points at the replacement
-        // flow; upstream's assertion still looked for wording that no longer
-        // exists in `compat::failure_message`.
-        assert!(completion.result().content.contains("no longer available"));
-        assert!(completion
-            .result()
-            .content
-            .contains("background completion flow"));
     }
 
     #[test]

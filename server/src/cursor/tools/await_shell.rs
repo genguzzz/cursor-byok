@@ -72,9 +72,25 @@ pub(crate) fn decode_args(call: &ToolCall) -> Result<AwaitShellArgs> {
     let block_until_explicit = call.arguments.get("block_until_ms").is_some();
     let block_until_ms = match call.arguments.get("block_until_ms") {
         None => 30_000,
-        Some(value) => value
-            .as_i64()
-            .ok_or_else(|| Error::Protocol("AwaitShell block_until_ms must be an integer".into()))?,
+        Some(value) => match value.as_i64() {
+            Some(integer) => integer,
+            None => {
+                let value = value.as_f64().ok_or_else(|| {
+                    Error::Protocol("AwaitShell block_until_ms must be an integer".into())
+                })?;
+                if !value.is_finite() || value.fract() != 0.0 {
+                    return Err(Error::Protocol(
+                        "AwaitShell block_until_ms must be an integer".into(),
+                    ));
+                }
+                if value < i64::MIN as f64 || value > i64::MAX as f64 {
+                    return Err(Error::Protocol(
+                        "AwaitShell block_until_ms is out of range".into(),
+                    ));
+                }
+                value as i64
+            }
+        },
     };
     if block_until_ms < 0 {
         return Err(Error::Protocol(
@@ -95,17 +111,6 @@ pub(crate) fn decode_args(call: &ToolCall) -> Result<AwaitShellArgs> {
     })
 }
 
-/// Best-effort argument extraction used when rendering the started tool card.
-/// Never fails: an unparseable card must not abort the agent stream.
-pub(crate) fn loose_args(call: &ToolCall) -> AwaitShellArgs {
-    decode_args(call).unwrap_or(AwaitShellArgs {
-        shell_id: String::new(),
-        block_until_ms: 30_000,
-        block_until_explicit: call.arguments.get("block_until_ms").is_some(),
-        pattern: String::new(),
-    })
-}
-
 /// Snapshot the awaited job now. For a missing shell id this reports the pure
 /// "waited" state; the caller is responsible for actually sleeping.
 pub(crate) fn outcome(args: &AwaitShellArgs, terminals_folder: &str) -> AwaitShellOutcome {
@@ -120,7 +125,7 @@ pub(crate) fn outcome(args: &AwaitShellArgs, terminals_folder: &str) -> AwaitShe
             stderr: String::new(),
             stdout_offset: 0,
             stderr_offset: 0,
-            runtime_ms: 0,
+            runtime_ms: args.block_until_ms.max(0) as u64,
             output_length: 0,
             regex_requested: !args.pattern.is_empty(),
             regex_match: None,
@@ -202,7 +207,11 @@ pub(crate) fn outcome(args: &AwaitShellArgs, terminals_folder: &str) -> AwaitShe
 }
 
 pub(crate) fn is_terminal(outcome: &AwaitShellOutcome) -> bool {
-    outcome.matched || matches!(outcome.status.as_str(), "completed" | "error" | "unknown")
+    outcome.matched
+        || matches!(
+            outcome.status.as_str(),
+            "completed" | "rejected" | "permission_denied" | "transport_closed" | "error" | "unknown"
+        )
 }
 
 pub(crate) fn build_await_args(args: &AwaitShellArgs) -> pb::AwaitArgs {
@@ -225,7 +234,19 @@ pub(crate) fn build_await_result(outcome: &AwaitShellOutcome) -> pb::AwaitResult
                 outcome.message.clone()
             },
         }),
-        "completed" if !outcome.matched => Result::Complete(complete(outcome)),
+        // Official pure wait (no shell_id) surfaces as an AwaitSuccess with an
+        // empty task_id, so the client renders "Slept for Ns" instead of
+        // "Task still running".
+        "waited" => Result::Success(pb::AwaitSuccess {
+            await_result: Some(pb::await_success::AwaitResult::Complete(
+                complete(outcome),
+            )),
+        }),
+        "completed" | "rejected" | "permission_denied" | "transport_closed"
+            if !outcome.matched =>
+        {
+            Result::Complete(complete(outcome))
+        }
         _ if outcome.matched => Result::Complete(complete(outcome)),
         _ => Result::StillRunning(still_running(outcome)),
     };
@@ -260,11 +281,15 @@ fn still_running(outcome: &AwaitShellOutcome) -> pb::AwaitTaskStillRunning {
 fn string_arg(call: &ToolCall, name: &str) -> String {
     call.arguments
         .get(name)
-        .and_then(Value::as_str)
-        .map(str::trim)
+        .and_then(|value| match value {
+            Value::String(text) => Some(text.trim().to_string()),
+            // Go coerces numeric identifiers (e.g. shell_id: 340173) to their
+            // string spelling so callers that expect a string id still resolve.
+            Value::Number(number) => Some(number.to_string()),
+            _ => None,
+        })
         .filter(|value| !value.is_empty())
         .unwrap_or_default()
-        .to_string()
 }
 
 fn pattern_match(pattern: &str, output: &str) -> std::result::Result<(bool, Option<String>), String> {
@@ -386,6 +411,16 @@ mod tests {
         assert!(!outcome.matched);
         assert!(!outcome.timed_out);
         assert!(outcome.message.contains("1200ms"));
+
+        // Official clients render "Slept for Ns" from the AwaitSuccess branch,
+        // not "Task still running".
+        let result = build_await_result(&outcome);
+        assert!(matches!(
+            result.result,
+            Some(pb::await_result::Result::Success(pb::AwaitSuccess {
+                await_result: Some(pb::await_success::AwaitResult::Complete(_)),
+            }))
+        ));
     }
 
     #[test]

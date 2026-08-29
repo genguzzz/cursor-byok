@@ -48,7 +48,7 @@ async fn dispatch(
 }
 
 #[tokio::test]
-async fn await_shell_emitted_during_active_run_becomes_a_failed_tool_result() {
+async fn await_shell_is_now_a_real_async_tool() {
     let dispatched = dispatch("AwaitShell").await.unwrap();
 
     assert_eq!(
@@ -56,12 +56,9 @@ async fn await_shell_emitted_during_active_run_becomes_a_failed_tool_result() {
         1,
         "started card is still published"
     );
-    let completion = dispatched.completion.expect("compatibility completion");
-    assert!(completion.result().is_error);
-    assert!(completion
-        .result()
-        .content
-        .contains("current advertised tool set"));
+    // AwaitShell now dispatches asynchronously and completes through the tool
+    // result channel, so there is no synchronous compatibility completion.
+    assert!(dispatched.completion.is_none());
 }
 
 #[tokio::test]
