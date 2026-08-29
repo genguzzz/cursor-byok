@@ -162,6 +162,11 @@ pub(crate) fn outcome(args: &AwaitShellArgs, terminals_folder: &str) -> AwaitShe
     } else {
         "running"
     };
+    let runtime_ms = match (snapshot.started_at_ms, snapshot.ended_at_ms) {
+        (Some(started), Some(ended)) => ended.saturating_sub(started),
+        (Some(started), None) => crate::cursor::tools::runtime::now_ms().saturating_sub(started),
+        _ => 0,
+    };
 
     let (matched, regex_match) = match pattern_match(&args.pattern, &snapshot.output) {
         Ok(value) => value,
@@ -176,7 +181,7 @@ pub(crate) fn outcome(args: &AwaitShellArgs, terminals_folder: &str) -> AwaitShe
                 stderr: String::new(),
                 stdout_offset: 0,
                 stderr_offset: 0,
-                runtime_ms: 0,
+                runtime_ms,
                 output_length: snapshot.output.len() as u64,
                 regex_requested: !args.pattern.is_empty(),
                 regex_match: None,
@@ -197,7 +202,7 @@ pub(crate) fn outcome(args: &AwaitShellArgs, terminals_folder: &str) -> AwaitShe
         stderr: String::new(),
         stdout_offset: 0,
         stderr_offset: 0,
-        runtime_ms: 0,
+        runtime_ms,
         output_length: snapshot.output.len() as u64,
         regex_requested: !args.pattern.is_empty(),
         regex_match,
@@ -319,6 +324,8 @@ fn truncate_output(value: &str) -> String {
 
 struct TerminalSnapshot {
     exit_code: Option<i32>,
+    started_at_ms: Option<u64>,
+    ended_at_ms: Option<u64>,
     output: String,
 }
 
@@ -344,13 +351,16 @@ fn parse_terminal_file(raw: &str) -> Option<TerminalSnapshot> {
     if separators.len() < 2 {
         return None;
     }
+    let started_at_ms = metadata_time(&lines[separators[0] + 1..separators[1]], "started_at");
     let output_start = separators[1] + 1;
     let mut output_end = lines.len();
     let mut exit_code = None;
+    let mut ended_at_ms = None;
     for index in (1..separators.len() - 1).rev() {
         let block = &lines[separators[index] + 1..separators[index + 1]];
         if metadata_key(block, "exit_code").is_some() || has_metadata_key(block, "ended_at") {
             exit_code = metadata_key(block, "exit_code");
+            ended_at_ms = metadata_time(block, "ended_at");
             output_end = separators[index];
             break;
         }
@@ -363,7 +373,12 @@ fn parse_terminal_file(raw: &str) -> Option<TerminalSnapshot> {
     } else {
         String::new()
     };
-    Some(TerminalSnapshot { exit_code, output })
+    Some(TerminalSnapshot {
+        exit_code,
+        started_at_ms,
+        ended_at_ms,
+        output,
+    })
 }
 
 fn metadata_key(lines: &[&str], key: &str) -> Option<i32> {
@@ -371,6 +386,27 @@ fn metadata_key(lines: &[&str], key: &str) -> Option<i32> {
         let (name, value) = line.split_once(':')?;
         (name.trim() == key).then(|| value.trim().parse::<i32>().ok())?
     })
+}
+
+fn metadata_time(lines: &[&str], key: &str) -> Option<u64> {
+    let raw = lines.iter().find_map(|line| {
+        let (name, value) = line.split_once(':')?;
+        (name.trim() == key).then(|| metadata_value(value.trim()))?
+    })?;
+    let parsed = chrono::DateTime::parse_from_rfc3339(&raw).ok()?;
+    Some(parsed.timestamp_millis().max(0) as u64)
+}
+
+fn metadata_value(value: &str) -> Option<String> {
+    let trimmed = value.trim();
+    if let Some(inner) = trimmed
+        .strip_prefix('"')
+        .and_then(|value| value.strip_suffix('"'))
+    {
+        Some(inner.to_string())
+    } else {
+        Some(trimmed.to_string())
+    }
 }
 
 fn has_metadata_key(lines: &[&str], key: &str) -> bool {
