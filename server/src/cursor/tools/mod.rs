@@ -159,6 +159,7 @@ impl ToolDispatcher {
 
     pub async fn interrupt_for_message(&self) -> Vec<u32> {
         self.edit_schedule.lock().await.clear();
+        self.runtime.notify_await_wake();
         self.runtime.interrupt_for_message().await
     }
 

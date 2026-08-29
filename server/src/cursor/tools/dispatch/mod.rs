@@ -64,7 +64,12 @@ pub(super) async fn start(
         "askquestion" | "websearch" | "webfetch" | "switchmode" | "createplan"
         | "generateimage" => interaction::start(runtime, call).await,
         "todowrite" | "updatecurrentstep" => local::start(call, message_index),
-        "awaitshell" => await_shell::start(results, call, &context.terminals_folder),
+        "awaitshell" => await_shell::start(
+            results,
+            call,
+            &context.terminals_folder,
+            runtime.await_wake(),
+        ),
         "semblesearch" | "semblefindrelated" => semble::start(results, call, store.cloned()),
         _ => Ok(unavailable_tool(call)),
     }
