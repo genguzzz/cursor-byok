@@ -359,6 +359,7 @@ fn available_model(model: &ModelConfig) -> AvailableModel {
             label: match model.model_type {
                 ModelType::OpenAi => "OpenAI".into(),
                 ModelType::Anthropic => "Anthropic".into(),
+                ModelType::CodeBuddy => "CodeBuddy".into(),
             },
             variant: 1,
             dismiss_on_selection: false,

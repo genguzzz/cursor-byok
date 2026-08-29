@@ -303,8 +303,8 @@ fn mcp(value: &pb::McpResult) -> Result<(String, bool)> {
         R::Error(value) => Ok((value.error.clone(), true)),
         R::Rejected(value) => Ok((value.reason.clone(), true)),
         R::PermissionDenied(value) => Ok((value.error.clone(), true)),
-        R::ToolNotFound(value) => Ok((format!("MCP tool not found: {}", value.name), true)),
-        R::ServerNotFound(value) => Ok((format!("MCP server not found: {}", value.name), true)),
+        R::ToolNotFound(value) => Ok((super::render::tool_not_found_message(value), true)),
+        R::ServerNotFound(value) => Ok((super::render::server_not_found_message(value), true)),
         R::Approved(_) => Err(Error::Protocol("MCP approval is not terminal".into())),
     }
 }

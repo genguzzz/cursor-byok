@@ -55,6 +55,8 @@ export function CursorModelEditor({ draft, modelOptions, discovering, onChange, 
   onDiscover: () => void;
 }) {
   const setModel = (patch: Partial<ModelInput>) => onChange({ ...draft, model: { ...draft.model, ...patch } });
+  // CodeBuddy rides the OpenAI Chat protocol, so it shares every OpenAI-shaped field.
+  const isOpenAiShaped = (type: ModelType) => type === "openai" || type === "codebuddy";
   const setType = (type: ModelType) => {
     // 切换协议类型时，若当前地址命中某预设的另一协议端点，自动换到该预设对应协议的端点，
     // 避免出现「类型是 Anthropic、URL 却是 OpenAI chat/completions」的错配
@@ -72,7 +74,10 @@ export function CursorModelEditor({ draft, modelOptions, discovering, onChange, 
           custom_headers_enabled: endpoint.customHeaders !== null,
           custom_headers: endpoint.customHeaders ? { ...endpoint.customHeaders } : {},
         } : {}),
-        openai_endpoint: type === "openai" ? (endpoint?.openaiEndpoint || draft.model.openai_endpoint || "/v1/responses") : "",
+        openai_endpoint: type === "openai"
+          ? (endpoint?.openaiEndpoint || draft.model.openai_endpoint || "/v1/responses")
+          // CodeBuddy only offers Chat Completions, at its own relative path.
+          : type === "codebuddy" ? "/chat/completions" : "",
         anthropic_thinking_effort: type === "anthropic" ? draft.model.anthropic_thinking_effort || "xhigh" : null,
       },
       customHeadersText: endpoint?.customHeaders ? JSON.stringify(endpoint.customHeaders, null, 2) : draft.customHeadersText,
@@ -106,7 +111,7 @@ export function CursorModelEditor({ draft, modelOptions, discovering, onChange, 
         display_name: first?.display_name ?? draft.model.display_name,
         tooltip_data: !draft.model.tooltip_data.trim() || draft.model.tooltip_data === t("备注") ? preset.name : draft.model.tooltip_data,
         context_window_tokens: first?.context_window_tokens ?? draft.model.context_window_tokens,
-        ...(draft.model.type === "openai"
+        ...(isOpenAiShaped(draft.model.type)
           ? { max_completion_tokens: first?.max_output_tokens ?? draft.model.max_completion_tokens }
           : { anthropic_max_tokens: first?.max_output_tokens ?? draft.model.anthropic_max_tokens }),
       },
@@ -116,12 +121,16 @@ export function CursorModelEditor({ draft, modelOptions, discovering, onChange, 
   const requestUrlPlaceholder = draft.model.use_full_url
     ? draft.model.type === "anthropic"
       ? "https://api.anthropic.com/v1/messages"
-      : draft.model.openai_endpoint === "/v1/chat/completions"
-        ? "https://api.openai.com/v1/chat/completions"
-        : "https://api.openai.com/v1/responses"
+      : draft.model.type === "codebuddy"
+        ? "https://copilot.tencent.com/v2/chat/completions"
+        : draft.model.openai_endpoint === "/v1/chat/completions"
+          ? "https://api.openai.com/v1/chat/completions"
+          : "https://api.openai.com/v1/responses"
     : draft.model.type === "anthropic"
       ? "https://api.anthropic.com"
-      : "https://api.openai.com";
+      : draft.model.type === "codebuddy"
+        ? "https://copilot.tencent.com/v2"
+        : "https://api.openai.com";
 
   return <div className={styles.editor}>
     <CursorPresetChips type={draft.model.type} baseUrl={draft.model.base_url} onPick={applyPreset} />
@@ -129,6 +138,7 @@ export function CursorModelEditor({ draft, modelOptions, discovering, onChange, 
       <FormField label={t("模型类型")}><Select ariaLabel={t("模型类型")} value={draft.model.type} options={[
         { value: "openai", label: "OpenAI", icon: openAiIcon },
         { value: "anthropic", label: "Anthropic", icon: claudeIcon },
+        { value: "codebuddy", label: "CodeBuddy", icon: openAiIcon },
       ]} onChange={(value) => setType(value as ModelType)} /></FormField>
       {draft.model.type === "openai" && <FormField label={t("请求协议")} hint={t("只决定请求与响应的格式，不会改变请求地址。")}> <Select ariaLabel={t("请求协议")} value={draft.model.openai_endpoint} options={[
         { value: "/v1/responses", label: "Responses API" },
@@ -149,6 +159,9 @@ export function CursorModelEditor({ draft, modelOptions, discovering, onChange, 
       {draft.model.type === "openai" ? <>
         <FormField label={t("最大输出 Token")} hint={t("留空时使用默认值。")}> <TextInput type="number" min={1} step={1} placeholder={t("留空使用默认值")} value={draft.model.max_completion_tokens ?? ""} onChange={(event) => setModel({ max_completion_tokens: numberValue(event.target.value) })} /></FormField>
         <FormField label={t("推理强度")}> <Select ariaLabel={t("推理强度")} value={draft.model.reasoning_effort ?? ""} options={effortOptions(true)} onChange={(value) => setModel({ reasoning_effort: value || null })} /></FormField>
+      </> : draft.model.type === "codebuddy" ? <>
+        <FormField label={t("最大输出 Token")} hint={t("留空时使用默认值。")}> <TextInput type="number" min={1} step={1} placeholder={t("留空使用默认值")} value={draft.model.max_completion_tokens ?? ""} onChange={(event) => setModel({ max_completion_tokens: numberValue(event.target.value) })} /></FormField>
+        <FormField label={t("推理强度")} hint={t("同时决定 CodeBuddy 的 verbosity。")}> <Select ariaLabel={t("推理强度")} value={draft.model.reasoning_effort ?? ""} options={effortOptions(true)} onChange={(value) => setModel({ reasoning_effort: value || null })} /></FormField>
       </> : <>
         <FormField label={t("最大输出 Token")} hint={t("留空时使用默认值。")}> <TextInput type="number" min={1} step={1} placeholder={t("留空使用默认值")} value={draft.model.anthropic_max_tokens ?? ""} onChange={(event) => setModel({ anthropic_max_tokens: numberValue(event.target.value) })} /></FormField>
         <FormField label={t("思考强度")}> <Select ariaLabel={t("思考强度")} value={draft.model.anthropic_thinking_effort ?? "xhigh"} options={effortOptions(false)} onChange={(anthropic_thinking_effort) => setModel({ anthropic_thinking_effort })} /></FormField>
@@ -162,8 +175,8 @@ export function CursorModelEditor({ draft, modelOptions, discovering, onChange, 
         onEnabledChange={(custom_headers_enabled) => setModel({ custom_headers_enabled })}
         onTextChange={(customHeadersText) => onChange({ ...draft, customHeadersText })}
       />
-      {draft.model.type === "openai" ? <ToggleJsonField
-        label={t("OpenAI 额外参数")}
+      {isOpenAiShaped(draft.model.type) ? <ToggleJsonField
+        label={draft.model.type === "codebuddy" ? t("CodeBuddy 额外参数") : t("OpenAI 额外参数")}
         enabled={draft.model.openai_extra_params_enabled}
         text={draft.openAIExtraParamsText}
         onEnabledChange={(openai_extra_params_enabled) => setModel({ openai_extra_params_enabled })}

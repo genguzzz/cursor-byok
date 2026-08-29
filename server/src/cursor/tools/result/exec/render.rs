@@ -158,12 +158,8 @@ pub(super) fn mcp(result: &pb::McpResult) -> Result<pb::McpToolResult> {
         Some(Input::Error(value)) => mcp_error(&value.error),
         Some(Input::Rejected(value)) => Output::Rejected(value.clone()),
         Some(Input::PermissionDenied(value)) => Output::PermissionDenied(value.clone()),
-        Some(Input::ToolNotFound(value)) => {
-            mcp_error(&format!("MCP tool not found: {}", value.name))
-        }
-        Some(Input::ServerNotFound(value)) => {
-            mcp_error(&format!("MCP server not found: {}", value.name))
-        }
+        Some(Input::ToolNotFound(value)) => mcp_error(&tool_not_found_message(value)),
+        Some(Input::ServerNotFound(value)) => mcp_error(&server_not_found_message(value)),
         Some(Input::Approved(_)) => {
             return Err(Error::Protocol("MCP approval is not terminal".into()))
         }
@@ -179,6 +175,25 @@ fn mcp_error(message: &str) -> pb::mcp_tool_result::Result {
         error: message.into(),
         read_tool_def_reminder: String::new(),
     })
+}
+
+/// Naming what is actually available turns a dead end into a retryable step.
+pub(super) fn tool_not_found_message(value: &pb::McpToolNotFound) -> String {
+    let mut message = format!("MCP tool not found: {}", value.name);
+    if !value.available_tools.is_empty() {
+        message.push_str("\navailable tools: ");
+        message.push_str(&value.available_tools.join(", "));
+    }
+    message
+}
+
+pub(super) fn server_not_found_message(value: &pb::McpServerNotFound) -> String {
+    let mut message = format!("MCP server not found: {}", value.name);
+    if !value.available_servers.is_empty() {
+        message.push_str("\navailable servers: ");
+        message.push_str(&value.available_servers.join(", "));
+    }
+    message
 }
 
 pub(super) fn task(

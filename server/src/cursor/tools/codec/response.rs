@@ -15,11 +15,17 @@ use crate::{
 use super::request::edit_write_request;
 
 pub enum ClientExecEvent {
-    Delta(Box<pb::AgentServerMessage>),
+    /// Shell output can arrive in bursts far larger than the client will
+    /// re-render in one go, so a single burst may fan out into several deltas.
+    Delta(Vec<pb::AgentServerMessage>),
     Message(Box<pb::AgentServerMessage>),
     Completed(Box<ToolCompletion>),
     Pending,
 }
+
+/// Cursor leaves a tool bubble stale when a single delta is very large, so
+/// split bursts into chunks it will actually redraw.
+const SHELL_DELTA_CHUNK_LIMIT: usize = 8 * 1024;
 
 pub async fn client_event(
     message: &pb::ExecClientMessage,
@@ -49,6 +55,12 @@ pub async fn client_event(
     let Some(wire_result) = &message.message else {
         return Ok(ClientExecEvent::Pending);
     };
+    // An MCP approval only tells us the user granted permission; the real
+    // result arrives in a later message.  Keep the exec pending so the tool
+    // call can still complete instead of failing the whole turn.
+    if is_mcp_approval(wire_result) {
+        return Ok(ClientExecEvent::Pending);
+    }
     let pb::exec_client_message::Message::ShellStream(stream) = wire_result else {
         let entry = take(message.id, pending).await?;
         return match entry.stage {
@@ -62,14 +74,14 @@ pub async fn client_event(
     let event = match &stream.event {
         Some(Event::Stdout(stdout)) => {
             if pending.append_stdout(message.id, &stdout.data).await {
-                ClientExecEvent::Delta(Box::new(shell_delta(&call, true, &stdout.data)))
+                ClientExecEvent::Delta(shell_deltas(&call, true, &stdout.data))
             } else {
                 ClientExecEvent::Pending
             }
         }
         Some(Event::Stderr(stderr)) => {
             if pending.append_stderr(message.id, &stderr.data).await {
-                ClientExecEvent::Delta(Box::new(shell_delta(&call, false, &stderr.data)))
+                ClientExecEvent::Delta(shell_deltas(&call, false, &stderr.data))
             } else {
                 ClientExecEvent::Pending
             }
@@ -186,6 +198,17 @@ pub async fn stream_closed(id: u32, pending: &CursorToolRuntime) -> Result<Optio
     )?))
 }
 
+fn is_mcp_approval(message: &pb::exec_client_message::Message) -> bool {
+    matches!(
+        message,
+        pb::exec_client_message::Message::McpResult(result)
+            if matches!(
+                result.result.as_ref(),
+                Some(pb::mcp_result::Result::Approved(_))
+            )
+    )
+}
+
 fn is_terminal(message: &pb::exec_client_message::Message) -> bool {
     use pb::{exec_client_message::Message, shell_stream::Event};
 
@@ -198,6 +221,7 @@ fn is_terminal(message: &pb::exec_client_message::Message) -> bool {
                 | Some(Event::PermissionDenied(_))
                 | Some(Event::SandboxUnsupported(_))
         ),
+        message if is_mcp_approval(message) => false,
         _ => true,
     }
 }
@@ -330,6 +354,58 @@ fn shell_backgrounded_result(
     }
 }
 
+/// Split a burst of shell output into deltas Cursor will redraw.
+///
+/// Cuts prefer a line boundary once past the halfway mark so a chunk rarely
+/// ends mid-line.  Byte offsets are always advanced to a character boundary:
+/// the payload is a proto `string`, so a split inside a multi-byte sequence
+/// would be unencodable.
+fn shell_deltas(call: &ToolCall, stdout: bool, content: &str) -> Vec<pb::AgentServerMessage> {
+    chunk_shell_output(content, SHELL_DELTA_CHUNK_LIMIT)
+        .into_iter()
+        .map(|chunk| shell_delta(call, stdout, chunk))
+        .collect()
+}
+
+fn chunk_shell_output(content: &str, limit: usize) -> Vec<&str> {
+    if content.is_empty() {
+        return Vec::new();
+    }
+    if content.len() <= limit {
+        return vec![content];
+    }
+    let mut chunks = Vec::new();
+    let mut rest = content;
+    while rest.len() > limit {
+        let mut end = limit;
+        while end > 0 && !rest.is_char_boundary(end) {
+            end -= 1;
+        }
+        // A newline cut reads better, but only when it does not shrink the
+        // chunk so much that we churn out tiny messages.
+        if let Some(newline) = rest[..end].rfind('\n') {
+            if newline + 1 > limit / 2 {
+                end = newline + 1;
+            }
+        }
+        if end == 0 {
+            // A single character wider than the limit: emit it whole rather
+            // than looping forever.
+            end = rest
+                .char_indices()
+                .nth(1)
+                .map_or(rest.len(), |(index, _)| index);
+        }
+        let (chunk, remainder) = rest.split_at(end);
+        chunks.push(chunk);
+        rest = remainder;
+    }
+    if !rest.is_empty() {
+        chunks.push(rest);
+    }
+    chunks
+}
+
 fn shell_delta(call: &ToolCall, stdout: bool, content: &str) -> pb::AgentServerMessage {
     let delta = if stdout {
         pb::shell_tool_call_delta::Delta::Stdout(pb::ShellToolCallStdoutDelta {
@@ -351,4 +427,65 @@ fn shell_delta(call: &ToolCall, stdout: bool, content: &str) -> pb::AgentServerM
             model_call_id: call.model_call_id.clone(),
         },
     )))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{chunk_shell_output, SHELL_DELTA_CHUNK_LIMIT};
+
+    #[test]
+    fn short_output_stays_a_single_delta() {
+        assert_eq!(chunk_shell_output("ok\n", SHELL_DELTA_CHUNK_LIMIT), vec!["ok\n"]);
+        assert!(chunk_shell_output("", SHELL_DELTA_CHUNK_LIMIT).is_empty());
+    }
+
+    #[test]
+    fn long_output_is_split_and_reassembles_exactly() {
+        let content = "x".repeat(SHELL_DELTA_CHUNK_LIMIT * 2 + 7);
+        let chunks = chunk_shell_output(&content, SHELL_DELTA_CHUNK_LIMIT);
+        assert_eq!(chunks.len(), 3);
+        assert!(chunks
+            .iter()
+            .all(|chunk| chunk.len() <= SHELL_DELTA_CHUNK_LIMIT));
+        assert_eq!(chunks.concat(), content);
+    }
+
+    #[test]
+    fn cuts_prefer_a_line_boundary_past_the_halfway_mark() {
+        let content = format!("{}\n{}", "a".repeat(7), "b".repeat(10));
+        let chunks = chunk_shell_output(&content, 10);
+        assert_eq!(chunks[0], "aaaaaaa\n");
+        assert_eq!(chunks.concat(), content);
+    }
+
+    #[test]
+    fn an_early_newline_does_not_shrink_the_chunk() {
+        // The newline sits below limit/2, so cutting there would produce tiny
+        // deltas; the split falls back to the byte limit.
+        let content = format!("a\n{}", "b".repeat(30));
+        let chunks = chunk_shell_output(&content, 10);
+        assert_eq!(chunks[0].len(), 10);
+        assert_eq!(chunks.concat(), content);
+    }
+
+    #[test]
+    fn multi_byte_characters_are_never_split() {
+        // Every chunk must be valid UTF-8 on its own: the wire field is a
+        // proto string, so a mid-sequence cut would be unencodable.
+        let content = "中文输出".repeat(2_000);
+        let chunks = chunk_shell_output(&content, SHELL_DELTA_CHUNK_LIMIT);
+        assert!(chunks.len() > 1);
+        assert_eq!(chunks.concat(), content);
+        for chunk in &chunks {
+            assert!(chunk.len() <= SHELL_DELTA_CHUNK_LIMIT);
+            assert!(std::str::from_utf8(chunk.as_bytes()).is_ok());
+        }
+    }
+
+    #[test]
+    fn a_character_wider_than_the_limit_still_progresses() {
+        let content = "中中中";
+        let chunks = chunk_shell_output(content, 2);
+        assert_eq!(chunks, vec!["中", "中", "中"]);
+    }
 }

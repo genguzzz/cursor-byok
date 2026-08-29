@@ -257,8 +257,10 @@ impl CursorActor {
                                             continue;
                                         }
                                         match codec::client_event(&message, &tool_runtime).await {
-                                            Ok(codec::ClientExecEvent::Delta(message)) => {
-                                                let _ = handle.emit(&message);
+                                            Ok(codec::ClientExecEvent::Delta(messages)) => {
+                                                for message in messages {
+                                                    let _ = handle.emit(&message);
+                                                }
                                             }
                                             Ok(codec::ClientExecEvent::Message(message)) => {
                                                 let _ = handle.emit(&message);

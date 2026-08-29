@@ -5,7 +5,7 @@ use serde::Deserialize;
 use crate::{
     model::{
         model_hash, normalize_model_input, normalize_request_url, ModelConfigInput, ModelType,
-        OPENAI_CHAT_ENDPOINT, OPENAI_RESPONSES_ENDPOINT,
+        CODEBUDDY_ENDPOINT, OPENAI_CHAT_ENDPOINT, OPENAI_RESPONSES_ENDPOINT,
     },
     Error, Result,
 };
@@ -223,6 +223,23 @@ fn legacy_request_configuration(
             let protocol = detected.unwrap_or(configured);
             let use_full_url = detected.is_some() || openai_endpoint.trim() == "/custom";
             Ok((base_url, protocol.into(), use_full_url))
+        }
+        ModelType::CodeBuddy => {
+            // v0.0.49 wrote `/custom` for CodeBuddy and appended
+            // `/chat/completions` to the versioned base URL.
+            let detected = openai_protocol_from_url(&base_url);
+            match openai_endpoint.trim() {
+                "" | "/custom" | CODEBUDDY_ENDPOINT | OPENAI_CHAT_ENDPOINT => {}
+                value => {
+                    return Err(Error::Config(format!(
+                        "unsupported v0.0.49 CodeBuddy endpoint: {value}"
+                    )))
+                }
+            }
+            match detected {
+                Some(protocol) => Ok((base_url, protocol.into(), true)),
+                None => Ok((base_url, CODEBUDDY_ENDPOINT.into(), false)),
+            }
         }
     }
 }

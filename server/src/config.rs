@@ -34,6 +34,7 @@ pub enum ProviderKind {
     OpenAiChat,
     OpenAiResponses,
     Anthropic,
+    CodeBuddy,
 }
 
 #[derive(Clone)]

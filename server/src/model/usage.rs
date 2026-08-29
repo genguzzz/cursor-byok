@@ -19,7 +19,10 @@ impl Usage {
     pub(crate) fn context_input_tokens(self, provider: ProviderType) -> Option<u64> {
         let input = self.input_tokens?;
         match provider {
-            ProviderType::OpenAiChat | ProviderType::OpenAiResponses => Some(input),
+            // CodeBuddy reports OpenAI-shaped usage.
+            ProviderType::OpenAiChat
+            | ProviderType::OpenAiResponses
+            | ProviderType::CodeBuddy => Some(input),
             ProviderType::Anthropic => input
                 .checked_add(self.cache_read_tokens.unwrap_or_default())?
                 .checked_add(self.cache_write_tokens.unwrap_or_default()),

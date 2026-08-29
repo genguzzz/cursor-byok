@@ -1,4 +1,5 @@
 mod anthropic;
+mod codebuddy;
 mod event;
 mod normalize;
 mod openai_chat;
@@ -15,6 +16,7 @@ use tokio_util::sync::CancellationToken;
 use crate::{model::ModelInvocation, Result};
 
 pub use anthropic::AnthropicProvider;
+pub use codebuddy::CallIdentity as CodeBuddyCallIdentity;
 pub use event::*;
 pub use openai_chat::OpenAiChatProvider;
 pub use openai_responses::OpenAiResponsesProvider;

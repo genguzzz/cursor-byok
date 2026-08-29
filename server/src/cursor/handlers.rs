@@ -128,7 +128,12 @@ async fn bidi_append_handler(
     let conversation_id = decoded.conversation_id().map(str::to_owned);
     let trace_metadata = decoded.trace_metadata();
     let local = if let Some(model_id) = decoded.model_id() {
-        if registry.store().model(model_id).await?.is_some() {
+        if registry
+            .store()
+            .model_by_selector(model_id)
+            .await?
+            .is_some()
+        {
             tracing::info!(
                 request_id = decoded.request_id,
                 model_id,
@@ -145,12 +150,17 @@ async fn bidi_append_handler(
         }
     } else if registry.local(&decoded.request_id).await.is_some() {
         true
-    } else if registry.upstream(&decoded.request_id).await {
-        false
     } else {
-        return Err(crate::Error::Protocol(
-            "first BidiAppend message must select a model".into(),
-        ));
+        // A first append without a model selection is not something we can
+        // classify.  Cursor's own backend can still serve it, so forward
+        // instead of failing the request outright.
+        if !registry.upstream(&decoded.request_id).await {
+            tracing::info!(
+                request_id = decoded.request_id,
+                "BidiAppend has no model selection; routing to Cursor upstream"
+            );
+        }
+        false
     };
     let trace = if first_model.is_some() {
         CursorTraceRecorder::begin(

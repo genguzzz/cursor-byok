@@ -1,7 +1,7 @@
 import type { AdRuntime } from "./components/ads/types";
 import type { Locale } from "./i18n/runtime";
 
-export type ModelType = "openai" | "anthropic";
+export type ModelType = "openai" | "anthropic" | "codebuddy";
 
 export interface Model {
   model_hash: string;

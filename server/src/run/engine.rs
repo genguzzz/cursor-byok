@@ -19,6 +19,12 @@ use crate::{
 use super::{consume_model_cycle, ModelCycleFailure, RunFailure, RunOutcome};
 
 const COMPACTION_RESERVE_TOKENS: u64 = 10_000;
+/// Compact once the estimated input crosses this fraction of the window.
+/// A flat reserve makes large windows compact far too late: a 500K window
+/// would only trigger at 490K, well past the point where providers start
+/// degrading.  Scaling keeps the trigger at ~90% for every window size.
+const COMPACTION_RESERVE_NUMERATOR: u64 = 1;
+const COMPACTION_RESERVE_DENOMINATOR: u64 = 10;
 const COMPACTION_OUTPUT_TOKENS: u64 = 4_096;
 const COMPACTION_FALLBACK_CHARS: usize = 12_000;
 const COMPACTION_INSTRUCTIONS: &str = "Summarize the conversation for the next model turn. Preserve goals, constraints, decisions, files, commands, errors, results, and unfinished work. Do not call tools. Return only the concise durable summary.";
@@ -734,6 +740,13 @@ impl ContextUsageAnchor {
     }
 }
 
+fn compaction_reserve_tokens(context_window: u64) -> u64 {
+    let scaled = context_window
+        .saturating_mul(COMPACTION_RESERVE_NUMERATOR)
+        / COMPACTION_RESERVE_DENOMINATOR;
+    scaled.max(COMPACTION_RESERVE_TOKENS)
+}
+
 fn should_auto_compact(
     prepared: &PreparedRun,
     messages: &[CanonicalMessage],
@@ -746,9 +759,8 @@ fn should_auto_compact(
     let Some(context_window) = prepared.model.context_window_tokens else {
         return false;
     };
-    if context_window <= COMPACTION_RESERVE_TOKENS
-        || messages.len() <= prepared.initial_messages.len()
-    {
+    let reserve = compaction_reserve_tokens(context_window);
+    if context_window <= reserve || messages.len() <= prepared.initial_messages.len() {
         return false;
     }
     let estimated_input = anchor
@@ -762,7 +774,7 @@ fn should_auto_compact(
             ))
         })
         .unwrap_or_else(|| estimate_context_tokens(&prepared.prompt, messages));
-    estimated_input > context_window.saturating_sub(COMPACTION_RESERVE_TOKENS)
+    estimated_input > context_window.saturating_sub(reserve)
 }
 
 fn estimate_context_tokens(
@@ -940,8 +952,8 @@ fn failure_message(failure: &RunFailure) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        auto_compaction_partition, estimate_context_tokens, hydrate_tool_images,
-        should_auto_compact, ContextUsageAnchor,
+        auto_compaction_partition, compaction_reserve_tokens, estimate_context_tokens,
+        hydrate_tool_images, should_auto_compact, ContextUsageAnchor,
     };
     use crate::{
         model::{
@@ -1139,6 +1151,74 @@ mod tests {
             &messages,
             &projected,
             Some(anchor)
+        ));
+    }
+
+    #[test]
+    fn compaction_reserve_scales_with_the_context_window() {
+        // Small windows keep the flat floor.
+        assert_eq!(compaction_reserve_tokens(20_000), 10_000);
+        assert_eq!(compaction_reserve_tokens(100_000), 10_000);
+        // Large windows reserve 10%, so compaction triggers near 90% instead
+        // of waiting until 490K on a 500K window.
+        assert_eq!(compaction_reserve_tokens(200_000), 20_000);
+        assert_eq!(compaction_reserve_tokens(500_000), 50_000);
+        assert_eq!(compaction_reserve_tokens(1_000_000), 100_000);
+    }
+
+    #[test]
+    fn large_window_compacts_at_ninety_percent_not_at_the_flat_reserve() {
+        let old_history =
+            CanonicalMessage::text("old-history", Role::User, Origin::User, "old history");
+        let current_runtime = CanonicalMessage::text(
+            "runtime:current",
+            Role::User,
+            Origin::Runtime,
+            "current request",
+        );
+        let messages = vec![old_history, current_runtime.clone()];
+        let prepared = PreparedRun {
+            run_id: RunId::new("run"),
+            cursor_request_id: None,
+            conversation_id: ConversationId::new("conversation"),
+            kind: RunKind::Root,
+            model: ModelSpec {
+                context_window_tokens: Some(500_000),
+                ..ModelSpec::new("model")
+            },
+            prompt: PromptSpec {
+                instructions: "system".into(),
+                tools: Vec::new(),
+            },
+            initial_messages: vec![current_runtime],
+            action: RunAction::Start,
+            base_revision_id: RevisionId(1),
+        };
+        let projected = crate::model::project_messages(&messages).unwrap();
+
+        // 455K is below the old flat trigger (490K) but above the scaled one (450K).
+        let crossing = ContextUsageAnchor {
+            input_tokens: 455_000,
+            message_count: 1,
+            tool_count: 0,
+        };
+        assert!(should_auto_compact(
+            &prepared,
+            &messages,
+            &projected,
+            Some(crossing)
+        ));
+
+        let below = ContextUsageAnchor {
+            input_tokens: 400_000,
+            message_count: 1,
+            tool_count: 0,
+        };
+        assert!(!should_auto_compact(
+            &prepared,
+            &messages,
+            &projected,
+            Some(below)
         ));
     }
 

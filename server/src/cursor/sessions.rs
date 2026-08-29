@@ -200,6 +200,10 @@ pub(crate) enum CursorRoute {
     Upstream(u64),
 }
 
+/// How long RunSSE waits for a BidiAppend to classify the request before
+/// falling back to the official backend.
+const ROUTE_WAIT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
+
 impl CursorSessionRegistry {
     pub fn store(&self) -> &Store {
         &self.inner.store
@@ -281,12 +285,13 @@ impl CursorSessionRegistry {
         self.inner.runs.lock().await.get(request_id).cloned()
     }
 
-    pub(crate) async fn mark_upstream(&self, request_id: &str) {
+    pub(crate) async fn mark_upstream(&self, request_id: &str) -> u64 {
         let mut runs = self.inner.upstream_runs.lock().await;
         let generation = runs.get(request_id).copied().unwrap_or_default() + 1;
         runs.insert(request_id.into(), generation);
         drop(runs);
         self.inner.route_changed.notify_waiters();
+        generation
     }
 
     pub(crate) async fn upstream(&self, request_id: &str) -> bool {
@@ -312,6 +317,23 @@ impl CursorSessionRegistry {
     }
 
     pub(crate) async fn wait_route(&self, request_id: &str) -> CursorRoute {
+        match tokio::time::timeout(ROUTE_WAIT_TIMEOUT, self.route_once(request_id)).await {
+            Ok(route) => route,
+            Err(_) => {
+                // The classifying BidiAppend never arrived.  Defaulting to the
+                // official backend keeps the client usable; hanging here would
+                // stall RunSSE for the whole turn.
+                tracing::warn!(
+                    request_id,
+                    "no route selected within {}ms; defaulting to the official upstream",
+                    ROUTE_WAIT_TIMEOUT.as_millis()
+                );
+                CursorRoute::Upstream(self.mark_upstream(request_id).await)
+            }
+        }
+    }
+
+    async fn route_once(&self, request_id: &str) -> CursorRoute {
         loop {
             // Create the notification future BEFORE checking state to avoid
             // a race where a notification fires between state check and await.

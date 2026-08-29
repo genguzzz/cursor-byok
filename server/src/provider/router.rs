@@ -41,7 +41,7 @@ impl Provider for ProviderRouter {
         Box::pin(try_stream! {
             let selected = invocation.request.model.model_id.clone();
             let model = store
-                .model(&selected)
+                .model_by_selector(&selected)
                 .await?
                 .ok_or_else(|| Error::Provider(format!("unknown model: {selected}")))?;
             let provider_type = model.provider_type();
@@ -72,6 +72,7 @@ impl Provider for ProviderRouter {
                     ProviderType::OpenAiChat => ProviderKind::OpenAiChat,
                     ProviderType::OpenAiResponses => ProviderKind::OpenAiResponses,
                     ProviderType::Anthropic => ProviderKind::Anthropic,
+                    ProviderType::CodeBuddy => ProviderKind::CodeBuddy,
                 },
                 request_url,
                 api_key: model.api_key.clone(),
@@ -212,6 +213,13 @@ fn build_inner(
         ProviderKind::OpenAiChat => {
             Arc::new(OpenAiChatProvider::new(client, config.clone()).with_recorder(recorder))
         }
+        // CodeBuddy reuses the Chat Completions protocol; only its transport
+        // metadata differs, so it decorates the same provider.
+        ProviderKind::CodeBuddy => Arc::new(
+            OpenAiChatProvider::new(client, config.clone())
+                .with_recorder(recorder)
+                .as_codebuddy(),
+        ),
         ProviderKind::OpenAiResponses => {
             Arc::new(OpenAiResponsesProvider::new(client, config.clone()).with_recorder(recorder))
         }

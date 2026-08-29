@@ -40,6 +40,20 @@ impl Store {
             .transpose()
     }
 
+    /// Look up a model the way Cursor may actually name it.
+    ///
+    /// Our own catalog advertises variant forms alongside the bare hash
+    /// (`hash[context=…,reasoning=…]` and `hash-context-effort[-fast]`), so a
+    /// client echoing one of those back must still resolve to the same model.
+    pub async fn model_by_selector(&self, selector: &str) -> Result<Option<ModelConfig>> {
+        for candidate in crate::model::model_selector_candidates(selector) {
+            if let Some(model) = self.model(&candidate).await? {
+                return Ok(Some(model));
+            }
+        }
+        Ok(None)
+    }
+
     pub async fn create_model(&self, input: &ModelConfigInput) -> Result<ModelConfig> {
         let mut models = self.create_models(std::slice::from_ref(input)).await?;
         Ok(models.remove(0))

@@ -35,6 +35,8 @@ pub struct OpenAiChatProvider {
     client: reqwest::Client,
     config: ProviderConfig,
     recorder: Option<CallRecorder>,
+    /// When set, apply CodeBuddy's transport decoration to the request.
+    codebuddy: bool,
 }
 
 impl OpenAiChatProvider {
@@ -43,6 +45,7 @@ impl OpenAiChatProvider {
             client,
             config,
             recorder: None,
+            codebuddy: false,
         }
     }
 
@@ -50,8 +53,12 @@ impl OpenAiChatProvider {
         self.recorder = recorder;
         self
     }
-}
 
+    pub fn as_codebuddy(mut self) -> Self {
+        self.codebuddy = true;
+        self
+    }
+}
 impl Provider for OpenAiChatProvider {
     fn stream(
         &self,
@@ -61,16 +68,23 @@ impl Provider for OpenAiChatProvider {
         let client = self.client.clone();
         let config = self.config.clone();
         let recorder = self.recorder.clone();
+        let codebuddy = self.codebuddy;
         Box::pin(try_stream! {
-            let ModelInvocation { call_id, request, .. } = invocation;
+            let ModelInvocation { call_id, request, conversation_id, run_id, .. } = invocation;
             tracing::debug!(
                 model = %request.model.model_id,
                 call_id = %call_id,
                 history_len = request.history.len(),
                 tools_count = request.prompt.tools.len(),
+                codebuddy,
                 "OpenAI Chat provider stream started"
             );
-            let messages = openai_chat_messages(&request.prompt.instructions, &request.history)?;
+            let mut messages = openai_chat_messages(&request.prompt.instructions, &request.history)?;
+            if codebuddy {
+                // The gateway drops user-role image parts, so surface the paths
+                // instead of losing the attachment silently.
+                super::codebuddy::strip_user_inline_images(&mut messages);
+            }
             let mut body = json!({
                 "model": request.model.model_id,
                 "messages": messages,
@@ -83,16 +97,44 @@ impl Provider for OpenAiChatProvider {
                 }})).collect::<Vec<_>>());
             }
             apply_model(&mut body, &request.model, config.max_output_tokens)?;
+            if codebuddy {
+                // Applied before extra_params so a user override still wins.
+                super::codebuddy::decorate_body(&mut body, request.model.reasoning.effort.as_deref())?;
+            }
             merge_extra_params(&mut body, &request.model.extra_params)?;
             apply_openai_prompt_cache_key(&mut body, &request.model.model_id)?;
+            let headers = if codebuddy {
+                let identity = super::codebuddy::CallIdentity::new(
+                    &conversation_id,
+                    &run_id,
+                    &call_id,
+                );
+                super::codebuddy::headers(&config.custom_headers, &config.api_key, &identity)?
+            } else {
+                config.custom_headers.clone()
+            };
             let request_headers = recorded_headers(&config, &[("content-type", "application/json")]);
             if let Some(recorder) = &recorder {
                 recorder.request(request_headers.clone(), &body).await?;
             }
+            // CodeBuddy expects a gzipped body and no Accept-Encoding.
+            let compressed = if codebuddy {
+                Some(super::codebuddy::gzip(&serde_json::to_vec(&body)?)?)
+            } else {
+                None
+            };
             let attempt = send_with_retry(
-                "OpenAI Chat",
-                || client.post(&config.request_url)
-                    .bearer_auth(&config.api_key).headers(config.custom_headers.clone()).json(&body),
+                if codebuddy { "CodeBuddy" } else { "OpenAI Chat" },
+                || {
+                    let builder = client.post(&config.request_url)
+                        .bearer_auth(&config.api_key).headers(headers.clone());
+                    match &compressed {
+                        Some(compressed) => builder
+                            .header(reqwest::header::CONTENT_ENCODING, "gzip")
+                            .body(compressed.clone()),
+                        None => builder.json(&body),
+                    }
+                },
                 RetryPolicy::default(),
                 &cancellation,
                 recorder.as_ref(),

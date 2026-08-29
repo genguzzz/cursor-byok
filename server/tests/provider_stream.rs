@@ -915,7 +915,8 @@ async fn every_provider_can_be_cancelled_while_waiting_for_response_headers() {
         let (base_url, accepted, server) = hanging_server().await;
         let config = config(kind.clone(), base_url, Some(1024));
         let provider: Arc<dyn Provider> = match kind {
-            ProviderKind::OpenAiChat => {
+            // CodeBuddy reuses the Chat provider, so it is covered by that arm.
+            ProviderKind::OpenAiChat | ProviderKind::CodeBuddy => {
                 Arc::new(OpenAiChatProvider::new(reqwest::Client::new(), config))
             }
             ProviderKind::OpenAiResponses => {
@@ -1011,7 +1012,7 @@ fn assert_array_prefix(first: &Value, second: &Value) {
 
 fn config(kind: ProviderKind, base_url: String, max_output_tokens: Option<u64>) -> ProviderConfig {
     let path = match kind {
-        ProviderKind::OpenAiChat => "/chat/completions",
+        ProviderKind::OpenAiChat | ProviderKind::CodeBuddy => "/chat/completions",
         ProviderKind::OpenAiResponses => "/responses",
         ProviderKind::Anthropic => "/messages",
     };

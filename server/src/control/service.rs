@@ -414,6 +414,8 @@ impl ControlService {
             &client,
             match input.model_type {
                 ModelType::OpenAi => ProviderType::OpenAiResponses,
+                // CodeBuddy exposes an OpenAI-compatible /models listing.
+                ModelType::CodeBuddy => ProviderType::CodeBuddy,
                 ModelType::Anthropic => ProviderType::Anthropic,
             },
             &base_url,
@@ -692,7 +694,7 @@ async fn discover_models_from_endpoint(
     custom_headers: &serde_json::Value,
 ) -> Result<DiscoveredModels> {
     let mut models = match provider_type {
-        ProviderType::OpenAiChat | ProviderType::OpenAiResponses => {
+        ProviderType::OpenAiChat | ProviderType::OpenAiResponses | ProviderType::CodeBuddy => {
             openai_models(client, base_url, api_key, custom_headers).await?
         }
         ProviderType::Anthropic => {

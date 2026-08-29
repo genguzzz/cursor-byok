@@ -442,10 +442,14 @@ async fn shell_uses_background_timeout_and_preserves_stream_identity() {
     )
     .await
     .unwrap();
-    let codec::ClientExecEvent::Delta(delta) = delta else {
+    let codec::ClientExecEvent::Delta(deltas) = delta else {
         panic!("expected Shell stdout delta")
     };
-    let Some(pb::agent_server_message::Message::InteractionUpdate(delta)) = delta.message else {
+    // Small bursts stay a single delta; larger ones fan out into chunks.
+    assert_eq!(deltas.len(), 1);
+    let Some(pb::agent_server_message::Message::InteractionUpdate(delta)) =
+        deltas.into_iter().next().unwrap().message
+    else {
         panic!("expected InteractionUpdate")
     };
     let Some(pb::interaction_update::Message::ToolCallDelta(delta)) = delta.message else {

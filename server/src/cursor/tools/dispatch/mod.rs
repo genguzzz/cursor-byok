@@ -234,7 +234,14 @@ mod tests {
 
         assert!(started.messages.is_empty());
         assert!(completion.result().is_error);
-        assert!(completion.result().content.contains("older version"));
+        // The retirement message names the tool and points at the replacement
+        // flow; upstream's assertion still looked for wording that no longer
+        // exists in `compat::failure_message`.
+        assert!(completion.result().content.contains("no longer available"));
+        assert!(completion
+            .result()
+            .content
+            .contains("background completion flow"));
     }
 
     #[test]

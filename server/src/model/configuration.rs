@@ -8,6 +8,9 @@ use crate::{Error, Result};
 
 pub const OPENAI_RESPONSES_ENDPOINT: &str = "/v1/responses";
 pub const OPENAI_CHAT_ENDPOINT: &str = "/v1/chat/completions";
+/// CodeBuddy's gateway exposes an OpenAI-compatible surface at `/chat/completions`
+/// relative to its versioned base URL rather than at `/v1/...`.
+pub const CODEBUDDY_ENDPOINT: &str = "/chat/completions";
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub enum ProviderType {
@@ -17,6 +20,8 @@ pub enum ProviderType {
     OpenAiResponses,
     #[serde(rename = "anthropic")]
     Anthropic,
+    #[serde(rename = "codebuddy")]
+    CodeBuddy,
 }
 
 impl ProviderType {
@@ -25,6 +30,7 @@ impl ProviderType {
             Self::OpenAiChat => "openai-chat",
             Self::OpenAiResponses => "openai-responses",
             Self::Anthropic => "anthropic",
+            Self::CodeBuddy => "codebuddy",
         }
     }
 }
@@ -43,6 +49,7 @@ impl FromStr for ProviderType {
             "openai-chat" => Ok(Self::OpenAiChat),
             "openai-responses" => Ok(Self::OpenAiResponses),
             "anthropic" => Ok(Self::Anthropic),
+            "codebuddy" => Ok(Self::CodeBuddy),
             _ => Err(Error::Config(format!("unsupported provider type: {value}"))),
         }
     }
@@ -53,6 +60,7 @@ impl FromStr for ProviderType {
 pub enum ModelType {
     OpenAi,
     Anthropic,
+    CodeBuddy,
 }
 
 impl ModelType {
@@ -60,7 +68,14 @@ impl ModelType {
         match self {
             Self::OpenAi => "openai",
             Self::Anthropic => "anthropic",
+            Self::CodeBuddy => "codebuddy",
         }
+    }
+
+    /// CodeBuddy speaks the OpenAI Chat Completions protocol; only its
+    /// transport metadata differs.
+    pub fn is_openai_compatible(self) -> bool {
+        matches!(self, Self::OpenAi | Self::CodeBuddy)
     }
 }
 
@@ -71,6 +86,7 @@ impl FromStr for ModelType {
         match value {
             "openai" => Ok(Self::OpenAi),
             "anthropic" => Ok(Self::Anthropic),
+            "codebuddy" => Ok(Self::CodeBuddy),
             _ => Err(Error::Config(format!("unsupported model type: {value}"))),
         }
     }
@@ -146,6 +162,7 @@ impl ModelConfig {
     pub fn provider_type(&self) -> ProviderType {
         match self.model_type {
             ModelType::Anthropic => ProviderType::Anthropic,
+            ModelType::CodeBuddy => ProviderType::CodeBuddy,
             ModelType::OpenAi if self.openai_endpoint == OPENAI_RESPONSES_ENDPOINT => {
                 ProviderType::OpenAiResponses
             }
@@ -164,14 +181,16 @@ impl ModelConfig {
 
     pub fn max_output_tokens(&self) -> Option<u64> {
         match self.model_type {
-            ModelType::OpenAi => self.max_completion_tokens,
+            ModelType::OpenAi | ModelType::CodeBuddy => self.max_completion_tokens,
             ModelType::Anthropic => self.anthropic_max_tokens.or(self.max_completion_tokens),
         }
     }
 
     pub fn extra_params(&self) -> &serde_json::Value {
         match self.model_type {
-            ModelType::OpenAi if self.openai_extra_params_enabled => &self.openai_extra_params,
+            ModelType::OpenAi | ModelType::CodeBuddy if self.openai_extra_params_enabled => {
+                &self.openai_extra_params
+            }
             ModelType::Anthropic if self.anthropic_extra_params_enabled => {
                 &self.anthropic_extra_params
             }
@@ -188,7 +207,7 @@ impl ModelConfig {
         }
         if model.reasoning.effort.is_none() {
             model.reasoning.effort = match self.model_type {
-                ModelType::OpenAi => self.reasoning_effort.clone(),
+                ModelType::OpenAi | ModelType::CodeBuddy => self.reasoning_effort.clone(),
                 ModelType::Anthropic => self.anthropic_thinking_effort.clone(),
             };
         }
@@ -211,10 +230,11 @@ pub fn normalize_model_input(input: &ModelConfigInput) -> Result<ModelConfigInpu
             )?
             .expect("Anthropic effort has a default"),
         ),
-        ModelType::OpenAi => None,
+        ModelType::OpenAi | ModelType::CodeBuddy => None,
     };
     let openai_endpoint = match input.model_type {
         ModelType::OpenAi => normalize_openai_endpoint(&input.openai_endpoint)?,
+        ModelType::CodeBuddy => normalize_codebuddy_endpoint(&input.openai_endpoint)?,
         ModelType::Anthropic => String::new(),
     };
     validate_object(&input.openai_extra_params, "OpenAI extra params")?;
@@ -230,13 +250,15 @@ pub fn normalize_model_input(input: &ModelConfigInput) -> Result<ModelConfigInpu
         api_key,
         tooltip_data,
         model_id,
-        reasoning_effort: (input.model_type == ModelType::OpenAi)
+        reasoning_effort: input
+            .model_type
+            .is_openai_compatible()
             .then_some(reasoning_effort)
             .flatten(),
         openai_endpoint,
-        openai_extra_params_enabled: input.model_type == ModelType::OpenAi
+        openai_extra_params_enabled: input.model_type.is_openai_compatible()
             && input.openai_extra_params_enabled,
-        openai_extra_params: if input.model_type == ModelType::OpenAi {
+        openai_extra_params: if input.model_type.is_openai_compatible() {
             input.openai_extra_params.clone()
         } else {
             empty_object()
@@ -279,7 +301,7 @@ pub fn model_hash(input: &ModelConfigInput) -> Result<String> {
         normalized.api_key,
         normalized.display_name,
     ];
-    if normalized.model_type == ModelType::OpenAi {
+    if normalized.model_type.is_openai_compatible() {
         parts.push(normalized.openai_endpoint);
     }
     let digest = Sha256::digest(parts.join("\n").as_bytes());
@@ -312,6 +334,7 @@ pub fn resolve_request_url(
     let base_url = normalize_request_url(base_url)?;
     let endpoint = match model_type {
         ModelType::OpenAi => normalize_openai_endpoint(openai_endpoint)?,
+        ModelType::CodeBuddy => normalize_codebuddy_endpoint(openai_endpoint)?,
         ModelType::Anthropic => "/v1/messages".into(),
     };
     if use_full_url {
@@ -349,12 +372,63 @@ pub fn is_sensitive_header(name: &str) -> bool {
     )
 }
 
+/// Every identifier a client might use to name a configured model, most
+/// specific first.
+///
+/// The catalog we serve advertises variant forms derived from the model hash:
+/// `hash[context=200000,reasoning=high,fast=false]` and
+/// `hash-200000-high[-fast]`.  Cursor echoes those back, so a bare-hash lookup
+/// alone silently misroutes a local model to the official backend.
+pub fn model_selector_candidates(selector: &str) -> Vec<String> {
+    let selector = selector.trim();
+    let mut candidates = Vec::with_capacity(3);
+    let mut push = |candidate: &str| {
+        let candidate = candidate.trim();
+        if !candidate.is_empty() && !candidates.iter().any(|existing| existing == candidate) {
+            candidates.push(candidate.to_string());
+        }
+    };
+    push(selector);
+    // `hash[context=…]` — the bracketed parameter list.
+    if let Some(base) = selector.split_once('[').map(|(base, _)| base) {
+        push(base);
+    }
+    // `hash:variant` — the v0.0.49-era channel suffix.
+    if let Some(base) = selector.split_once(':').map(|(base, _)| base) {
+        push(base);
+    }
+    // `hash-200000-high-fast` — the legacy slug.  A model hash is 16 hex
+    // characters, so only trim when the prefix actually looks like one.
+    if let Some(base) = selector.split_once('-').map(|(base, _)| base) {
+        if is_model_hash(base) {
+            push(base);
+        }
+    }
+    candidates
+}
+
+fn is_model_hash(value: &str) -> bool {
+    value.len() == 16 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
 fn normalize_openai_endpoint(value: &str) -> Result<String> {
     match value.trim() {
         "" | OPENAI_RESPONSES_ENDPOINT => Ok(OPENAI_RESPONSES_ENDPOINT.into()),
         OPENAI_CHAT_ENDPOINT => Ok(OPENAI_CHAT_ENDPOINT.into()),
         value => Err(Error::Config(format!(
             "unsupported OpenAI endpoint: {value}"
+        ))),
+    }
+}
+
+/// CodeBuddy only speaks Chat Completions.  Accept the OpenAI spelling so an
+/// existing model can be retyped without editing its endpoint.
+fn normalize_codebuddy_endpoint(value: &str) -> Result<String> {
+    match value.trim() {
+        "" | CODEBUDDY_ENDPOINT => Ok(CODEBUDDY_ENDPOINT.into()),
+        OPENAI_CHAT_ENDPOINT => Ok(OPENAI_CHAT_ENDPOINT.into()),
+        value => Err(Error::Config(format!(
+            "unsupported CodeBuddy endpoint: {value}"
         ))),
     }
 }
@@ -446,6 +520,40 @@ mod tests {
             anthropic_thinking_effort: None,
             thinking_budget_tokens: None,
         }
+    }
+
+    #[test]
+    fn selector_candidates_cover_the_variant_forms_we_advertise() {
+        let hash = "0123456789abcdef";
+        assert_eq!(model_selector_candidates(hash), vec![hash]);
+        assert_eq!(
+            model_selector_candidates(&format!(
+                "{hash}[context=200000,reasoning=high,fast=false]"
+            )),
+            vec![
+                format!("{hash}[context=200000,reasoning=high,fast=false]"),
+                hash.to_string()
+            ]
+        );
+        assert_eq!(
+            model_selector_candidates(&format!("{hash}-200000-high-fast")),
+            vec![format!("{hash}-200000-high-fast"), hash.to_string()]
+        );
+        assert_eq!(
+            model_selector_candidates(&format!("{hash}:max")),
+            vec![format!("{hash}:max"), hash.to_string()]
+        );
+    }
+
+    #[test]
+    fn selector_candidates_do_not_truncate_official_model_names() {
+        // Official ids are full of dashes; trimming at the first one would
+        // turn `claude-sonnet-5` into `claude` and hijack unrelated models.
+        assert_eq!(
+            model_selector_candidates("claude-sonnet-5"),
+            vec!["claude-sonnet-5"]
+        );
+        assert_eq!(model_selector_candidates("gpt-5.6"), vec!["gpt-5.6"]);
     }
 
     #[test]

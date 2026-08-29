@@ -143,7 +143,7 @@ function ModelGrid({
             </div>
             <span className={styles.modelTypeBadge}>
               <Icon icon={model.type === "anthropic" ? claudeIcon : openAiIcon} />
-              {model.type === "anthropic" ? "Anthropic" : "OpenAI"}
+              {model.type === "anthropic" ? "Anthropic" : model.type === "codebuddy" ? "CodeBuddy" : "OpenAI"}
             </span>
           </div>
           <div className={styles.modelCardTest}>
@@ -181,6 +181,7 @@ function providerDomain(baseUrl: string) {
 
 function typeGroup(model: Model) {
   if (model.type === "anthropic") return { key: "anthropic", label: "Anthropic", icon: claudeIcon };
+  if (model.type === "codebuddy") return { key: "codebuddy", label: "CodeBuddy", icon: openAiIcon };
   if (model.openai_endpoint === "/v1/chat/completions") return { key: "openai-chat", label: "OpenAI Chat", icon: openAiIcon };
   return { key: "openai-responses", label: "OpenAI Responses", icon: openAiIcon };
 }
