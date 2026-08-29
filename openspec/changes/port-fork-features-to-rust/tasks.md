@@ -63,9 +63,9 @@ Go 世代那套（后台状态注册表 + 250ms 轮询终端文件 + `AwaitShell
 
 ## Phase 6 — 内存与性能
 
-- [ ] 6.1 `sessions.rs::OutputHub`: transient/durable 分类，transient 限量保留
-- [ ] 6.2 `blob_sync.rs` 超时分类：run 已完成时判无害并正常收尾
-- [ ] 6.3 `result/gate.rs::gate_read`: 图片放宽到 384 KiB + JPEG 压缩阶梯
+- [x] 6.1 `sessions.rs::OutputHub`: transient/durable 分类，transient 限量保留
+- [x] 6.2 `blob_sync.rs` 超时分类：run 已完成时判无害并正常收尾
+- [x] 6.3 `result/gate.rs::gate_read`: 图片放宽到 384 KiB + JPEG 压缩阶梯
 
 ## Phase 7 — 收尾
 
