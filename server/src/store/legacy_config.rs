@@ -151,6 +151,7 @@ fn model_input(model: LegacyModel) -> Result<ModelConfigInput> {
     let model_type = match model.model_type.trim().to_ascii_lowercase().as_str() {
         "openai" => ModelType::OpenAi,
         "anthropic" => ModelType::Anthropic,
+        "codebuddy" => ModelType::CodeBuddy,
         value => {
             return Err(Error::Config(format!(
                 "unsupported v0.0.49 model type: {value}"
@@ -176,7 +177,7 @@ fn model_input(model: LegacyModel) -> Result<ModelConfigInput> {
         openai_endpoint,
         openai_extra_params_enabled: model.openai_extra_params_enabled,
         openai_extra_params: enabled_json_object(
-            model_type == ModelType::OpenAi && model.openai_extra_params_enabled,
+            model_type.is_openai_compatible() && model.openai_extra_params_enabled,
             &model.openai_extra_params_json,
         )?,
         custom_headers_enabled: model.custom_headers_enabled,
@@ -403,5 +404,49 @@ mod tests {
         );
         assert!(endpoint.is_empty());
         assert!(use_full_url);
+    }
+
+    #[tokio::test]
+    async fn manually_imports_v0049_codebuddy_models() {
+        let directory = tempfile::tempdir().unwrap();
+        let config = directory.path().join("config.yaml");
+        std::fs::write(
+            &config,
+            r#"modelAdapters:
+  - sort: 1
+    displayName: CodeBuddy
+    type: codebuddy
+    baseURL: https://copilot.tencent.com/v2
+    apiKey: secret
+    tooltipData: CodeBuddy model
+    modelID: codebuddy-latest
+    reasoningEffort: medium
+    openAIEndpoint: /chat/completions
+    openAIExtraParamsEnabled: true
+    openAIExtraParamsJSON: '{"verbose":true}'
+    customHeadersEnabled: true
+    customHeadersJSON: '{"x-enterprise-id":"etahzsqej0n4"}'
+"#,
+        )
+        .unwrap();
+        let store = Store::connect("sqlite::memory:").await.unwrap();
+
+        let preview = store.preview_v0049_model_config(&config).await.unwrap();
+        assert_eq!(preview.models.len(), 1);
+        let imported = store.import_v0049_model_config(&config).await.unwrap();
+        assert_eq!(imported.imported, 1);
+        let models = store.models().await.unwrap();
+        assert_eq!(models.len(), 1);
+        assert_eq!(models[0].model_type, ModelType::CodeBuddy);
+        assert_eq!(models[0].base_url, "https://copilot.tencent.com/v2");
+        assert_eq!(
+            models[0].request_url().unwrap(),
+            "https://copilot.tencent.com/v2/chat/completions"
+        );
+        // codebuddy 是 OpenAI 兼容协议，extra params 与 custom headers 应原样保留
+        assert_eq!(models[0].openai_extra_params_enabled, true, "extra params enabled");
+        assert_eq!(models[0].openai_extra_params, serde_json::json!({"verbose": true}), "extra params");
+        assert_eq!(models[0].custom_headers_enabled, true, "custom headers enabled");
+        assert_eq!(models[0].custom_headers, serde_json::json!({"x-enterprise-id": "etahzsqej0n4"}), "custom headers");
     }
 }

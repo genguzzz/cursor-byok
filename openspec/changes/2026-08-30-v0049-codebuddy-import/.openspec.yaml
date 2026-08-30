@@ -1,0 +1,6 @@
+version: 1.0.0
+change_id: 2026-08-30-v0049-codebuddy-import
+proposal_path: proposal.md
+design_path: design.md
+tasks_path: tasks.md
+status: in_progress
