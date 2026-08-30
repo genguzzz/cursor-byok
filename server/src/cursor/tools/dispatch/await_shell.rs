@@ -140,7 +140,7 @@ mod tests {
         let dir = tempfile::tempdir().expect("temp terminals dir");
         std::fs::write(
             dir.path().join("4242.txt"),
-            "---\npid: 1\nstarted_at: 2026-01-01T00:00:00Z\n---\nrunning output\n",
+            "---\npid: 1\nrunning_for_ms: 1234\n---\nrunning output\n",
         )
         .expect("write terminal file");
 

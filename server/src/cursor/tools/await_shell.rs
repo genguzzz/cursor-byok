@@ -162,10 +162,10 @@ pub(crate) fn outcome(args: &AwaitShellArgs, terminals_folder: &str) -> AwaitShe
     } else {
         "running"
     };
-    let runtime_ms = match (snapshot.started_at_ms, snapshot.ended_at_ms) {
-        (Some(started), Some(ended)) => ended.saturating_sub(started),
-        (Some(started), None) => crate::cursor::tools::runtime::now_ms().saturating_sub(started),
-        _ => 0,
+    let runtime_ms = if terminal {
+        snapshot.elapsed_ms.or(snapshot.running_for_ms).unwrap_or(0)
+    } else {
+        snapshot.running_for_ms.unwrap_or(0)
     };
 
     let (matched, regex_match) = match pattern_match(&args.pattern, &snapshot.output) {
@@ -324,8 +324,8 @@ fn truncate_output(value: &str) -> String {
 
 struct TerminalSnapshot {
     exit_code: Option<i32>,
-    started_at_ms: Option<u64>,
-    ended_at_ms: Option<u64>,
+    running_for_ms: Option<u64>,
+    elapsed_ms: Option<u64>,
     output: String,
 }
 
@@ -351,16 +351,17 @@ fn parse_terminal_file(raw: &str) -> Option<TerminalSnapshot> {
     if separators.len() < 2 {
         return None;
     }
-    let started_at_ms = metadata_time(&lines[separators[0] + 1..separators[1]], "started_at");
+    let header = &lines[separators[0] + 1..separators[1]];
+    let running_for_ms = metadata_u64(header, "running_for_ms");
     let output_start = separators[1] + 1;
     let mut output_end = lines.len();
     let mut exit_code = None;
-    let mut ended_at_ms = None;
+    let mut elapsed_ms = None;
     for index in (1..separators.len() - 1).rev() {
         let block = &lines[separators[index] + 1..separators[index + 1]];
-        if metadata_key(block, "exit_code").is_some() || has_metadata_key(block, "ended_at") {
+        if metadata_key(block, "exit_code").is_some() || has_metadata_key(block, "elapsed_ms") {
             exit_code = metadata_key(block, "exit_code");
-            ended_at_ms = metadata_time(block, "ended_at");
+            elapsed_ms = metadata_u64(block, "elapsed_ms");
             output_end = separators[index];
             break;
         }
@@ -375,8 +376,8 @@ fn parse_terminal_file(raw: &str) -> Option<TerminalSnapshot> {
     };
     Some(TerminalSnapshot {
         exit_code,
-        started_at_ms,
-        ended_at_ms,
+        running_for_ms,
+        elapsed_ms,
         output,
     })
 }
@@ -384,29 +385,22 @@ fn parse_terminal_file(raw: &str) -> Option<TerminalSnapshot> {
 fn metadata_key(lines: &[&str], key: &str) -> Option<i32> {
     lines.iter().find_map(|line| {
         let (name, value) = line.split_once(':')?;
-        (name.trim() == key).then(|| value.trim().parse::<i32>().ok())?
+        (name.trim() == key).then(|| unquote(value.trim()).parse::<i32>().ok())?
     })
 }
 
-fn metadata_time(lines: &[&str], key: &str) -> Option<u64> {
-    let raw = lines.iter().find_map(|line| {
+fn metadata_u64(lines: &[&str], key: &str) -> Option<u64> {
+    lines.iter().find_map(|line| {
         let (name, value) = line.split_once(':')?;
-        (name.trim() == key).then(|| metadata_value(value.trim()))?
-    })?;
-    let parsed = chrono::DateTime::parse_from_rfc3339(&raw).ok()?;
-    Some(parsed.timestamp_millis().max(0) as u64)
+        (name.trim() == key).then(|| unquote(value.trim()).parse::<u64>().ok())?
+    })
 }
 
-fn metadata_value(value: &str) -> Option<String> {
-    let trimmed = value.trim();
-    if let Some(inner) = trimmed
+fn unquote(value: &str) -> &str {
+    value
         .strip_prefix('"')
         .and_then(|value| value.strip_suffix('"'))
-    {
-        Some(inner.to_string())
-    } else {
-        Some(trimmed.to_string())
-    }
+        .unwrap_or(value)
 }
 
 fn has_metadata_key(lines: &[&str], key: &str) -> bool {
@@ -483,10 +477,20 @@ mod tests {
 
     #[test]
     fn terminal_file_snapshot_extracts_footer_exit_code_and_body() {
-        let raw = "---\npid: 42\ncommand: \"sleep 1\"\n---\nhello\nworld\n---\nexit_code: 0\nended_at: now\n---\n";
+        let raw = "---\npid: 42\ncommand: \"sleep 1\"\n---\nhello\nworld\n---\nexit_code: 0\nelapsed_ms: 1234\n---\n";
         let snapshot = parse_terminal_file(raw).unwrap();
         assert_eq!(snapshot.exit_code, Some(0));
+        assert_eq!(snapshot.elapsed_ms, Some(1234));
         assert_eq!(snapshot.output, "hello\nworld");
+    }
+
+    #[test]
+    fn terminal_file_header_running_for_ms_is_parsed() {
+        let raw = "---\npid: 42\ncommand: \"sleep 1\"\nrunning_for_ms: 5678\n---\nhello\n";
+        let snapshot = parse_terminal_file(raw).unwrap();
+        assert_eq!(snapshot.running_for_ms, Some(5678));
+        assert_eq!(snapshot.exit_code, None);
+        assert_eq!(snapshot.output, "hello");
     }
 
     #[test]
