@@ -86,6 +86,128 @@ fn todo_write(call: &ToolCall) -> Result<ToolCompletion> {
     ))
 }
 
+fn create_goal(call: &ToolCall) -> Result<ToolCompletion> {
+    let objective = call
+        .arguments
+        .get("objective")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+    let mut rendered = interaction::render_tool_call(call, false)?;
+    let Some(pb::tool_call::Tool::CreateGoalToolCall(tool)) = rendered.tool.as_mut() else {
+        return Err(Error::Protocol(
+            "CreateGoal has no Cursor representation".into(),
+        ));
+    };
+    tool.result = Some(pb::CreateGoalResult {
+        result: Some(pb::create_goal_result::Result::Success(
+            pb::CreateGoalSuccess {},
+        )),
+    });
+    let tool = rendered
+        .tool
+        .ok_or_else(|| Error::Protocol("CreateGoal has no Cursor representation".into()))?;
+    Ok(ToolCompletion::new(
+        call,
+        now_ms(),
+        ToolResult {
+            call_id: call.call_id.clone(),
+            content: serde_json::json!({ "success": { "objective": objective } }).to_string(),
+            is_error: false,
+            image: None,
+        },
+        tool,
+    ))
+}
+
+fn update_goal(call: &ToolCall) -> Result<ToolCompletion> {
+    let status = call
+        .arguments
+        .get("status")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .unwrap_or_default();
+    let status_code = goal_status_code(status);
+    let mut rendered = interaction::render_tool_call(call, false)?;
+    let Some(pb::tool_call::Tool::UpdateGoalToolCall(tool)) = rendered.tool.as_mut() else {
+        return Err(Error::Protocol(
+            "UpdateGoal has no Cursor representation".into(),
+        ));
+    };
+    tool.result = Some(pb::UpdateGoalResult {
+        result: Some(pb::update_goal_result::Result::Success(
+            pb::UpdateGoalSuccess { status: status_code },
+        )),
+    });
+    let tool = rendered
+        .tool
+        .ok_or_else(|| Error::Protocol("UpdateGoal has no Cursor representation".into()))?;
+    Ok(ToolCompletion::new(
+        call,
+        now_ms(),
+        ToolResult {
+            call_id: call.call_id.clone(),
+            content: serde_json::json!({ "success": { "status": status } }).to_string(),
+            is_error: false,
+            image: None,
+        },
+        tool,
+    ))
+}
+
+fn set_active_branch(call: &ToolCall) -> Result<ToolCompletion> {
+    let path = call
+        .arguments
+        .get("path")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+    let branch_name = call
+        .arguments
+        .get("branchName")
+        .or_else(|| call.arguments.get("branch_name"))
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+    let mut rendered = interaction::render_tool_call(call, false)?;
+    let Some(pb::tool_call::Tool::SetActiveBranchToolCall(tool)) = rendered.tool.as_mut() else {
+        return Err(Error::Protocol(
+            "SetActiveBranch has no Cursor representation".into(),
+        ));
+    };
+    tool.result = Some(pb::SetActiveBranchResult {
+        result: Some(pb::set_active_branch_result::Result::Success(
+            pb::SetActiveBranchSuccess {},
+        )),
+    });
+    let tool = rendered
+        .tool
+        .ok_or_else(|| Error::Protocol("SetActiveBranch has no Cursor representation".into()))?;
+    Ok(ToolCompletion::new(
+        call,
+        now_ms(),
+        ToolResult {
+            call_id: call.call_id.clone(),
+            content: serde_json::json!({
+                "success": { "path": path, "branchName": branch_name }
+            })
+            .to_string(),
+            is_error: false,
+            image: None,
+        },
+        tool,
+    ))
+}
+
+fn goal_status_code(value: &str) -> i32 {
+    match value {
+        "complete" => pb::GoalStatus::Complete as i32,
+        "paused" => pb::GoalStatus::Paused as i32,
+        "cleared" => pb::GoalStatus::Cleared as i32,
+        _ => pb::GoalStatus::Active as i32,
+    }
+}
+
 fn update_current_step(call: &ToolCall, message_index: usize) -> Result<ToolCompletion> {
     let current_step = call
         .arguments

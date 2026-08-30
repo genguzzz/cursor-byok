@@ -139,7 +139,7 @@ fn every_prompt_mode_loads_the_captured_tool_set() {
             .as_path(),
     )
     .unwrap();
-    assert_eq!(assets.mode(Mode::Agent).tools.len(), 22);
+    assert_eq!(assets.mode(Mode::Agent).tools.len(), 28);
     assert_eq!(
         assets
             .mode(Mode::Agent)
@@ -162,6 +162,7 @@ fn every_prompt_mode_loads_the_captured_tool_set() {
             "Read",
             "ReadLints",
             "Glob",
+            "Ls",
             "AskQuestion",
             "Task",
             "GetMcpTools",
@@ -170,6 +171,11 @@ fn every_prompt_mode_loads_the_captured_tool_set() {
             "CallMcpTool",
             "SembleSearch",
             "SembleFindRelated",
+            "WriteShellStdin",
+            "ForceBackgroundShell",
+            "CreateGoal",
+            "UpdateGoal",
+            "SetActiveBranch",
         ]
     );
     assert_mode(
@@ -194,8 +200,14 @@ fn every_prompt_mode_loads_the_captured_tool_set() {
             "Write",
             "SembleSearch",
             "SembleFindRelated",
+            "Ls",
+            "WriteShellStdin",
+            "ForceBackgroundShell",
+            "CreateGoal",
+            "UpdateGoal",
+            "SetActiveBranch",
         ],
-        "a250b6e269ad9da55c2c45ed8623bf67a3dcf0d1236c2fb9d8cdac78a5b7c7ce",
+        "8c9069be459f8dcafdc9b3a3e43b64ed5526758667508c56b71baa49d9fbfc47",
     );
     assert_mode(
         &assets,
@@ -217,8 +229,14 @@ fn every_prompt_mode_loads_the_captured_tool_set() {
             "CallMcpTool",
             "SembleSearch",
             "SembleFindRelated",
+            "Ls",
+            "WriteShellStdin",
+            "ForceBackgroundShell",
+            "CreateGoal",
+            "UpdateGoal",
+            "SetActiveBranch",
         ],
-        "5cee82d921d9050450d450e487b962e25d8979258b3a61dce32b43292f8b956e",
+        "e712f351ecea157be0186370d21800917e0c67c8a8cc9065d17eee7134f8df47",
     );
     assert_mode(
         &assets,
@@ -242,8 +260,14 @@ fn every_prompt_mode_loads_the_captured_tool_set() {
             "Write",
             "SembleSearch",
             "SembleFindRelated",
+            "Ls",
+            "WriteShellStdin",
+            "ForceBackgroundShell",
+            "CreateGoal",
+            "UpdateGoal",
+            "SetActiveBranch",
         ],
-        "a250b6e269ad9da55c2c45ed8623bf67a3dcf0d1236c2fb9d8cdac78a5b7c7ce",
+        "8c9069be459f8dcafdc9b3a3e43b64ed5526758667508c56b71baa49d9fbfc47",
     );
     assert_mode(
         &assets,
@@ -269,8 +293,14 @@ fn every_prompt_mode_loads_the_captured_tool_set() {
             "GenerateImage",
             "SembleSearch",
             "SembleFindRelated",
+            "Ls",
+            "WriteShellStdin",
+            "ForceBackgroundShell",
+            "CreateGoal",
+            "UpdateGoal",
+            "SetActiveBranch",
         ],
-        "aa02a07174b682bf8dc265840228b827a2ffe78d14b9d2ff5ea6fa77a0508f30",
+        "fce5fddfcac0345737747cecfde661b9b8df966399e823a8f88dbcd26ad0c83e",
     );
     assert_mode(
         &assets,
@@ -290,6 +320,7 @@ fn every_prompt_mode_loads_the_captured_tool_set() {
             "Write",
             "Read",
             "Glob",
+            "Ls",
             "GetMcpTools",
             "FetchMcpResource",
             "SwitchMode",
@@ -297,8 +328,13 @@ fn every_prompt_mode_loads_the_captured_tool_set() {
             "CallMcpTool",
             "SembleSearch",
             "SembleFindRelated",
+            "WriteShellStdin",
+            "ForceBackgroundShell",
+            "CreateGoal",
+            "UpdateGoal",
+            "SetActiveBranch",
         ],
-        "5f3f094529700c6d0d35f267309e5a3e1eb2ceb0167ee9c9efe05c9a35c1b6f4",
+        "45543df69400971dbcae8a77f186d350e0f2663317afe8452829b7d301857402",
     );
     assert_mode(
         &assets,
@@ -308,7 +344,7 @@ fn every_prompt_mode_loads_the_captured_tool_set() {
     );
     assert_eq!(
         schema_digest(&assets.mode(Mode::Agent).tools),
-        "3bba2fed7e277bdc788899452209079628434b2e1c4a3a721c97333522874f51"
+        "199564e1d5f97a8436c93e6e0b41a10eb178d39c0cf5793c4fec37ab992929f1"
     );
     let task = assets
         .mode(Mode::Agent)
@@ -546,6 +582,7 @@ fn subagent_uses_the_agent_prompt_and_only_the_captured_tool_delta() {
             "Write",
             "Read",
             "Glob",
+            "Ls",
             "GetMcpTools",
             "FetchMcpResource",
             "SwitchMode",
@@ -553,6 +590,11 @@ fn subagent_uses_the_agent_prompt_and_only_the_captured_tool_delta() {
             "CallMcpTool",
             "SembleSearch",
             "SembleFindRelated",
+            "WriteShellStdin",
+            "ForceBackgroundShell",
+            "CreateGoal",
+            "UpdateGoal",
+            "SetActiveBranch",
         ]
     );
     assert!(!request.tools.iter().any(|tool| tool.name == "Task"));
