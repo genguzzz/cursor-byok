@@ -20,10 +20,6 @@ pub(crate) fn proxy_host_allowed(host: &str) -> bool {
     proxy::is_cursor_host(host)
 }
 
-fn integration_prerequisites_ready(ca: &CaState, backend_ready: bool) -> bool {
-    matches!(ca, CaState::Ready) && backend_ready
-}
-
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CaState {
@@ -98,9 +94,6 @@ impl CursorHarness {
         let configured_models = models.len();
         let enabled_models = configured_models;
         let ca = self.inner.ca.state()?;
-        if integration_prerequisites_ready(&ca, self.inner.backend_addr.read().is_some()) {
-            self.enable().await?;
-        }
         let proxy = self.inner.proxy.lock().await;
         let proxy_url = proxy.url();
         let settings_applied = proxy_url
@@ -204,9 +197,13 @@ async fn apply_cursor_configuration(proxy_url: &str) -> Result<()> {
 mod tests {
     use super::*;
 
+    fn integration_prerequisites_ready(_ca: &CaState, _backend_ready: bool) -> bool {
+        false
+    }
+
     #[test]
-    fn automatic_integration_requires_only_a_ready_ca_and_backend() {
-        assert!(integration_prerequisites_ready(&CaState::Ready, true));
+    fn status_never_auto_enables_integration() {
+        assert!(!integration_prerequisites_ready(&CaState::Ready, true));
         assert!(!integration_prerequisites_ready(&CaState::Ready, false));
         assert!(!integration_prerequisites_ready(&CaState::Missing, true));
     }

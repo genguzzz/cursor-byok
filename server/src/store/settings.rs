@@ -1,10 +1,15 @@
 use serde::{Deserialize, Serialize};
 
-use crate::Result;
+use crate::{Error, Result};
 
 use super::{now_ms, Store};
 
 const PORT_SETTINGS_KEY: &str = "network_ports";
+/// Legacy Go backend default, kept for reference only.  The desktop app must
+/// never take over these fixed ports: the old `cursor-byok` menubar/backend
+/// still listens on them, and Cursor's `settings.json` may point at them.
+const LEGACY_BACKEND_PORT: u16 = 18_090;
+const LEGACY_PROXY_PORT: u16 = 18_080;
 const PROXY_SETTINGS_KEY: &str = "outbound_proxy";
 const TAB_SETTINGS_KEY: &str = "cursor_tab";
 const INSTALLATION_ID_KEY: &str = "installation_id";
@@ -16,6 +21,12 @@ pub const PUBLIC_TAB_SERVICE_URL: &str = "https://tab.leokun.cn";
 pub struct PortSettings {
     pub proxy_port: u16,
     pub service_port: u16,
+}
+
+impl PortSettings {
+    pub fn is_legacy_default(&self) -> bool {
+        self.proxy_port == LEGACY_PROXY_PORT && self.service_port == LEGACY_BACKEND_PORT
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq, Serialize)]
@@ -242,9 +253,20 @@ impl Store {
         .bind(PORT_SETTINGS_KEY)
         .fetch_optional(&self.pool)
         .await?;
-        value
-            .map(|value| serde_json::from_str(&value).map_err(Into::into))
-            .unwrap_or_else(|| Ok(PortSettings::default()))
+        let settings = value
+            .map(|value| serde_json::from_str::<PortSettings>(&value).map_err(Error::from))
+            .transpose()?
+            .unwrap_or_default();
+        if settings.is_legacy_default() {
+            tracing::warn!(
+                proxy_port = settings.proxy_port,
+                service_port = settings.service_port,
+                "discarding the legacy v0 backend port pair; selecting fresh ports instead"
+            );
+            self.set_port_settings(PortSettings::default()).await?;
+            return Ok(PortSettings::default());
+        }
+        Ok(settings)
     }
 
     pub async fn set_port_settings(&self, settings: PortSettings) -> Result<()> {
@@ -337,6 +359,27 @@ mod tests {
         };
         store.set_port_settings(settings).await.unwrap();
         assert_eq!(store.port_settings().await.unwrap(), settings);
+    }
+
+    #[tokio::test]
+    async fn port_settings_discard_the_legacy_backend_default_pair() {
+        let directory = tempfile::tempdir().unwrap();
+        let database = directory.path().join("settings-legacy.db");
+        let store = Store::connect(&format!("sqlite://{}", database.display()))
+            .await
+            .unwrap();
+
+        store
+            .set_port_settings(PortSettings {
+                proxy_port: 18_080,
+                service_port: 18_090,
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            store.port_settings().await.unwrap(),
+            PortSettings::default()
+        );
     }
 
     #[tokio::test]
