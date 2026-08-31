@@ -69,6 +69,7 @@ pub struct ExecContext {
 #[derive(Clone, Debug)]
 pub struct McpRoute {
     pub name: String,
+    pub server_identifier: String,
     pub provider_identifier: String,
     pub tool_name: String,
     pub description: String,

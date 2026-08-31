@@ -370,34 +370,52 @@ fn mcp_input_schema(tool: &pb::McpToolDescriptor) -> Option<String> {
 }
 
 pub fn meta_mcp_routes(context: &pb::RequestContext) -> HashMap<(String, String), McpRoute> {
-    context
+    let mut routes = HashMap::new();
+    let descriptors = context
         .mcp_meta_tool_options
         .as_ref()
         .into_iter()
         .flat_map(|options| &options.mcp_descriptors)
-        .filter(|server| !server.server_identifier.trim().is_empty())
-        .flat_map(|server| {
-            server.tools.iter().filter_map(move |tool| {
-                if tool.tool_name.trim().is_empty() {
-                    return None;
+        .filter(|server| !server.server_identifier.trim().is_empty());
+
+    for server in descriptors {
+        let server_id = server.server_identifier.trim().to_string();
+        let server_name = server.server_name.trim().to_string();
+        let provider_identifier = if server_name.is_empty() {
+            server_id.clone()
+        } else {
+            server_name.clone()
+        };
+
+        for tool in &server.tools {
+            if tool.tool_name.trim().is_empty() {
+                continue;
+            }
+            let route = McpRoute {
+                name: format!("{}-{}", server_id, tool.tool_name),
+                server_identifier: server_id.clone(),
+                provider_identifier: provider_identifier.clone(),
+                tool_name: tool.tool_name.clone(),
+                description: tool.description.clone().unwrap_or_default(),
+            };
+
+            // 1. Register by exact server_identifier (e.g. "user-ida-pro-mcp")
+            routes.insert((server_id.clone(), tool.tool_name.clone()), route.clone());
+
+            // 2. Register by server_name (e.g. "ida-pro-mcp") if provided
+            if !server_name.is_empty() {
+                routes.insert((server_name.clone(), tool.tool_name.clone()), route.clone());
+            }
+
+            // 3. Register by stripped "user-" prefix if applicable
+            if let Some(stripped) = server_id.strip_prefix("user-") {
+                if !stripped.is_empty() {
+                    routes.insert((stripped.to_string(), tool.tool_name.clone()), route.clone());
                 }
-                let provider_identifier = if server.server_name.trim().is_empty() {
-                    server.server_identifier.clone()
-                } else {
-                    server.server_name.clone()
-                };
-                Some((
-                    (server.server_identifier.clone(), tool.tool_name.clone()),
-                    McpRoute {
-                        name: format!("{}-{}", server.server_identifier, tool.tool_name),
-                        provider_identifier,
-                        tool_name: tool.tool_name.clone(),
-                        description: tool.description.clone().unwrap_or_default(),
-                    },
-                ))
-            })
-        })
-        .collect()
+            }
+        }
+    }
+    routes
 }
 
 fn is_skill_rule(rule: &pb::CursorRule) -> bool {
