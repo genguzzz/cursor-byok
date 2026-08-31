@@ -7,19 +7,34 @@ use std::{
     },
 };
 
-use tokio::sync::Mutex;
+use tokio::sync::{watch, Mutex};
 
 use crate::{cursor::protocol::proto::agent::v1 as pb, model::ToolCall, Error, Result};
 
 use super::edit::EditWrite;
 
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct CursorToolRuntime {
     next_id: Arc<AtomicU32>,
     execs: Arc<Mutex<HashMap<u32, PendingExec>>>,
     interactions: Arc<Mutex<HashMap<u32, PendingInteraction>>>,
     completed: Arc<Mutex<HashMap<u32, String>>>,
     interrupted: Arc<Mutex<HashSet<u32>>>,
+    await_wake: Arc<watch::Sender<u64>>,
+}
+
+impl Default for CursorToolRuntime {
+    fn default() -> Self {
+        let (await_wake, _) = watch::channel(0);
+        Self {
+            next_id: Arc::new(AtomicU32::new(0)),
+            execs: Arc::new(Mutex::new(HashMap::new())),
+            interactions: Arc::new(Mutex::new(HashMap::new())),
+            completed: Arc::new(Mutex::new(HashMap::new())),
+            interrupted: Arc::new(Mutex::new(HashSet::new())),
+            await_wake: Arc::new(await_wake),
+        }
+    }
 }
 
 pub(crate) struct PendingExec {
@@ -126,6 +141,7 @@ impl CursorToolRuntime {
             interactions: Arc::new(Mutex::new(HashMap::new())),
             completed: Arc::new(Mutex::new(HashMap::new())),
             interrupted: self.interrupted.clone(),
+            await_wake: self.await_wake.clone(),
         }
     }
 
@@ -331,6 +347,15 @@ impl CursorToolRuntime {
         let mut abort_ids = abort_ids;
         abort_ids.sort_unstable();
         abort_ids
+    }
+
+    pub(crate) fn await_wake(&self) -> watch::Receiver<u64> {
+        self.await_wake.subscribe()
+    }
+
+    pub(crate) fn notify_await_wake(&self) {
+        self.await_wake
+            .send_modify(|generation| *generation = generation.wrapping_add(1));
     }
 
     pub async fn running_exec_ids(&self) -> Vec<u32> {

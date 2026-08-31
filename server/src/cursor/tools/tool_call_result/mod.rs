@@ -1,4 +1,5 @@
 //! Converts completed Tool work into canonical Tool results.
+pub(crate) mod await_shell;
 mod exec;
 mod gate;
 mod interaction;

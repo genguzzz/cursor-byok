@@ -140,7 +140,7 @@ fn every_prompt_mode_loads_the_captured_tool_set() {
             .as_path(),
     )
     .unwrap();
-    assert_eq!(assets.mode(Mode::Agent).tools.len(), 21);
+    assert_eq!(assets.mode(Mode::Agent).tools.len(), 22);
     assert_eq!(
         assets
             .mode(Mode::Agent)
@@ -150,6 +150,7 @@ fn every_prompt_mode_loads_the_captured_tool_set() {
             .collect::<Vec<_>>(),
         vec![
             "Shell",
+            "AwaitShell",
             "Grep",
             "Delete",
             "WebSearch",
@@ -185,6 +186,7 @@ fn every_prompt_mode_loads_the_captured_tool_set() {
             "Read",
             "ReadLints",
             "Shell",
+            "AwaitShell",
             "StrReplace",
             "Task",
             "TodoWrite",
@@ -194,13 +196,14 @@ fn every_prompt_mode_loads_the_captured_tool_set() {
             "SembleSearch",
             "SembleFindRelated",
         ],
-        "98bb57a9ade7f1a572c5c5fe77a905a129d28ecfd42b8d318250f6486b09e1ec",
+        "87fce4415dd68ca758b74ef20538460182b914e205475f066b0cc5893cf57800",
     );
     assert_mode(
         &assets,
         Mode::Plan,
         &[
             "Shell",
+            "AwaitShell",
             "Glob",
             "Grep",
             "Read",
@@ -216,7 +219,7 @@ fn every_prompt_mode_loads_the_captured_tool_set() {
             "SembleSearch",
             "SembleFindRelated",
         ],
-        "9a7e0f9e0bd8ef0af01032fa311686f72c42ec260e3057f6fae5e68f5ed36fb8",
+        "7157ac07c538c616f19f035c2c91888f75c66887b60d2c521af752ee0817e39e",
     );
     assert_mode(
         &assets,
@@ -231,6 +234,7 @@ fn every_prompt_mode_loads_the_captured_tool_set() {
             "Read",
             "ReadLints",
             "Shell",
+            "AwaitShell",
             "StrReplace",
             "Task",
             "TodoWrite",
@@ -240,7 +244,7 @@ fn every_prompt_mode_loads_the_captured_tool_set() {
             "SembleSearch",
             "SembleFindRelated",
         ],
-        "98bb57a9ade7f1a572c5c5fe77a905a129d28ecfd42b8d318250f6486b09e1ec",
+        "87fce4415dd68ca758b74ef20538460182b914e205475f066b0cc5893cf57800",
     );
     assert_mode(
         &assets,
@@ -255,6 +259,7 @@ fn every_prompt_mode_loads_the_captured_tool_set() {
             "Read",
             "ReadLints",
             "Shell",
+            "AwaitShell",
             "StrReplace",
             "SwitchMode",
             "Task",
@@ -266,13 +271,14 @@ fn every_prompt_mode_loads_the_captured_tool_set() {
             "SembleSearch",
             "SembleFindRelated",
         ],
-        "976b309dd91e314d4916439ebb9da8995751d011532e39934a1da7593dc78ccb",
+        "97d2e476819b0c627f9bd22dce1e2dcb49a7fbc72ded7a7df9e99538ecaf958d",
     );
     assert_mode(
         &assets,
         Mode::Subagent,
         &[
             "Shell",
+            "AwaitShell",
             "Grep",
             "Delete",
             "WebSearch",
@@ -293,7 +299,7 @@ fn every_prompt_mode_loads_the_captured_tool_set() {
             "SembleSearch",
             "SembleFindRelated",
         ],
-        "6de1ee86a131ca093c7143f54fffcba2fc14b32ff45fd6f5e0df1347058ad744",
+        "1fb5d72eddd2a1304f530ed23ce33da5931a81695b4403ae1c6700ff343dce54",
     );
     assert_mode(
         &assets,
@@ -303,7 +309,7 @@ fn every_prompt_mode_loads_the_captured_tool_set() {
     );
     assert_eq!(
         schema_digest(&assets.mode(Mode::Agent).tools),
-        "282a1dff7957090d0a75eac4a46474ac7cffa1b0937bdf97354544e729bb15c2"
+        "e254700ad451dca5e77fe0452f90ca2be7f30da1cec006509a3147f12cde9e8c"
     );
     let task = assets
         .mode(Mode::Agent)
@@ -529,6 +535,7 @@ fn subagent_uses_the_agent_prompt_and_only_the_captured_tool_delta() {
             .collect::<Vec<_>>(),
         vec![
             "Shell",
+            "AwaitShell",
             "Grep",
             "Delete",
             "WebSearch",

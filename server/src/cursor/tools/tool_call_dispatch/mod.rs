@@ -1,4 +1,5 @@
 //! Dispatches Tool calls to their execution adapters.
+mod await_shell;
 mod edit;
 mod exec;
 mod interaction;
@@ -64,6 +65,9 @@ pub(super) async fn start(
         "askquestion" | "websearch" | "webfetch" | "switchmode" | "createplan"
         | "generateimage" => interaction::start(runtime, call).await,
         "todowrite" | "updatecurrentstep" => local::start(call, message_index),
+        "awaitshell" => {
+            await_shell::start(results, call, &context.terminals_folder, runtime.await_wake())
+        }
         "semblesearch" | "semblefindrelated" => search::start(results, call, store.cloned()),
         _ => Ok(unavailable_tool(call)),
     }
@@ -145,7 +149,7 @@ pub(super) async fn resume_interaction(
 }
 
 fn is_shell_tool(name: &str) -> bool {
-    matches!(normalized(name).as_str(), "shell" | "bash")
+    matches!(normalized(name).as_str(), "shell" | "bash" | "awaitshell")
 }
 
 pub(super) fn normalized(name: &str) -> String {
