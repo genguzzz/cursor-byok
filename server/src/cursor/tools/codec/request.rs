@@ -310,7 +310,7 @@ pub(crate) fn mcp_meta_request(
             )?,
             smart_mode_approval_only: false,
             skip_approval: false,
-            server_identifier: server_identifier.into(),
+            server_identifier: route.server_identifier.clone(),
         }),
         Some(true),
     ))
@@ -321,7 +321,13 @@ pub fn mcp_state_request(id: u32, call: &ToolCall) -> pb::AgentServerMessage {
         .arguments
         .get("server")
         .and_then(Value::as_str)
-        .map(|server| vec![server.into()])
+        .map(|server| {
+            let mut ids = vec![server.into()];
+            if !server.starts_with("user-") && !server.starts_with("cursor") {
+                ids.push(format!("user-{server}"));
+            }
+            ids
+        })
         .unwrap_or_default();
     server_message(
         id,

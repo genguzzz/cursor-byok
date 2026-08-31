@@ -7,7 +7,7 @@ use crate::model::{CanonicalMessage, LlmCallUsageAnchor, PreparedRun, ProjectedM
 const FALLBACK_CHARS: usize = 12_000;
 
 pub(super) const OUTPUT_TOKENS: u64 = 4_096;
-pub(super) const INSTRUCTIONS: &str = "Summarize the conversation for the next model turn. Preserve goals, constraints, decisions, files, commands, errors, results, and unfinished work. Do not call tools. Return only the concise durable summary.";
+pub(super) const INSTRUCTIONS: &str = "Summarize the conversation for the next model turn. Preserve goals, constraints, facts, decisions, files, commands, errors, tool outcomes, and pending follow-ups. Return a structured plain-text summary covering: 1. Primary Request and Intent, 2. Key Technical Concepts, 3. Files and Code Sections, 4. Errors and fixes, 5. Problem Solving, 6. All user messages, 7. Pending Tasks, 8. Current Work, 9. Optional Next Step. Do not call tools. Do not address the user.";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct ContextUsageAnchor {

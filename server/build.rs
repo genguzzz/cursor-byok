@@ -12,7 +12,14 @@ fn main() {
         protoc_bin_vendored::protoc_bin_path().expect("vendored protoc"),
     );
 
+    // The debug traffic viewer renders inbound Cursor Connect frames as JSON. It reflects over
+    // the agent.v1 schema at runtime through this descriptor set, mirroring the legacy protojson
+    // rendering without hand-writing serde impls for the generated prost types.
+    let descriptor_path =
+        PathBuf::from(env::var("OUT_DIR").expect("cargo OUT_DIR")).join("agent_v1_descriptor.bin");
+
     prost_build::Config::new()
+        .file_descriptor_set_path(&descriptor_path)
         .compile_protos(
             &protos,
             &[

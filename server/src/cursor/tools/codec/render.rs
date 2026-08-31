@@ -232,6 +232,7 @@ pub fn tool_placeholder(name: &str, call_id: &str) -> Result<pb::ToolCall> {
         "updatecurrentstep" => {
             Tool::CommunicateUpdateToolCall(pb::CommunicateUpdateToolCall::default())
         }
+        "awaitshell" => Tool::AwaitToolCall(pb::AwaitToolCall::default()),
         "getmcptools" => Tool::GetMcpToolsToolCall(pb::GetMcpToolsToolCall::default()),
         _ => return Err(Error::Protocol(format!("unsupported tool: {name}"))),
     };
@@ -506,6 +507,17 @@ pub fn render_tool_call(call: &ToolCall, completed: bool) -> Result<pb::ToolCall
                 tool_name: optional("toolName"),
                 pattern: optional("pattern"),
                 tool_call_id: call.call_id.clone(),
+            })
+        }
+        Some(pb::tool_call::Tool::AwaitToolCall(tool)) => {
+            tool.args = Some(pb::AwaitArgs {
+                task_id: string("shell_id"),
+                block_until_ms: call
+                    .arguments
+                    .get("block_until_ms")
+                    .and_then(Value::as_u64)
+                    .map(|value| value as u32),
+                regex: optional("pattern"),
             })
         }
         _ => {}

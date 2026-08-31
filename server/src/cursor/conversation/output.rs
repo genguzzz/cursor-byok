@@ -166,6 +166,7 @@ impl ConversationOutput {
         let mut interrupted_tool_calls = HashSet::<String>::new();
         let mut final_checkpoint = None::<FinalCheckpoints>;
         let mut compaction_checkpoint = None::<pb::ConversationStateStructure>;
+        let mut auto_compacting = false;
         let mut turn_usage = None::<Usage>;
         let mut context_tokens = None::<u64>;
         let mut ready = VecDeque::new();
@@ -252,9 +253,11 @@ impl ConversationOutput {
                 }
                 Input::Event(Some(event)) => match event {
                     RunEvent::AutoCompactionStarted => {
+                        auto_compacting = true;
                         self.handle.emit(&events::summary_started())?;
                     }
                     RunEvent::AutoCompactionCompleted => {
+                        auto_compacting = false;
                         self.handle.emit(&events::summary_completed())?;
                     }
                     RunEvent::CycleInterrupted => {
@@ -266,13 +269,13 @@ impl ConversationOutput {
                     }
                     RunEvent::TextStart => {}
                     RunEvent::TextEnd => {
-                        if !self.context.compacting {
+                        if !self.context.compacting && !auto_compacting {
                             presentation.finish_text();
                         }
                     }
                     RunEvent::TextDelta(delta) => {
                         response_text.push_str(&delta);
-                        if self.context.compacting {
+                        if self.context.compacting || auto_compacting {
                             self.handle.emit(&events::summary_delta(delta))?;
                         } else {
                             presentation.text_delta(&delta);
@@ -285,7 +288,7 @@ impl ConversationOutput {
                     RunEvent::ThinkingStart => {}
                     RunEvent::ThinkingDelta(delta) => {
                         response_thinking.push_str(&delta);
-                        if !self.context.compacting {
+                        if !self.context.compacting && !auto_compacting {
                             presentation.thinking_delta(&delta);
                             self.emit_model_event(
                                 crate::provider::ModelEvent::ThinkingDelta(delta),
@@ -294,7 +297,7 @@ impl ConversationOutput {
                         }
                     }
                     RunEvent::ThinkingEnd { duration } => {
-                        if !self.context.compacting {
+                        if !self.context.compacting && !auto_compacting {
                             presentation.finish_thinking(duration);
                             self.handle.emit(&events::thinking_completed(duration))?;
                         }

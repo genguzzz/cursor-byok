@@ -615,14 +615,12 @@ impl RunEngine {
             },
         };
         let cycle_cancellation = cancellation.child_token();
-        let (silent_events, mut discarded_events) = tokio::sync::mpsc::channel(256);
-        let drain = tokio::spawn(async move { while discarded_events.recv().await.is_some() {} });
         let mut pending_insertions = Vec::new();
         let mut break_messages = None;
         let cycle = {
             let cycle = consume_model_cycle(
                 self.provider.stream(invocation, cycle_cancellation.clone()),
-                &silent_events,
+                &client.events,
                 &cycle_cancellation,
             );
             tokio::pin!(cycle);
@@ -660,8 +658,6 @@ impl RunEngine {
                 }
             }
         };
-        drop(silent_events);
-        let _ = drain.await;
         let (summary, compaction_usage) = match (break_messages.is_some(), cycle) {
             (true, Ok(cycle)) => (
                 super::compaction::fallback_summary(&compactable),

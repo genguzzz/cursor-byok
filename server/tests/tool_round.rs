@@ -57,6 +57,7 @@ fn mcp_context(server: &str, provider: &str, tool: &str) -> ExecContext {
         (server.into(), tool.into()),
         cursor_server::cursor::tools::runtime::McpRoute {
             name: format!("{server}-{tool}"),
+            server_identifier: server.into(),
             provider_identifier: provider.into(),
             tool_name: tool.into(),
             description: "fixture MCP tool".into(),

@@ -162,6 +162,7 @@ impl Provider for OpenAiChatProvider {
             let mut text_open = false;
             let mut thinking_open = false;
             let mut reasoning = String::new();
+            let mut think_streamer = InlineThinkStreamer::default();
             let mut tools = BTreeMap::<usize, ChatToolState>::new();
             let mut final_usage = None;
             let mut finish = None;
@@ -204,14 +205,27 @@ impl Provider for OpenAiChatProvider {
                 let Some(choice) = value.get("choices").and_then(Value::as_array).and_then(|values| values.first()) else { continue; };
                 let delta = choice.get("delta").unwrap_or(&Value::Null);
                 if let Some(reasoning_delta) = delta.get("reasoning_content").or_else(|| delta.get("reasoning")).and_then(Value::as_str).filter(|text| !text.is_empty()) {
+                    if text_open { text_open = false; yield ModelEvent::TextEnd; }
                     if !thinking_open { thinking_open = true; yield ModelEvent::ThinkingStart; }
                     reasoning.push_str(reasoning_delta);
                     yield ModelEvent::ThinkingDelta(reasoning_delta.into());
                 }
                 if let Some(content) = delta.get("content").and_then(Value::as_str).filter(|text| !text.is_empty()) {
-                    if thinking_open { thinking_open = false; yield ModelEvent::ThinkingEnd; }
-                    if !text_open { text_open = true; yield ModelEvent::TextStart; }
-                    yield ModelEvent::TextDelta(content.into());
+                    for part in think_streamer.process(content) {
+                        match part {
+                            StreamPart::Thinking(delta) => {
+                                if text_open { text_open = false; yield ModelEvent::TextEnd; }
+                                if !thinking_open { thinking_open = true; yield ModelEvent::ThinkingStart; }
+                                reasoning.push_str(&delta);
+                                yield ModelEvent::ThinkingDelta(delta);
+                            }
+                            StreamPart::Text(text) => {
+                                if thinking_open { thinking_open = false; yield ModelEvent::ThinkingEnd; }
+                                if !text_open { text_open = true; yield ModelEvent::TextStart; }
+                                yield ModelEvent::TextDelta(text);
+                            }
+                        }
+                    }
                 }
                 if let Some(tool_deltas) = delta.get("tool_calls").and_then(Value::as_array) {
                     for (position, tool) in tool_deltas.iter().enumerate() {
@@ -225,6 +239,21 @@ impl Provider for OpenAiChatProvider {
                 }
                 if let Some(reason) = choice.get("finish_reason").and_then(Value::as_str) {
                     finish = Some(map_finish(reason, !tools.is_empty()));
+                }
+            }
+            for part in think_streamer.finish() {
+                match part {
+                    StreamPart::Thinking(delta) => {
+                        if text_open { text_open = false; yield ModelEvent::TextEnd; }
+                        if !thinking_open { thinking_open = true; yield ModelEvent::ThinkingStart; }
+                        reasoning.push_str(&delta);
+                        yield ModelEvent::ThinkingDelta(delta);
+                    }
+                    StreamPart::Text(text) => {
+                        if thinking_open { thinking_open = false; yield ModelEvent::ThinkingEnd; }
+                        if !text_open { text_open = true; yield ModelEvent::TextStart; }
+                        yield ModelEvent::TextDelta(text);
+                    }
                 }
             }
             if thinking_open { yield ModelEvent::ThinkingEnd; }
@@ -474,5 +503,149 @@ pub(crate) fn openai_usage(value: &Value) -> Usage {
         reasoning_tokens: value
             .pointer("/completion_tokens_details/reasoning_tokens")
             .and_then(Value::as_u64),
+    }
+}
+
+#[derive(Default)]
+struct InlineThinkStreamer {
+    in_think: bool,
+    buffer: String,
+}
+
+enum StreamPart {
+    Thinking(String),
+    Text(String),
+}
+
+impl InlineThinkStreamer {
+    fn process(&mut self, chunk: &str) -> Vec<StreamPart> {
+        self.buffer.push_str(chunk);
+        let mut parts = Vec::new();
+
+        loop {
+            if self.in_think {
+                if let Some(pos) = self.buffer.find("</think>").or_else(|| self.buffer.find("</thought>")) {
+                    let end_tag_len = if self.buffer[pos..].starts_with("</think>") { 8 } else { 10 };
+                    let thinking_text = self.buffer[..pos].to_string();
+                    if !thinking_text.is_empty() {
+                        parts.push(StreamPart::Thinking(thinking_text));
+                    }
+                    self.buffer.drain(..pos + end_tag_len);
+                    self.in_think = false;
+                } else {
+                    let partial_len = trailing_partial_tag(&self.buffer, &["</think>", "</thought>"]);
+                    let emit_len = self.buffer.len().saturating_sub(partial_len);
+                    if emit_len > 0 {
+                        let thinking_text = self.buffer[..emit_len].to_string();
+                        self.buffer.drain(..emit_len);
+                        parts.push(StreamPart::Thinking(thinking_text));
+                    }
+                    break;
+                }
+            } else {
+                if let Some(pos) = self.buffer.find("<think>").or_else(|| self.buffer.find("<thought>")) {
+                    let start_tag_len = if self.buffer[pos..].starts_with("<think>") { 7 } else { 9 };
+                    let text = self.buffer[..pos].to_string();
+                    if !text.is_empty() {
+                        parts.push(StreamPart::Text(text));
+                    }
+                    self.buffer.drain(..pos + start_tag_len);
+                    self.in_think = true;
+                } else {
+                    let partial_len = trailing_partial_tag(&self.buffer, &["<think>", "<thought>"]);
+                    let emit_len = self.buffer.len().saturating_sub(partial_len);
+                    if emit_len > 0 {
+                        let text = self.buffer[..emit_len].to_string();
+                        self.buffer.drain(..emit_len);
+                        parts.push(StreamPart::Text(text));
+                    }
+                    break;
+                }
+            }
+        }
+        parts
+    }
+
+    fn finish(&mut self) -> Vec<StreamPart> {
+        let mut parts = Vec::new();
+        if !self.buffer.is_empty() {
+            let leftover = std::mem::take(&mut self.buffer);
+            if self.in_think {
+                parts.push(StreamPart::Thinking(leftover));
+            } else {
+                parts.push(StreamPart::Text(leftover));
+            }
+        }
+        parts
+    }
+}
+
+fn trailing_partial_tag(s: &str, tags: &[&str]) -> usize {
+    let max_tag_len = tags.iter().map(|t| t.len()).max().unwrap_or(0);
+    for len in (1..=max_tag_len.min(s.len())).rev() {
+        let suffix = &s[s.len() - len..];
+        for tag in tags {
+            if tag.starts_with(suffix) {
+                return len;
+            }
+        }
+    }
+    0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn inline_think_streamer_parses_simple_think_tags() {
+        let mut streamer = InlineThinkStreamer::default();
+        let parts = streamer.process("<think>Analyzing problem</think>Here is the answer");
+        let mut text = String::new();
+        let mut thinking = String::new();
+        for part in parts {
+            match part {
+                StreamPart::Thinking(t) => thinking.push_str(&t),
+                StreamPart::Text(t) => text.push_str(&t),
+            }
+        }
+        for part in streamer.finish() {
+            match part {
+                StreamPart::Thinking(t) => thinking.push_str(&t),
+                StreamPart::Text(t) => text.push_str(&t),
+            }
+        }
+        assert_eq!(thinking, "Analyzing problem");
+        assert_eq!(text, "Here is the answer");
+    }
+
+    #[test]
+    fn inline_think_streamer_handles_chunked_tags() {
+        let mut streamer = InlineThinkStreamer::default();
+        let chunks = vec![
+            "Leading text ",
+            "<thi",
+            "nk>First thought ",
+            "and second thought</thi",
+            "nk> Trailing answer",
+        ];
+        let mut text = String::new();
+        let mut thinking = String::new();
+        for chunk in chunks {
+            for part in streamer.process(chunk) {
+                match part {
+                    StreamPart::Thinking(t) => thinking.push_str(&t),
+                    StreamPart::Text(t) => text.push_str(&t),
+                }
+            }
+        }
+        for part in streamer.finish() {
+            match part {
+                StreamPart::Thinking(t) => thinking.push_str(&t),
+                StreamPart::Text(t) => text.push_str(&t),
+            }
+        }
+        assert_eq!(thinking, "First thought and second thought");
+        assert_eq!(text, "Leading text  Trailing answer");
     }
 }
