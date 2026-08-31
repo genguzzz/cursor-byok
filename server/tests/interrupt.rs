@@ -1021,6 +1021,7 @@ async fn injected_user_context_interrupts_automatic_compaction() {
             custom_headers: serde_json::json!({}),
             anthropic_extra_params_enabled: false,
             anthropic_extra_params: serde_json::json!({}),
+            claude_code_compat: false,
             context_window_tokens: Some(10_001),
             max_completion_tokens: None,
             anthropic_max_tokens: None,

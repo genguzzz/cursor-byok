@@ -23,9 +23,10 @@ mod usage {
         pub(crate) fn context_input_tokens(self, provider: ProviderType) -> Option<u64> {
             let input = self.input_tokens?;
             match provider {
-                ProviderType::OpenAiChat | ProviderType::OpenAiResponses | ProviderType::Plugin => {
-                    Some(input)
-                }
+                ProviderType::OpenAiChat
+                | ProviderType::OpenAiResponses
+                | ProviderType::CodeBuddy
+                | ProviderType::Plugin => Some(input),
                 ProviderType::Anthropic => input
                     .checked_add(self.cache_read_tokens.unwrap_or_default())?
                     .checked_add(self.cache_write_tokens.unwrap_or_default()),

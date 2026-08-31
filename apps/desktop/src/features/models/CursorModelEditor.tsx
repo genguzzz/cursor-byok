@@ -39,6 +39,7 @@ export const emptyCursorModelDraft = (): CursorModelDraft => ({
     custom_headers: {},
     anthropic_extra_params_enabled: false,
     anthropic_extra_params: {},
+    claude_code_compat: false,
     context_window_tokens: null,
     max_completion_tokens: null,
     anthropic_max_tokens: null,

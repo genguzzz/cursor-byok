@@ -36,6 +36,7 @@ pub enum ProviderKind {
     OpenAiChat,
     OpenAiResponses,
     Anthropic,
+    CodeBuddy,
 }
 
 #[derive(Clone)]
@@ -45,6 +46,7 @@ pub struct ProviderConfig {
     pub api_key: String,
     pub custom_headers: reqwest::header::HeaderMap,
     pub max_output_tokens: Option<u64>,
+    pub claude_code_compat: bool,
     pub request_timeout: Duration,
     pub retry_count: u32,
     pub allowed_body_fields: Option<std::collections::HashSet<String>>,

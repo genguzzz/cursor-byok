@@ -207,6 +207,7 @@ pub fn run() -> ExitCode {
             let shutdown = CancellationToken::new();
             let server_shutdown = shutdown.clone();
             let app_handle = app.handle().clone();
+            let harness = server.harness();
             let task = tauri::async_runtime::spawn(async move {
                 let result = server.serve_on(listener, server_shutdown).await;
                 if let Err(error) = &result {
@@ -227,7 +228,7 @@ pub fn run() -> ExitCode {
                 window.show()?;
                 window.set_focus()?;
             }
-            tray::create(app)?;
+            tray::create(app, harness)?;
             Ok(())
         })
         .build(tauri::generate_context!());

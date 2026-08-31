@@ -42,6 +42,7 @@ async fn summarize_replaces_model_history_and_preserves_cursor_history() {
             custom_headers: serde_json::json!({}),
             anthropic_extra_params_enabled: false,
             anthropic_extra_params: serde_json::json!({}),
+            claude_code_compat: false,
             context_window_tokens: None,
             max_completion_tokens: None,
             anthropic_max_tokens: None,

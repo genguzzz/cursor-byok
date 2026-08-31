@@ -6,7 +6,7 @@ use serde::Deserialize;
 use crate::{
     model::{
         model_hash, normalize_model_input, normalize_request_url, ModelConfigInput, ModelType,
-        OPENAI_CHAT_ENDPOINT, OPENAI_RESPONSES_ENDPOINT,
+        CODEBUDDY_ENDPOINT, OPENAI_CHAT_ENDPOINT, OPENAI_RESPONSES_ENDPOINT,
     },
     Error, Result,
 };
@@ -147,6 +147,7 @@ fn model_input(model: LegacyModel) -> Result<ModelConfigInput> {
     let model_type = match model.model_type.trim().to_ascii_lowercase().as_str() {
         "openai" => ModelType::OpenAi,
         "anthropic" => ModelType::Anthropic,
+        "codebuddy" => ModelType::CodeBuddy,
         value => {
             return Err(Error::Config(format!(
                 "unsupported v0.0.49 model type: {value}"
@@ -173,7 +174,7 @@ fn model_input(model: LegacyModel) -> Result<ModelConfigInput> {
         openai_endpoint,
         openai_extra_params_enabled: model.openai_extra_params_enabled,
         openai_extra_params: enabled_json_object(
-            model_type == ModelType::OpenAi && model.openai_extra_params_enabled,
+            model_type.is_openai_compatible() && model.openai_extra_params_enabled,
             &model.openai_extra_params_json,
         )?,
         custom_headers_enabled: model.custom_headers_enabled,
@@ -186,6 +187,7 @@ fn model_input(model: LegacyModel) -> Result<ModelConfigInput> {
             model_type == ModelType::Anthropic && model.anthropic_extra_params_enabled,
             &model.anthropic_extra_params_json,
         )?,
+        claude_code_compat: false,
         context_window_tokens: positive(model.context_window_tokens),
         max_completion_tokens: positive(model.max_completion_tokens),
         anthropic_max_tokens: positive(model.anthropic_max_tokens),
@@ -220,6 +222,23 @@ fn legacy_request_configuration(
             let protocol = detected.unwrap_or(configured);
             let use_full_url = detected.is_some() || openai_endpoint.trim() == "/custom";
             Ok((base_url, protocol.into(), use_full_url))
+        }
+        ModelType::CodeBuddy => {
+            // v0.0.49 wrote `/custom` for CodeBuddy and appended
+            // `/chat/completions` to the versioned base URL.
+            let detected = openai_protocol_from_url(&base_url);
+            match openai_endpoint.trim() {
+                "" | "/custom" | CODEBUDDY_ENDPOINT | OPENAI_CHAT_ENDPOINT => {}
+                value => {
+                    return Err(Error::Config(format!(
+                        "unsupported v0.0.49 CodeBuddy endpoint: {value}"
+                    )))
+                }
+            }
+            match detected {
+                Some(protocol) => Ok((base_url, protocol.into(), true)),
+                None => Ok((base_url, CODEBUDDY_ENDPOINT.into(), false)),
+            }
         }
     }
 }

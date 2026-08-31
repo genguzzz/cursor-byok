@@ -1,9 +1,12 @@
 //! Implements the Anthropic provider adapter.
+use std::sync::OnceLock;
+
 use async_stream::try_stream;
 use base64::{engine::general_purpose::STANDARD, Engine};
 use eventsource_stream::Eventsource;
 use futures_util::StreamExt;
 use serde_json::{json, Value};
+use uuid::Uuid;
 
 use crate::{
     config::ProviderConfig,
@@ -19,6 +22,47 @@ use super::{
 };
 
 const DEFAULT_MAX_OUTPUT_TOKENS: u64 = 65_000;
+
+/// 与 tclaude / claude-code CLI 对齐的 anthropic-beta 头（沿用旧 Go 版）。
+const CLAUDE_CODE_BETA_HEADER: &str = "claude-code-20250219,context-1m-2025-08-07,interleaved-thinking-2025-05-14,redact-thinking-2026-02-12,context-management-2025-06-27,prompt-caching-scope-2026-01-05,mid-conversation-system-2026-04-07,effort-2025-11-24";
+
+/// 与 claude-code SDK 对齐的 User-Agent（沿用旧 Go 版）。
+const CLAUDE_CODE_USER_AGENT: &str = "claude-cli/2.1.154 (external, cli)";
+
+/// 与 claude-code CLI 对齐的 billing 标记，作为 system 首个文本块注入（沿用旧 Go 版）。
+const CLAUDE_CODE_BILLING_HEADER: &str =
+    "x-anthropic-billing-header: cc_version=2.1.154; cc_entrypoint=cli; cch=37703;";
+
+/// 进程级稳定设备标识，与 `metadata.user_id.device_id` 保持一致。
+fn claude_code_device_id() -> &'static str {
+    static DEVICE_ID: OnceLock<String> = OnceLock::new();
+    DEVICE_ID.get_or_init(|| Uuid::new_v4().to_string())
+}
+
+/// 进程级稳定会话标识，与 `X-Claude-Code-Session-Id` 头及 `metadata.user_id.session_id` 保持一致。
+fn claude_code_session_id() -> &'static str {
+    static SESSION_ID: OnceLock<String> = OnceLock::new();
+    SESSION_ID.get_or_init(|| Uuid::new_v4().to_string())
+}
+
+/// 将 Rust 的 `std::env::consts::ARCH` 映射为 claude-code SDK 的 `X-Stainless-Arch` 值。
+fn claude_code_arch() -> &'static str {
+    match std::env::consts::ARCH {
+        "aarch64" => "arm64",
+        "x86_64" => "amd64",
+        arch => arch,
+    }
+}
+
+/// 将 Rust 的 `std::env::consts::OS` 映射为 claude-code SDK 的 `X-Stainless-OS` 值。
+fn claude_code_os() -> &'static str {
+    match std::env::consts::OS {
+        "macos" => "MacOS",
+        "windows" => "Windows",
+        "linux" => "Linux",
+        os => os,
+    }
+}
 
 pub struct AnthropicProvider {
     client: reqwest::Client,
@@ -54,7 +98,18 @@ impl Provider for AnthropicProvider {
             let ModelInvocation { call_id, request, .. } = invocation;
             let mut messages = anthropic_messages(&request.history)?;
             mark_cache_breakpoint(&mut messages);
-            let system = if request.prompt.instructions.is_empty() {
+            let system = if config.claude_code_compat {
+                // tclaude / claude-code 路径：system 首个文本块注入 billing 标记（沿用旧 Go 版）。
+                let mut blocks = vec![json!({"type": "text", "text": CLAUDE_CODE_BILLING_HEADER})];
+                if !request.prompt.instructions.is_empty() {
+                    blocks.push(json!({
+                        "type": "text",
+                        "text": request.prompt.instructions,
+                        "cache_control": {"type": "ephemeral"}
+                    }));
+                }
+                json!(blocks)
+            } else if request.prompt.instructions.is_empty() {
                 Value::String(String::new())
             } else {
                 json!([{
@@ -83,6 +138,9 @@ impl Provider for AnthropicProvider {
             }
             apply_model(&mut body, &request.model)?;
             merge_extra_params(&mut body, &request.model.extra_params)?;
+            if config.claude_code_compat {
+                apply_claude_code_body(&mut body, claude_code_device_id(), claude_code_session_id());
+            }
             let request_headers = recorded_headers(
                 &config,
                 &[("content-type", "application/json"), ("anthropic-version", "2023-06-01")],
@@ -92,10 +150,34 @@ impl Provider for AnthropicProvider {
             }
             let attempt = send_with_retry(
                 "Anthropic",
-                || client.post(&config.request_url)
-                    .header("x-api-key", &config.api_key).header("anthropic-version", "2023-06-01")
-                    .headers(config.custom_headers.clone())
-                    .json(&body),
+                || {
+                    let mut request = client.post(&config.request_url)
+                        .header("anthropic-version", "2023-06-01");
+                    if config.claude_code_compat {
+                        // tclaude daemon 仅使用 Authorization: Bearer 鉴权。
+                        request = request
+                            .header("Authorization", format!("Bearer {}", bearer_token(&config.api_key)))
+                            .header("anthropic-beta", CLAUDE_CODE_BETA_HEADER)
+                            .header("x-app", "cli")
+                            .header("anthropic-dangerous-direct-browser-access", "true")
+                            .header("accept", "application/json")
+                            .header("accept-encoding", "gzip, deflate, br, zstd")
+                            .header("connection", "keep-alive")
+                            .header("user-agent", CLAUDE_CODE_USER_AGENT)
+                            .header("x-claude-code-session-id", claude_code_session_id())
+                            .header("x-stainless-arch", claude_code_arch())
+                            .header("x-stainless-lang", "js")
+                            .header("x-stainless-os", claude_code_os())
+                            .header("x-stainless-package-version", "0.94.0")
+                            .header("x-stainless-runtime", "node")
+                            .header("x-stainless-runtime-version", "v24.3.0")
+                            .header("x-stainless-retry-count", "0")
+                            .header("x-stainless-timeout", "600");
+                    } else {
+                        request = request.header("x-api-key", &config.api_key);
+                    }
+                    request.headers(config.custom_headers.clone()).json(&body)
+                },
                 RetryPolicy { retries: config.retry_count, ..RetryPolicy::default() },
                 &cancellation,
                 recorder.as_ref(),
@@ -317,6 +399,43 @@ fn apply_model(body: &mut Value, model: &crate::model::ModelSpec) -> Result<()> 
         object.insert("output_config".into(), json!({"effort":effort}));
     }
     Ok(())
+}
+
+/// 剥离 api_key 的 `Bearer ` 前缀，返回纯 token（与旧 Go 版 anthropicCompatibleAuthToken 对齐）。
+fn bearer_token(api_key: &str) -> &str {
+    let token = api_key.trim();
+    if token.len() >= 7 && token[..7].eq_ignore_ascii_case("Bearer ") {
+        token[7..].trim()
+    } else {
+        token
+    }
+}
+
+/// 设置与 tclaude daemon 期望对齐的请求体字段（metadata.user_id 与 context_management）。
+///
+/// <p>`metadata.user_id` 必须是一个 JSON 编码的字符串（而非嵌套对象），与 claude-code CLI
+/// 的序列化方式一致；`session_id` 与 `X-Claude-Code-Session-Id` 头保持一致。</p>
+fn apply_claude_code_body(body: &mut Value, device_id: &str, session_id: &str) {
+    let Some(object) = body.as_object_mut() else {
+        return;
+    };
+    if !object.contains_key("metadata") {
+        let user_id = serde_json::to_string(&json!({
+            "device_id": device_id,
+            "account_uuid": "",
+            "session_id": session_id,
+        }))
+        .unwrap_or_else(|_| {
+            format!(r#"{{"device_id":"unknown","account_uuid":"","session_id":"{session_id}"}}"#)
+        });
+        object.insert("metadata".into(), json!({"user_id": user_id}));
+    }
+    if !object.contains_key("context_management") {
+        object.insert(
+            "context_management".into(),
+            json!({"edits": [{"type": "clear_thinking_20251015", "keep": "all"}]}),
+        );
+    }
 }
 
 fn merge_usage(total: &mut Usage, update: Usage) {

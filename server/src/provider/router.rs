@@ -90,6 +90,7 @@ impl Provider for ProviderRouter {
                         api_key: model.api_key.clone(),
                         custom_headers: if model.custom_headers_enabled { custom_headers(&model.custom_headers)? } else { reqwest::header::HeaderMap::new() },
                         max_output_tokens: model.max_output_tokens(),
+                        claude_code_compat: model.claude_code_compat,
                         request_timeout,
                         retry_count: BUILTIN_PROVIDER_RETRIES,
                         allowed_body_fields: None,
@@ -247,6 +248,7 @@ fn provider_kind(provider_type: ProviderType) -> ProviderKind {
         ProviderType::OpenAiChat => ProviderKind::OpenAiChat,
         ProviderType::OpenAiResponses => ProviderKind::OpenAiResponses,
         ProviderType::Anthropic => ProviderKind::Anthropic,
+        ProviderType::CodeBuddy => ProviderKind::CodeBuddy,
         // 内置模型的 provider_type 只来自 ModelType,不可能是插件。
         ProviderType::Plugin => unreachable!("plugin models never use built-in provider configs"),
     }
@@ -338,6 +340,10 @@ fn build_inner(
     let provider: Arc<dyn Provider> = match config.kind {
         ProviderKind::OpenAiChat => {
             Arc::new(OpenAiChatProvider::new(client, config.clone()).with_recorder(recorder))
+        }
+        // CodeBuddy reuses the Chat Completions protocol; only its transport metadata differs.
+        ProviderKind::CodeBuddy => {
+            Arc::new(OpenAiChatProvider::new(client, config.clone()).as_codebuddy().with_recorder(recorder))
         }
         ProviderKind::OpenAiResponses => {
             Arc::new(OpenAiResponsesProvider::new(client, config.clone()).with_recorder(recorder))

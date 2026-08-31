@@ -14,9 +14,9 @@ const MODEL_COLUMNS: &str = r#"
     model_hash, sort_order, display_name, group_name, model_type, base_url, use_full_url, api_key, tooltip_data,
     model_id, reasoning_effort, openai_endpoint, openai_extra_params_enabled,
     openai_extra_params_json, custom_headers_enabled, custom_headers_json,
-    anthropic_extra_params_enabled, anthropic_extra_params_json, context_window_tokens,
-    max_completion_tokens, anthropic_max_tokens, anthropic_thinking_effort,
-    thinking_budget_tokens, created_at_ms, updated_at_ms
+    anthropic_extra_params_enabled, anthropic_extra_params_json, claude_code_compat,
+    context_window_tokens, max_completion_tokens, anthropic_max_tokens,
+    anthropic_thinking_effort, thinking_budget_tokens, created_at_ms, updated_at_ms
 "#;
 
 impl Store {
@@ -128,8 +128,9 @@ impl Store {
                 openai_endpoint = ?, openai_extra_params_enabled = ?, openai_extra_params_json = ?,
                 custom_headers_enabled = ?, custom_headers_json = ?,
                 anthropic_extra_params_enabled = ?, anthropic_extra_params_json = ?,
-                context_window_tokens = ?, max_completion_tokens = ?, anthropic_max_tokens = ?,
-                anthropic_thinking_effort = ?, thinking_budget_tokens = ?, updated_at_ms = ?
+                claude_code_compat = ?, context_window_tokens = ?, max_completion_tokens = ?,
+                anthropic_max_tokens = ?, anthropic_thinking_effort = ?, thinking_budget_tokens = ?,
+                updated_at_ms = ?
             WHERE model_hash = ?"#,
         )
         .bind(&next_hash)
@@ -150,6 +151,7 @@ impl Store {
         .bind(serde_json::to_string(&input.custom_headers)?)
         .bind(input.anthropic_extra_params_enabled)
         .bind(serde_json::to_string(&input.anthropic_extra_params)?)
+        .bind(input.claude_code_compat)
         .bind(input.context_window_tokens.map(to_i64).transpose()?)
         .bind(input.max_completion_tokens.map(to_i64).transpose()?)
         .bind(input.anthropic_max_tokens.map(to_i64).transpose()?)
@@ -246,10 +248,10 @@ async fn insert_model_with_conflict(
             model_hash, sort_order, display_name, group_name, model_type, base_url, use_full_url, api_key, tooltip_data,
             model_id, reasoning_effort, openai_endpoint, openai_extra_params_enabled,
             openai_extra_params_json, custom_headers_enabled, custom_headers_json,
-            anthropic_extra_params_enabled, anthropic_extra_params_json, context_window_tokens,
-            max_completion_tokens, anthropic_max_tokens, anthropic_thinking_effort,
-            thinking_budget_tokens, created_at_ms, updated_at_ms
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
+            anthropic_extra_params_enabled, anthropic_extra_params_json, claude_code_compat,
+            context_window_tokens, max_completion_tokens, anthropic_max_tokens,
+            anthropic_thinking_effort, thinking_budget_tokens, created_at_ms, updated_at_ms
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
     );
     if ignore_existing {
         statement.push_str(" ON CONFLICT(model_hash) DO NOTHING");
@@ -273,6 +275,7 @@ async fn insert_model_with_conflict(
         .bind(serde_json::to_string(&input.custom_headers)?)
         .bind(input.anthropic_extra_params_enabled)
         .bind(serde_json::to_string(&input.anthropic_extra_params)?)
+        .bind(input.claude_code_compat)
         .bind(input.context_window_tokens.map(to_i64).transpose()?)
         .bind(input.max_completion_tokens.map(to_i64).transpose()?)
         .bind(input.anthropic_max_tokens.map(to_i64).transpose()?)
@@ -313,6 +316,7 @@ fn model_from_row(row: sqlx::sqlite::SqliteRow) -> Result<ModelConfig> {
             row.try_get::<String, _>("anthropic_extra_params_json")?
                 .as_str(),
         )?,
+        claude_code_compat: row.try_get("claude_code_compat")?,
         context_window_tokens: optional_u64(&row, "context_window_tokens")?,
         max_completion_tokens: optional_u64(&row, "max_completion_tokens")?,
         anthropic_max_tokens: optional_u64(&row, "anthropic_max_tokens")?,
@@ -346,6 +350,7 @@ mod tests {
             custom_headers: serde_json::json!({}),
             anthropic_extra_params_enabled: false,
             anthropic_extra_params: serde_json::json!({}),
+            claude_code_compat: false,
             context_window_tokens: None,
             max_completion_tokens: None,
             anthropic_max_tokens: None,
@@ -399,3 +404,4 @@ fn optional_u64(row: &sqlx::sqlite::SqliteRow, column: &str) -> Result<Option<u6
 fn to_i64(value: u64) -> Result<i64> {
     i64::try_from(value).map_err(|_| Error::Config("token value is too large".into()))
 }
+

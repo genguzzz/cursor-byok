@@ -58,13 +58,41 @@ async fn local_markdown_rules_land_in_the_request_context_message() {
         .await
         .unwrap();
 
+    let mut append_seqno = 1;
     loop {
-        let frame = tokio::time::timeout(std::time::Duration::from_secs(5), output.recv())
-            .await
-            .expect("run finishes within timeout")
-            .expect("output stays open until EndStream");
-        let ended = connect::decode_frames(&frame)
-            .unwrap()
+        let frame = match tokio::time::timeout(std::time::Duration::from_secs(5), output.recv()).await {
+            Ok(Some(frame)) => frame,
+            Ok(None) => panic!("output channel closed"),
+            Err(_) => panic!("timed out waiting for frame, requests={:?}", provider.requests()),
+        };
+        let decoded = connect::decode_frames(&frame).unwrap();
+        for (flags, payload) in &decoded {
+            if flags & connect::END_STREAM_FLAG == 0 {
+                use prost::Message;
+                if let Ok(server) = pb::AgentServerMessage::decode(payload.as_ref()) {
+                    if let Some(pb::agent_server_message::Message::KvServerMessage(kv)) = server.message {
+                        handle
+                            .command(TransportCommand::Append {
+                                seqno: append_seqno,
+                                message: Box::new(pb::AgentClientMessage {
+                                    message: Some(pb::agent_client_message::Message::KvClientMessage(
+                                        pb::KvClientMessage {
+                                            id: kv.id,
+                                            message: Some(pb::kv_client_message::Message::SetBlobResult(
+                                                pb::SetBlobResult { error: None },
+                                            )),
+                                        },
+                                    )),
+                                }),
+                            })
+                            .await
+                            .unwrap();
+                        append_seqno += 1;
+                    }
+                }
+            }
+        }
+        let ended = decoded
             .iter()
             .any(|(flags, _)| flags & connect::END_STREAM_FLAG != 0);
         if ended {

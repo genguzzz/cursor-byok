@@ -200,6 +200,7 @@ function createModel({ hash, order, name, type, url, modelId, endpoint = "/v1/re
     custom_headers: {},
     anthropic_extra_params_enabled: false,
     anthropic_extra_params: {},
+    claude_code_compat: false,
     context_window_tokens: 200_000,
     max_completion_tokens: type === "openai" ? 32_000 : null,
     anthropic_max_tokens: type === "anthropic" ? 32_000 : null,
