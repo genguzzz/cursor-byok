@@ -1,7 +1,7 @@
 import type { AdRuntime } from "../shell/ads/types";
 import type { Locale } from "../i18n/runtime";
 
-export type ModelType = "openai" | "anthropic";
+export type ModelType = "openai" | "anthropic" | "codebuddy";
 
 export interface Model {
   model_hash: string;
@@ -22,6 +22,7 @@ export interface Model {
   custom_headers: Record<string, string>;
   anthropic_extra_params_enabled: boolean;
   anthropic_extra_params: Record<string, unknown>;
+  claude_code_compat: boolean;
   context_window_tokens: number | null;
   max_completion_tokens: number | null;
   anthropic_max_tokens: number | null;
@@ -49,6 +50,7 @@ export interface ModelInput {
   custom_headers: Record<string, string>;
   anthropic_extra_params_enabled: boolean;
   anthropic_extra_params: Record<string, unknown>;
+  claude_code_compat: boolean;
   context_window_tokens: number | null;
   max_completion_tokens: number | null;
   anthropic_max_tokens: number | null;

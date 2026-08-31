@@ -127,4 +127,7 @@ export const modelPresets: ModelPreset[] = [
 
 export const trimTrailingSlash = (url: string) => url.replace(/\/+$/, "");
 
-export const presetEndpoint = (preset: ModelPreset, type: ModelType): ModelPresetEndpoint => preset.endpoints[type];
+// CodeBuddy speaks the OpenAI Chat protocol, so it shares the OpenAI endpoint
+// shape of every preset.
+export const presetEndpoint = (preset: ModelPreset, type: ModelType): ModelPresetEndpoint =>
+  type === "anthropic" ? preset.endpoints.anthropic : preset.endpoints.openai;
