@@ -45,7 +45,7 @@ impl CheckpointBuilder {
         let archive = pb::ConversationSummaryArchive {
             summarized_messages: summarized.iter().map(|id| id.as_bytes().to_vec()).collect(),
             summary: summary.into(),
-            window_tail: 0,
+            window_tail: crate::run::window_tail_after_summary(messages),
             summary_message: summary_message.as_bytes().to_vec(),
         };
         let mut edges = summarized
