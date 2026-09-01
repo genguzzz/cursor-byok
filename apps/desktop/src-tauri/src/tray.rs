@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use cursor_server::local_app::{CursorHarness, CursorHarnessStatus, IntegrationState};
+use cursor_server::local_app::{CursorHarness, CursorHarnessStatus, IntegrationState, PROXYMAN_PROXY_ADDR};
 use tauri::{
     menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem},
     tray::TrayIconBuilder,
@@ -15,6 +15,7 @@ use crate::desktop::MAIN_WINDOW_LABEL;
 
 const OPEN_MENU_ID: &str = "tray-open";
 const INTEGRATION_MENU_ID: &str = "tray-integration";
+const PROXYMAN_MENU_ID: &str = "tray-proxyman";
 const STATUS_MENU_ID: &str = "tray-status";
 const RESTORE_MENU_ID: &str = "tray-restore";
 const QUIT_MENU_ID: &str = "tray-quit";
@@ -29,6 +30,7 @@ const REFRESH_INTERVAL: Duration = Duration::from_secs(2);
 /// Menu items whose text or checked state is refreshed from harness status.
 struct StatusItems {
     integration: CheckMenuItem<tauri::Wry>,
+    proxyman: CheckMenuItem<tauri::Wry>,
     status: MenuItem<tauri::Wry>,
 }
 
@@ -38,6 +40,14 @@ pub fn create(app: &mut App, harness: CursorHarness) -> tauri::Result<()> {
         app,
         INTEGRATION_MENU_ID,
         "接管 Cursor",
+        true,
+        false,
+        None::<&str>,
+    )?;
+    let proxyman = CheckMenuItem::with_id(
+        app,
+        PROXYMAN_MENU_ID,
+        "Proxyman 代理 (9090)",
         true,
         false,
         None::<&str>,
@@ -52,6 +62,7 @@ pub fn create(app: &mut App, harness: CursorHarness) -> tauri::Result<()> {
             &open,
             &PredefinedMenuItem::separator(app)?,
             &integration,
+            &proxyman,
             &status,
             &PredefinedMenuItem::separator(app)?,
             &restore,
@@ -62,6 +73,7 @@ pub fn create(app: &mut App, harness: CursorHarness) -> tauri::Result<()> {
 
     let items = StatusItems {
         integration: integration.clone(),
+        proxyman: proxyman.clone(),
         status: status.clone(),
     };
     // Items are plain text on purpose: on macOS an icon on one item indents
@@ -76,6 +88,7 @@ pub fn create(app: &mut App, harness: CursorHarness) -> tauri::Result<()> {
             move |app, event| match event.id().as_ref() {
                 OPEN_MENU_ID => show_main_window(app),
                 INTEGRATION_MENU_ID => toggle_integration(app.clone(), harness.clone()),
+                PROXYMAN_MENU_ID => toggle_proxyman_proxy(app.clone(), harness.clone()),
                 RESTORE_MENU_ID => restore_settings(app.clone(), harness.clone()),
                 QUIT_MENU_ID => app.exit(0),
                 _ => {}
@@ -106,7 +119,7 @@ fn spawn_status_refresh(app: AppHandle, harness: CursorHarness) {
     tauri::async_runtime::spawn(async move {
         loop {
             match harness.status().await {
-                Ok(status) => apply_status(&app, &status),
+                Ok(status) => apply_status(&app, &status, &harness).await,
                 Err(error) => {
                     tracing::debug!(%error, "tray could not read harness status");
                     if let Some(items) = app.try_state::<StatusItems>() {
@@ -119,12 +132,20 @@ fn spawn_status_refresh(app: AppHandle, harness: CursorHarness) {
     });
 }
 
-fn apply_status(app: &AppHandle, status: &CursorHarnessStatus) {
+async fn apply_status(app: &AppHandle, status: &CursorHarnessStatus, harness: &CursorHarness) {
     let Some(items) = app.try_state::<StatusItems>() else {
         return;
     };
     let enabled = matches!(status.integration, IntegrationState::Enabled);
     let _ = items.integration.set_checked(enabled);
+    match harness.proxyman_proxy_enabled().await {
+        Ok(proxyman_enabled) => {
+            let _ = items.proxyman.set_checked(proxyman_enabled);
+        }
+        Err(error) => {
+            tracing::debug!(%error, "tray could not read proxyman proxy state");
+        }
+    }
     let _ = items.status.set_text(status_text(status));
 }
 
@@ -152,7 +173,7 @@ fn toggle_integration(app: AppHandle, harness: CursorHarness) {
         match harness.set_enabled(enable).await {
             Ok(status) => {
                 tracing::info!(integration = ?status.integration, "tray: set_enabled 成功");
-                apply_status(&app, &status);
+                apply_status(&app, &status, &harness).await;
                 notify_integration(&app, enable, None);
             }
             Err(error) => {
@@ -163,6 +184,48 @@ fn toggle_integration(app: AppHandle, harness: CursorHarness) {
                     let _ = items.status.set_text(format!("状态: 操作失败 · {error}"));
                 }
                 notify_integration(&app, enable, Some(&error));
+            }
+        }
+    });
+}
+
+fn toggle_proxyman_proxy(app: AppHandle, harness: CursorHarness) {
+    tracing::info!("tray: Proxyman 代理菜单项被点击");
+    tauri::async_runtime::spawn(async move {
+        let current = harness.proxyman_proxy_enabled().await;
+        let enable = match current {
+            Ok(enabled) => !enabled,
+            Err(_) => true,
+        };
+        match harness.set_proxyman_proxy(enable).await {
+            Ok(enabled) => {
+                if let Some(items) = app.try_state::<StatusItems>() {
+                    let _ = items.proxyman.set_checked(enabled);
+                }
+                let notification = app.notification().builder();
+                let _ = notification
+                    .title(if enabled {
+                        "已开启 Proxyman 代理"
+                    } else {
+                        "已关闭 Proxyman 代理"
+                    })
+                    .body(if enabled {
+                        format!("出站流量将通过 {PROXYMAN_PROXY_ADDR} 转发")
+                    } else {
+                        "出站流量恢复为系统代理".into()
+                    })
+                    .show();
+            }
+            Err(error) => {
+                tracing::warn!(%error, enable, "tray could not change proxyman proxy");
+                if let Some(items) = app.try_state::<StatusItems>() {
+                    let _ = items.proxyman.set_checked(!enable);
+                }
+                let notification = app.notification().builder();
+                let _ = notification
+                    .title("Proxyman 代理切换失败")
+                    .body(error.to_string())
+                    .show();
             }
         }
     });
