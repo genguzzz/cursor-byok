@@ -11,9 +11,11 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 
 use crate::{
-    store::{Store, TabMode, TabSettings},
+    store::{ProxyMode, ProxySettingsInput, Store, TabMode, TabSettings},
     Error, Result,
 };
+
+pub const PROXYMAN_PROXY_ADDR: &str = "http://127.0.0.1:9090";
 
 use self::{ca::CaManager, proxy::ProxyRuntime};
 
@@ -147,6 +149,33 @@ impl CursorHarness {
         let saved = self.inner.store.set_tab_settings(settings).await?;
         *self.inner.tab_mode.write() = saved.mode;
         Ok(saved)
+    }
+
+    pub async fn proxyman_proxy_enabled(&self) -> Result<bool> {
+        let settings = self.inner.store.proxy_settings_secret().await?;
+        Ok(settings.mode.is_custom() && settings.address == PROXYMAN_PROXY_ADDR)
+    }
+
+    pub async fn set_proxyman_proxy(&self, enabled: bool) -> Result<bool> {
+        let input = if enabled {
+            ProxySettingsInput {
+                mode: ProxyMode::Custom,
+                address: PROXYMAN_PROXY_ADDR.into(),
+                auth_enabled: false,
+                username: String::new(),
+                password: None,
+            }
+        } else {
+            ProxySettingsInput {
+                mode: ProxyMode::System,
+                address: String::new(),
+                auth_enabled: false,
+                username: String::new(),
+                password: None,
+            }
+        };
+        self.inner.store.set_proxy_settings(input).await?;
+        Ok(enabled)
     }
 
     async fn enable(&self) -> Result<()> {
