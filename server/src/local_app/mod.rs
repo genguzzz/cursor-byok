@@ -37,6 +37,7 @@ pub(crate) fn local_cursor_authorization() -> String {
     format!("Bearer {}", account::local_token().unwrap())
 }
 
+
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CaState {
@@ -318,6 +319,7 @@ impl CursorHarness {
 
     pub async fn disable(&self) -> Result<()> {
         settings::clear_proxy_settings()?;
+        settings::clear_stale_managed_settings()?;
         self.inner.proxy.lock().await.stop().await;
         Ok(())
     }

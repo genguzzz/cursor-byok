@@ -19,7 +19,6 @@ const INTEGRATION_MENU_ID: &str = "tray-integration";
 const PROXYMAN_MENU_ID: &str = "tray-proxyman";
 const DEBUG_MENU_ID: &str = "tray-debug";
 const STATUS_MENU_ID: &str = "tray-status";
-const RESTORE_MENU_ID: &str = "tray-restore";
 const QUIT_MENU_ID: &str = "tray-quit";
 
 /// How often the menu re-reads harness state.
@@ -65,7 +64,6 @@ pub fn create(app: &mut App, harness: CursorHarness) -> tauri::Result<()> {
     )?;
     // Display-only line; disabled so it never looks clickable.
     let status = MenuItem::with_id(app, STATUS_MENU_ID, "状态: 读取中…", false, None::<&str>)?;
-    let restore = MenuItem::with_id(app, RESTORE_MENU_ID, "恢复 Cursor 设置", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, QUIT_MENU_ID, "退出", true, None::<&str>)?;
     let menu = Menu::with_items(
         app,
@@ -76,8 +74,6 @@ pub fn create(app: &mut App, harness: CursorHarness) -> tauri::Result<()> {
             &proxyman,
             &debug,
             &status,
-            &PredefinedMenuItem::separator(app)?,
-            &restore,
             &PredefinedMenuItem::separator(app)?,
             &quit,
         ],
@@ -103,7 +99,6 @@ pub fn create(app: &mut App, harness: CursorHarness) -> tauri::Result<()> {
                 INTEGRATION_MENU_ID => toggle_integration(app.clone(), harness.clone()),
                 PROXYMAN_MENU_ID => toggle_proxyman_proxy(app.clone(), harness.clone()),
                 DEBUG_MENU_ID => toggle_debug(app.clone(), harness.clone()),
-                RESTORE_MENU_ID => restore_settings(app.clone(), harness.clone()),
                 QUIT_MENU_ID => app.exit(0),
                 _ => {}
             }
@@ -272,11 +267,12 @@ fn toggle_debug(app: AppHandle, harness: CursorHarness) {
                         "已关闭抓包与调用观测详细日志".to_owned()
                     })
                     .show();
-                // 开启后自动跳转抓包 WebUI。
+                // 开启后自动用系统默认浏览器打开抓包 WebUI。
                 if enable {
                     if let Some(ui_addr) = harness.debug_ui_addr().await {
-                        tracing::info!(%ui_addr, "tray: 打开抓包 WebUI");
-                        let _ = app.opener().open_url(&ui_addr, None::<&str>);
+                        open_system_url(&app, &ui_addr);
+                    } else {
+                        tracing::warn!("tray: debug UI address unavailable after enable");
                     }
                 }
             }
@@ -293,6 +289,27 @@ fn toggle_debug(app: AppHandle, harness: CursorHarness) {
             }
         }
     });
+}
+
+fn open_system_url(app: &AppHandle, url: &str) {
+    tracing::info!(%url, "tray: opening debug WebUI");
+    match app.opener().open_url(url, None::<&str>) {
+        Ok(()) => {}
+        Err(error) => {
+            tracing::warn!(%error, %url, "opener plugin failed; falling back to system open");
+            #[cfg(target_os = "macos")]
+            let result = std::process::Command::new("open").arg(url).status();
+            #[cfg(target_os = "linux")]
+            let result = std::process::Command::new("xdg-open").arg(url).status();
+            #[cfg(target_os = "windows")]
+            let result = std::process::Command::new("cmd")
+                .args(["/C", "start", "", url])
+                .status();
+            if let Err(fallback_error) = result {
+                tracing::warn!(%fallback_error, %url, "system open failed");
+            }
+        }
+    }
 }
 
 /// 用系统通知告知用户接管开关的结果，避免菜单栏静默失败无从排查。
@@ -313,38 +330,6 @@ fn notify_integration(app: &AppHandle, enable: bool, error: Option<&cursor_serve
     };
     let notification = app.notification().builder();
     let _ = notification.title(title).body(body).show();
-}
-
-fn restore_settings(app: AppHandle, harness: CursorHarness) {
-    tauri::async_runtime::spawn(async move {
-        let result = harness
-            .set_enabled(false)
-            .await
-            .and(harness.cleanup_stale_settings().await.map(|_| ()));
-        if let Some(items) = app.try_state::<StatusItems>() {
-            let _ = items.status.set_text(match &result {
-                Ok(()) => "状态: 已恢复 Cursor 设置".into(),
-                Err(error) => format!("状态: 恢复失败 · {error}"),
-            });
-        }
-        match &result {
-            Ok(()) => {
-                let notification = app.notification().builder();
-                let _ = notification
-                    .title("已恢复 Cursor 设置")
-                    .body("已清除代理注入，Cursor 恢复原始配置")
-                    .show();
-            }
-            Err(error) => {
-                tracing::warn!(%error, "tray could not restore Cursor settings");
-                let notification = app.notification().builder();
-                let _ = notification
-                    .title("恢复 Cursor 设置失败")
-                    .body(error.to_string())
-                    .show();
-            }
-        }
-    });
 }
 
 pub fn show_main_window(app: &AppHandle) {
