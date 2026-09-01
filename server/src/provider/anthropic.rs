@@ -95,7 +95,7 @@ impl Provider for AnthropicProvider {
         let config = self.config.clone();
         let recorder = self.recorder.clone();
         Box::pin(try_stream! {
-            let ModelInvocation { call_id, request, .. } = invocation;
+            let ModelInvocation { call_id, request, run_id, .. } = invocation;
             let mut messages = anthropic_messages(&request.history)?;
             mark_cache_breakpoint(&mut messages);
             let system = if config.claude_code_compat {
@@ -182,9 +182,18 @@ impl Provider for AnthropicProvider {
                 recorder.as_ref(),
             ).await?;
             let Attempt::Response(response) = attempt else { return };
-            yield ModelEvent::Start { model_call_id: call_id };
+            yield ModelEvent::Start { model_call_id: call_id.clone() };
             let chunk_recorder = recorder.clone();
-            let chunks = response.bytes_stream()
+            let hop = super::retry::ProviderHopMeta {
+                provider: "Anthropic".to_owned(),
+                model_call_id: call_id.clone(),
+                request_id: run_id.clone(),
+                request_header: config.custom_headers.clone(),
+                request_body: serde_json::to_vec(&body).unwrap_or_default(),
+                started: std::time::Instant::now(),
+            };
+            let stream = super::retry::tee_provider_response(response, hop);
+            let chunks = stream
                 .map(|chunk| chunk.map_err(Error::from))
                 .then(move |chunk| {
                     let recorder = chunk_recorder.clone();

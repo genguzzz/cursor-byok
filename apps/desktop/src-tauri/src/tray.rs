@@ -7,6 +7,7 @@ use tauri::{
     App, AppHandle, Manager,
 };
 use tauri_plugin_notification::NotificationExt;
+use tauri_plugin_opener::OpenerExt;
 
 #[cfg(target_os = "windows")]
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconEvent};
@@ -16,6 +17,7 @@ use crate::desktop::MAIN_WINDOW_LABEL;
 const OPEN_MENU_ID: &str = "tray-open";
 const INTEGRATION_MENU_ID: &str = "tray-integration";
 const PROXYMAN_MENU_ID: &str = "tray-proxyman";
+const DEBUG_MENU_ID: &str = "tray-debug";
 const STATUS_MENU_ID: &str = "tray-status";
 const RESTORE_MENU_ID: &str = "tray-restore";
 const QUIT_MENU_ID: &str = "tray-quit";
@@ -31,6 +33,7 @@ const REFRESH_INTERVAL: Duration = Duration::from_secs(2);
 struct StatusItems {
     integration: CheckMenuItem<tauri::Wry>,
     proxyman: CheckMenuItem<tauri::Wry>,
+    debug: CheckMenuItem<tauri::Wry>,
     status: MenuItem<tauri::Wry>,
 }
 
@@ -52,6 +55,14 @@ pub fn create(app: &mut App, harness: CursorHarness) -> tauri::Result<()> {
         false,
         None::<&str>,
     )?;
+    let debug = CheckMenuItem::with_id(
+        app,
+        DEBUG_MENU_ID,
+        "调试模式",
+        true,
+        false,
+        None::<&str>,
+    )?;
     // Display-only line; disabled so it never looks clickable.
     let status = MenuItem::with_id(app, STATUS_MENU_ID, "状态: 读取中…", false, None::<&str>)?;
     let restore = MenuItem::with_id(app, RESTORE_MENU_ID, "恢复 Cursor 设置", true, None::<&str>)?;
@@ -63,6 +74,7 @@ pub fn create(app: &mut App, harness: CursorHarness) -> tauri::Result<()> {
             &PredefinedMenuItem::separator(app)?,
             &integration,
             &proxyman,
+            &debug,
             &status,
             &PredefinedMenuItem::separator(app)?,
             &restore,
@@ -74,6 +86,7 @@ pub fn create(app: &mut App, harness: CursorHarness) -> tauri::Result<()> {
     let items = StatusItems {
         integration: integration.clone(),
         proxyman: proxyman.clone(),
+        debug: debug.clone(),
         status: status.clone(),
     };
     // Items are plain text on purpose: on macOS an icon on one item indents
@@ -89,6 +102,7 @@ pub fn create(app: &mut App, harness: CursorHarness) -> tauri::Result<()> {
                 OPEN_MENU_ID => show_main_window(app),
                 INTEGRATION_MENU_ID => toggle_integration(app.clone(), harness.clone()),
                 PROXYMAN_MENU_ID => toggle_proxyman_proxy(app.clone(), harness.clone()),
+                DEBUG_MENU_ID => toggle_debug(app.clone(), harness.clone()),
                 RESTORE_MENU_ID => restore_settings(app.clone(), harness.clone()),
                 QUIT_MENU_ID => app.exit(0),
                 _ => {}
@@ -144,6 +158,11 @@ async fn apply_status(app: &AppHandle, status: &CursorHarnessStatus, harness: &C
         }
         Err(error) => {
             tracing::debug!(%error, "tray could not read proxyman proxy state");
+        }
+    }
+    match harness.debug_enabled().await {
+        debug_enabled => {
+            let _ = items.debug.set_checked(debug_enabled);
         }
     }
     let _ = items.status.set_text(status_text(status));
@@ -224,6 +243,51 @@ fn toggle_proxyman_proxy(app: AppHandle, harness: CursorHarness) {
                 let notification = app.notification().builder();
                 let _ = notification
                     .title("Proxyman 代理切换失败")
+                    .body(error.to_string())
+                    .show();
+            }
+        }
+    });
+}
+
+fn toggle_debug(app: AppHandle, harness: CursorHarness) {
+    tracing::info!("tray: 调试模式菜单项被点击");
+    tauri::async_runtime::spawn(async move {
+        let enable = !harness.debug_enabled().await;
+        match harness.set_debug_enabled(enable).await {
+            Ok(()) => {
+                if let Some(items) = app.try_state::<StatusItems>() {
+                    let _ = items.debug.set_checked(enable);
+                }
+                let notification = app.notification().builder();
+                let _ = notification
+                    .title(if enable {
+                        "已开启调试模式"
+                    } else {
+                        "已关闭调试模式"
+                    })
+                    .body(if enable {
+                        "已开启抓包，并同步开启调用观测详细日志".to_owned()
+                    } else {
+                        "已关闭抓包与调用观测详细日志".to_owned()
+                    })
+                    .show();
+                // 开启后自动跳转抓包 WebUI。
+                if enable {
+                    if let Some(ui_addr) = harness.debug_ui_addr().await {
+                        tracing::info!(%ui_addr, "tray: 打开抓包 WebUI");
+                        let _ = app.opener().open_url(&ui_addr, None::<&str>);
+                    }
+                }
+            }
+            Err(error) => {
+                tracing::warn!(%error, enable, "tray could not change debug mode");
+                if let Some(items) = app.try_state::<StatusItems>() {
+                    let _ = items.debug.set_checked(!enable);
+                }
+                let notification = app.notification().builder();
+                let _ = notification
+                    .title("调试模式切换失败")
                     .body(error.to_string())
                     .show();
             }

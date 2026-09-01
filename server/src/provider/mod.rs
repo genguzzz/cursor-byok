@@ -8,6 +8,7 @@ mod openai_chat;
 mod openai_responses;
 mod recorder;
 mod request_template;
+mod retry;
 mod router;
 
 use std::pin::Pin;
