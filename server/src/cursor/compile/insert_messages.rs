@@ -20,10 +20,19 @@ pub(super) const SHELL_FOLLOW_UP: &str = concat!(
     "If there's no follow-ups needed, don't explicitly say that."
 );
 
+#[derive(Clone, Debug)]
+pub(super) struct CompletedTask {
+    pub tool_call_id: String,
+    pub status: pb::BackgroundTaskStatus,
+    pub output_path: Option<String>,
+    pub completion_reason: pb::BackgroundTaskCompletionReason,
+}
+
 #[derive(Debug)]
 pub(super) struct Projection {
     pub context: String,
     pub turn_user: pb::UserMessage,
+    pub completed_tasks: Vec<CompletedTask>,
 }
 
 pub(super) fn project(
@@ -37,6 +46,7 @@ pub(super) fn project(
     }
 
     let mut completions = BTreeMap::new();
+    let mut completed_tasks = Vec::new();
     let mut has_shell = false;
     let mut has_subagent = false;
     for completion in &action.completions {
@@ -96,7 +106,14 @@ pub(super) fn project(
             })?;
         let task_identity = agent_id.unwrap_or(&completion.task_id);
         let identity = format!("{}:{task_identity}:{tool_call_id}", kind.as_str_name());
+        let status = status(completion)?;
         let context = completion_context(completion, kind, agent_id)?;
+        completed_tasks.push(CompletedTask {
+            tool_call_id: tool_call_id.to_owned(),
+            status,
+            output_path: completion.output_path.clone(),
+            completion_reason: reason,
+        });
         if completions
             .insert(identity.clone(), (completion, context))
             .is_some()
@@ -122,6 +139,7 @@ pub(super) fn project(
             .map(|(_, context)| context.as_str())
             .collect::<Vec<_>>()
             .join("\n\n"),
+        completed_tasks,
         turn_user: pb::UserMessage {
             text,
             message_id: format!(

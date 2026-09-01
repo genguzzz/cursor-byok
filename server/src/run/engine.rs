@@ -77,7 +77,18 @@ impl RunEngine {
             tracing::error!(run_id = %prepared.run_id, %error, "failed to persist Run outcome");
         }
         client.phase.finish();
-        let _ = client.events.send(RunEvent::Ended(outcome.clone())).await;
+        if client
+            .events
+            .send(RunEvent::Ended(outcome.clone()))
+            .await
+            .is_err()
+        {
+            tracing::warn!(
+                run_id = %prepared.run_id,
+                outcome = ?outcome,
+                "failed to deliver RunEvent::Ended"
+            );
+        }
         tracing::info!(outcome = ?outcome, usage = ?usage, "Run ended");
         outcome
     }

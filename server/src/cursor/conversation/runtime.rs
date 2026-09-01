@@ -500,6 +500,7 @@ fn spawn_run_request(
             context.turn_user.clone(),
         );
         if context.background_completion {
+            checkpoint.apply_background_wake(&context.background_completions);
             let event_id = prepared
                 .initial_messages
                 .first()
@@ -513,6 +514,8 @@ fn spawn_run_request(
                         target_run_id: None,
                         messages: prepared.initial_messages.clone(),
                         delivery: MessageDelivery::InsertMessages,
+                        turn_user: context.turn_user.clone(),
+                        background_completions: context.background_completions.clone(),
                     },
                 )
                 .await
@@ -573,7 +576,7 @@ fn spawn_run_request(
 
         let run_id = prepared.run_id.clone();
         let conversation_id = prepared.conversation_id.clone();
-        let (port, core, run_handle) = crate::run::channel(run_id.clone(), 256);
+        let (port, core, run_handle) = crate::run::channel(run_id.clone(), 2048);
         *generation.run.lock() = Some(run_handle.clone());
         if generation.superseded.is_cancelled() {
             run_handle.cancel();

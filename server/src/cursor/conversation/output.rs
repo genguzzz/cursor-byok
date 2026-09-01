@@ -29,7 +29,10 @@ use crate::{
         },
     },
     model::{ConversationId, ToolCall, ToolRoundId, Usage},
-    run::{CommandResult, CommitCause, RunEvent, RunFailure, RunHandle, RunOutcome, RunSession},
+    run::{
+        CommandResult, CommitCause, RunEvent, RunFailure, RunHandle, RunOutcome, RunPhase,
+        RunSession,
+    },
     store::{Store, ToolRoundStatus},
     Error, Result,
 };
@@ -113,7 +116,7 @@ impl ConversationOutput {
     pub async fn run(mut self) -> Result<()> {
         let result = self.run_inner().await;
         if let Err(error) = &result {
-            if !self.superseded.is_cancelled() {
+            if !self.superseded.is_cancelled() && self.run.phase() != RunPhase::Ended {
                 self.abort_execs().await;
                 let (category, summary) = match error {
                     Error::Provider(_) | Error::Http(_) => ("provider", error.to_string()),
@@ -249,6 +252,9 @@ impl ConversationOutput {
                 }
                 Input::Event(None) => {
                     worker.abort();
+                    if self.wait_for_run_ended().await {
+                        return Ok(());
+                    }
                     return Err(Error::Protocol("core event channel closed".into()));
                 }
                 Input::Event(Some(event)) => match event {
@@ -458,6 +464,26 @@ impl ConversationOutput {
                                         .emit(&events::user_message_appended(user_message))?;
                                 }
                             }
+                        }
+                        let background_wake = match &state.cause {
+                            CommitCause::InitialMessages if self.context.background_completion => {
+                                Some((
+                                    self.context.turn_user.clone(),
+                                    self.context.background_completions.clone(),
+                                ))
+                            }
+                            CommitCause::RuntimeEvent { event_id }
+                                if event_id.starts_with("background-completed:") =>
+                            {
+                                self.registry
+                                    .take_background_wake(event_id)
+                                    .await
+                                    .map(|wake| (wake.user_message, wake.completions))
+                            }
+                            _ => None,
+                        };
+                        if let Some((turn_user, completions)) = background_wake {
+                            self.emit_background_wake(turn_user, &completions)?;
                         }
                         if let CommitCause::ToolRoundStarted(round_id) = &state.cause {
                             active_round = Some(round_id.clone());
@@ -722,6 +748,19 @@ impl ConversationOutput {
         }
     }
 
+    async fn wait_for_run_ended(&self) -> bool {
+        if self.run.phase() == RunPhase::Ended {
+            return true;
+        }
+        for _ in 0..25 {
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            if self.run.phase() == RunPhase::Ended {
+                return true;
+            }
+        }
+        false
+    }
+
     async fn abort_execs(&self) {
         for id in self.tool_runtime.drain_running().await {
             let _ = self.handle.emit(&codec::abort(id));
@@ -900,6 +939,8 @@ impl ConversationOutput {
                         target_run_id: None,
                         messages: vec![message],
                         delivery: MessageDelivery::BreakMessages,
+                        turn_user: None,
+                        background_completions: Vec::new(),
                     },
                 )
                 .await;
@@ -911,6 +952,19 @@ impl ConversationOutput {
         for id in self.tools.interrupt_for_message().await {
             let _ = self.handle.emit(&codec::abort(id));
         }
+    }
+
+    fn emit_background_wake(
+        &mut self,
+        turn_user: Option<pb::UserMessage>,
+        completions: &[crate::cursor::compile::BackgroundWakeCompletion],
+    ) -> Result<()> {
+        if let Some(user_message) = turn_user {
+            self.handle
+                .emit(&events::user_message_appended(user_message))?;
+        }
+        self.checkpoint.apply_background_wake(completions);
+        Ok(())
     }
 
     fn emit_model_event(

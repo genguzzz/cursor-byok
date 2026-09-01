@@ -6,6 +6,7 @@ use prost::Message;
 use crate::{
     cursor::{
         checkpoint::{messages, PendingSteps},
+        compile::BackgroundWakeCompletion,
         protocol::proto::agent::v1 as pb,
         services::blob_sync::BlobSynchronizer,
         transport::TransportHandle,
@@ -199,6 +200,31 @@ impl CheckpointBuilder {
         Ok(checkpoint)
     }
 
+    pub(crate) fn apply_background_wake(&mut self, completions: &[BackgroundWakeCompletion]) {
+        let now_ms = crate::cursor::tools::runtime::now_ms();
+        for completion in completions {
+            let Some(run) = self
+                .base
+                .subagent_runs_by_parent_tool_call_id
+                .get_mut(&completion.tool_call_id)
+            else {
+                continue;
+            };
+            run.status = subagent_status(completion.status);
+            run.completed_timestamp_ms = Some(now_ms);
+            if let Some(path) = &completion.output_path {
+                run.output_path = Some(path.clone());
+            }
+            run.completion_reason = Some(completion.completion_reason as i32);
+        }
+        if let Some(goal) = self.base.goal_state.as_mut() {
+            if goal.status == pb::GoalStatus::Paused as i32 {
+                goal.status = pb::GoalStatus::Active as i32;
+                goal.continuation_count = goal.continuation_count.saturating_add(1);
+            }
+        }
+    }
+
     fn record_background_subagents(&mut self, presentation: &PendingSteps) {
         for step in &presentation.steps {
             let Some(pb::conversation_step::Message::ToolCall(call)) = step.message.as_ref() else {
@@ -298,4 +324,13 @@ impl CheckpointBuilder {
 
 fn context_limit(selected: Option<u64>, previous: Option<u64>) -> Option<u64> {
     selected.or(previous.filter(|tokens| *tokens != 0))
+}
+
+fn subagent_status(status: pb::BackgroundTaskStatus) -> i32 {
+    match status {
+        pb::BackgroundTaskStatus::Success => pb::SubagentRunStatus::Success as i32,
+        pb::BackgroundTaskStatus::Error => pb::SubagentRunStatus::Error as i32,
+        pb::BackgroundTaskStatus::Aborted => pb::SubagentRunStatus::Aborted as i32,
+        pb::BackgroundTaskStatus::Unspecified => pb::SubagentRunStatus::Unspecified as i32,
+    }
 }

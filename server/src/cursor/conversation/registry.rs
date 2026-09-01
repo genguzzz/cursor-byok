@@ -5,7 +5,12 @@ use std::{collections::HashMap, sync::Arc};
 use tokio::sync::{mpsc, Mutex, Notify};
 
 use crate::{
-    cursor::{prompting::PromptCompiler, transport::TransportHandle},
+    cursor::{
+        compile::BackgroundWakeCompletion,
+        prompting::PromptCompiler,
+        protocol::proto::agent::v1 as pb,
+        transport::TransportHandle,
+    },
     model::{ConversationId, RunId},
     provider::Provider,
     run::{CommandResult, RunHandle},
@@ -14,6 +19,12 @@ use crate::{
 };
 
 use super::{CompiledMessages, MessageDelivery, PendingMessages, TransportCommand};
+
+#[derive(Clone, Debug)]
+pub(crate) struct BackgroundWake {
+    pub user_message: Option<pb::UserMessage>,
+    pub completions: Vec<BackgroundWakeCompletion>,
+}
 
 #[derive(Clone)]
 pub struct ConversationRegistry {
@@ -33,6 +44,7 @@ pub(crate) struct ConversationDependencies {
 struct RegistryInner {
     current: Mutex<HashMap<ConversationId, ActiveRun>>,
     pending: Mutex<HashMap<ConversationId, PendingMessages>>,
+    pending_wakes: Mutex<HashMap<String, BackgroundWake>>,
     changed: Notify,
     pub dependencies: ConversationDependencies,
 }
@@ -55,6 +67,7 @@ impl ConversationRegistry {
             inner: Arc::new(RegistryInner {
                 current: Mutex::new(HashMap::new()),
                 pending: Mutex::new(HashMap::new()),
+                pending_wakes: Mutex::new(HashMap::new()),
                 changed: Notify::new(),
                 dependencies: ConversationDependencies {
                     store,
@@ -130,6 +143,15 @@ impl ConversationRegistry {
             return CommandResult::StaleTarget;
         }
         let pending = compiled.clone();
+        if compiled.turn_user.is_some() || !compiled.background_completions.is_empty() {
+            self.inner.pending_wakes.lock().await.insert(
+                compiled.event_id.clone(),
+                BackgroundWake {
+                    user_message: compiled.turn_user.clone(),
+                    completions: compiled.background_completions.clone(),
+                },
+            );
+        }
         let result = match compiled.delivery {
             MessageDelivery::Ignore => CommandResult::Applied,
             MessageDelivery::InsertMessages => {
@@ -155,6 +177,10 @@ impl ConversationRegistry {
                 .push(pending);
         }
         result
+    }
+
+    pub(crate) async fn take_background_wake(&self, event_id: &str) -> Option<BackgroundWake> {
+        self.inner.pending_wakes.lock().await.remove(event_id)
     }
 
     pub(crate) async fn release(&self, conversation_id: &ConversationId, run_id: &RunId) {

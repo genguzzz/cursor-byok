@@ -336,6 +336,40 @@ async fn mcp_auth_uses_the_cursor_auth_interaction_without_a_tool_definition() {
 }
 
 #[tokio::test]
+async fn call_mcp_tool_missing_server_returns_a_tool_error_without_failing_the_session() {
+    let dispatcher = ToolDispatcher::new(CursorToolRuntime::default());
+    let completed = HashSet::new();
+    let started = HashSet::new();
+    let mut invocation = call("call-mcp-missing-server", "CallMcpTool");
+    invocation.arguments = json!({
+        "toolName": "browser_exec",
+        "arguments": {"code": "print('ok')"}
+    });
+    let dispatched = dispatcher
+        .start_batch(
+            &[invocation],
+            ToolBatchState {
+                completed: &completed,
+                started: &started,
+                response_text: "",
+                response_thinking: "",
+            },
+            &[],
+            &BTreeMap::new(),
+            &exec_context(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(dispatched[0].messages.len(), 1);
+    let completion = dispatched[0]
+        .completion
+        .as_ref()
+        .expect("missing server should complete as a tool error");
+    assert!(completion.result().is_error);
+    assert!(completion.result().content.contains("missing server"));
+}
+
+#[tokio::test]
 async fn unknown_mcp_descriptor_returns_a_tool_error_without_client_discovery() {
     let dispatcher = ToolDispatcher::new(CursorToolRuntime::default());
     let completed = HashSet::new();

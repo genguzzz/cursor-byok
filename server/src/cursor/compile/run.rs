@@ -21,7 +21,7 @@ use crate::{
     Error, Result,
 };
 
-use super::{break_messages, context, insert_messages, model};
+use super::{action::BackgroundWakeCompletion, break_messages, context, insert_messages, model};
 
 struct ActionProjection {
     mode: i32,
@@ -32,6 +32,7 @@ struct ActionProjection {
     starts_turn: bool,
     compacting: bool,
     background_completion: bool,
+    background_completions: Vec<super::action::BackgroundWakeCompletion>,
 }
 
 pub struct CursorRunContext {
@@ -43,6 +44,7 @@ pub struct CursorRunContext {
     pub checkpoint_prompt: PromptSpec,
     pub compacting: bool,
     pub background_completion: bool,
+    pub background_completions: Vec<super::action::BackgroundWakeCompletion>,
 }
 
 pub(crate) struct PrepareDependencies<'a> {
@@ -135,6 +137,7 @@ pub(crate) async fn prepare(
         starts_turn,
         compacting,
         background_completion,
+        background_completions,
     } = action(request)?;
     let checkpoint_mode = if request.subagent_type_name.is_some() {
         Mode::Subagent
@@ -354,6 +357,7 @@ pub(crate) async fn prepare(
             checkpoint_prompt,
             compacting,
             background_completion,
+            background_completions,
         },
     ))
 }
@@ -421,6 +425,7 @@ fn action(request: &pb::AgentRunRequest) -> Result<ActionProjection> {
             starts_turn: false,
             compacting: false,
             background_completion: false,
+            background_completions: Vec::new(),
         });
     };
     match action {
@@ -448,6 +453,7 @@ fn action(request: &pb::AgentRunRequest) -> Result<ActionProjection> {
                     starts_turn: false,
                     compacting: true,
                     background_completion: false,
+            background_completions: Vec::new(),
                 });
             }
             let mut context = action
@@ -473,11 +479,22 @@ fn action(request: &pb::AgentRunRequest) -> Result<ActionProjection> {
                 starts_turn: true,
                 compacting: false,
                 background_completion: false,
+            background_completions: Vec::new(),
             })
         }
         pb::conversation_action::Action::BackgroundTaskCompletionAction(action) => {
             let projection = insert_messages::project(action, mode)?;
             let event_id = projection.turn_user.message_id.clone();
+            let background_completions = projection
+                .completed_tasks
+                .into_iter()
+                .map(|task| BackgroundWakeCompletion {
+                    tool_call_id: task.tool_call_id,
+                    status: task.status,
+                    output_path: task.output_path,
+                    completion_reason: task.completion_reason,
+                })
+                .collect();
             Ok(ActionProjection {
                 mode,
                 action_context: projection.context,
@@ -487,6 +504,7 @@ fn action(request: &pb::AgentRunRequest) -> Result<ActionProjection> {
                 starts_turn: true,
                 compacting: false,
                 background_completion: true,
+                background_completions,
             })
         }
         pb::conversation_action::Action::ExecutePlanAction(action) => execute_plan(action),
@@ -499,6 +517,7 @@ fn action(request: &pb::AgentRunRequest) -> Result<ActionProjection> {
             starts_turn: false,
             compacting: true,
             background_completion: false,
+            background_completions: Vec::new(),
         }),
         _ => Ok(ActionProjection {
             mode,
@@ -509,6 +528,7 @@ fn action(request: &pb::AgentRunRequest) -> Result<ActionProjection> {
             starts_turn: false,
             compacting: false,
             background_completion: false,
+            background_completions: Vec::new(),
         }),
     }
 }
@@ -558,6 +578,7 @@ fn execute_plan(action: &pb::ExecutePlanAction) -> Result<ActionProjection> {
         starts_turn: true,
         compacting: false,
         background_completion: false,
+        background_completions: Vec::new(),
     })
 }
 
