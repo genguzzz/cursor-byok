@@ -525,16 +525,23 @@ impl InlineThinkStreamer {
         loop {
             if self.in_think {
                 if let Some(pos) = self.buffer.find("</think>").or_else(|| self.buffer.find("</thought>")) {
-                    let end_tag_len = if self.buffer[pos..].starts_with("</think>") { 8 } else { 10 };
+                    let end_tag = if self.buffer[pos..].starts_with("</think>") {
+                        "</think>"
+                    } else {
+                        "</thought>"
+                    };
                     let thinking_text = self.buffer[..pos].to_string();
                     if !thinking_text.is_empty() {
                         parts.push(StreamPart::Thinking(thinking_text));
                     }
-                    self.buffer.drain(..pos + end_tag_len);
+                    self.buffer.drain(..pos + end_tag.len());
                     self.in_think = false;
                 } else {
                     let partial_len = trailing_partial_tag(&self.buffer, &["</think>", "</thought>"]);
-                    let emit_len = self.buffer.len().saturating_sub(partial_len);
+                    let emit_len = floor_char_boundary(
+                        &self.buffer,
+                        self.buffer.len().saturating_sub(partial_len),
+                    );
                     if emit_len > 0 {
                         let thinking_text = self.buffer[..emit_len].to_string();
                         self.buffer.drain(..emit_len);
@@ -544,16 +551,23 @@ impl InlineThinkStreamer {
                 }
             } else {
                 if let Some(pos) = self.buffer.find("<think>").or_else(|| self.buffer.find("<thought>")) {
-                    let start_tag_len = if self.buffer[pos..].starts_with("<think>") { 7 } else { 9 };
+                    let start_tag = if self.buffer[pos..].starts_with("<think>") {
+                        "<think>"
+                    } else {
+                        "<thought>"
+                    };
                     let text = self.buffer[..pos].to_string();
                     if !text.is_empty() {
                         parts.push(StreamPart::Text(text));
                     }
-                    self.buffer.drain(..pos + start_tag_len);
+                    self.buffer.drain(..pos + start_tag.len());
                     self.in_think = true;
                 } else {
                     let partial_len = trailing_partial_tag(&self.buffer, &["<think>", "<thought>"]);
-                    let emit_len = self.buffer.len().saturating_sub(partial_len);
+                    let emit_len = floor_char_boundary(
+                        &self.buffer,
+                        self.buffer.len().saturating_sub(partial_len),
+                    );
                     if emit_len > 0 {
                         let text = self.buffer[..emit_len].to_string();
                         self.buffer.drain(..emit_len);
@@ -580,10 +594,22 @@ impl InlineThinkStreamer {
     }
 }
 
+fn floor_char_boundary(s: &str, index: usize) -> usize {
+    let mut i = index.min(s.len());
+    while i > 0 && !s.is_char_boundary(i) {
+        i -= 1;
+    }
+    i
+}
+
 fn trailing_partial_tag(s: &str, tags: &[&str]) -> usize {
     let max_tag_len = tags.iter().map(|t| t.len()).max().unwrap_or(0);
     for len in (1..=max_tag_len.min(s.len())).rev() {
-        let suffix = &s[s.len() - len..];
+        let start = s.len().saturating_sub(len);
+        if !s.is_char_boundary(start) {
+            continue;
+        }
+        let suffix = &s[start..];
         for tag in tags {
             if tag.starts_with(suffix) {
                 return len;
@@ -647,5 +673,33 @@ mod tests {
         }
         assert_eq!(thinking, "First thought and second thought");
         assert_eq!(text, "Leading text  Trailing answer");
+    }
+
+    #[test]
+    fn inline_think_streamer_handles_utf8_chunk_boundaries() {
+        let mut streamer = InlineThinkStreamer::default();
+        let chunks = vec![
+            "<think>分析",
+            "项目",
+            "结构</think>这是答案",
+        ];
+        let mut text = String::new();
+        let mut thinking = String::new();
+        for chunk in chunks {
+            for part in streamer.process(chunk) {
+                match part {
+                    StreamPart::Thinking(t) => thinking.push_str(&t),
+                    StreamPart::Text(t) => text.push_str(&t),
+                }
+            }
+        }
+        for part in streamer.finish() {
+            match part {
+                StreamPart::Thinking(t) => thinking.push_str(&t),
+                StreamPart::Text(t) => text.push_str(&t),
+            }
+        }
+        assert_eq!(thinking, "分析项目结构");
+        assert_eq!(text, "这是答案");
     }
 }
