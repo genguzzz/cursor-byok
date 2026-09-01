@@ -24,10 +24,6 @@ pub(crate) fn proxy_host_allowed(host: &str) -> bool {
     proxy::is_cursor_host(host)
 }
 
-fn integration_prerequisites_ready(ca: &CaState, backend_ready: bool) -> bool {
-    matches!(ca, CaState::Ready) && backend_ready
-}
-
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CaState {
@@ -104,9 +100,6 @@ impl CursorHarness {
         let configured_models = models.len();
         let enabled_models = configured_models;
         let ca = self.inner.ca.state()?;
-        if integration_prerequisites_ready(&ca, self.inner.backend_addr.read().is_some()) {
-            self.enable().await?;
-        }
         let proxy = self.inner.proxy.lock().await;
         let proxy_url = proxy.url();
         let settings_applied = proxy_url
@@ -289,6 +282,7 @@ impl CursorHarness {
 
     pub async fn disable(&self) -> Result<()> {
         settings::clear_proxy_settings()?;
+        settings::clear_stale_managed_settings()?;
         self.inner.proxy.lock().await.stop().await;
         Ok(())
     }
