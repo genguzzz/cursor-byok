@@ -1,7 +1,7 @@
 {
   "tools": [
-    "Shell", "AwaitShell", "Glob", "Grep", "Read", "TodoWrite", "ReadLints", "WebSearch",
-    "WebFetch", "AskQuestion", "CreatePlan", "Task", "FetchMcpResource",
+    "Shell", "AwaitShell", "WriteShellStdin", "Glob", "Grep", "Read", "TodoWrite", "ReadLints", "WebSearch",
+    "WebFetch", "AskQuestion", "CreatePlan", "Task", "ListMcpResources", "FetchMcpResource",
     "CallMcpTool", "SembleSearch", "SembleFindRelated"
   ]
 }

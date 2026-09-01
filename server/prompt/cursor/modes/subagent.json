@@ -1,8 +1,8 @@
 {
   "tools": [
-    "Shell", "AwaitShell", "Grep", "Delete", "WebSearch", "WebFetch", "GenerateImage",
-    "ReadLints", "EditNotebook", "TodoWrite", "StrReplace", "Write", "Read",
-    "Glob", "GetMcpTools", "FetchMcpResource", "SwitchMode",
-    "UpdateCurrentStep", "CallMcpTool", "SembleSearch", "SembleFindRelated"
+    "Shell", "AwaitShell", "WriteShellStdin", "Grep", "Delete", "WebSearch", "WebFetch", "GenerateImage",
+    "ReadLints", "EditNotebook", "TodoWrite", "StrReplace", "Write", "Read", "Glob", "GetMcpTools",
+    "ListMcpResources", "FetchMcpResource", "SwitchMode", "UpdateCurrentStep", "CallMcpTool",
+    "SembleSearch", "SembleFindRelated"
   ]
 }

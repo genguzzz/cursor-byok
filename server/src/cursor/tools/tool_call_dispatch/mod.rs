@@ -58,7 +58,8 @@ pub(super) async fn start(
 
     match normalized(&call.name).as_str() {
         "shell" | "bash" | "read" | "delete" | "grep" | "glob" | "readlints" | "task"
-        | "callmcptool" | "fetchmcpresource" | "getmcptools" => {
+        | "callmcptool" | "fetchmcpresource" | "getmcptools" | "searchconversations"
+        | "listmcpresources" | "writeshellstdin" => {
             exec::start(runtime, call, context).await
         }
         "write" | "strreplace" | "editnotebook" => edit::start(runtime, call, context).await,
