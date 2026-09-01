@@ -118,29 +118,35 @@ impl ConversationOutput {
         if let Err(error) = &result {
             if !self.superseded.is_cancelled() && self.run.phase() != RunPhase::Ended {
                 self.abort_execs().await;
-                let (category, summary) = match error {
-                    Error::Provider(_) | Error::Http(_) => ("provider", error.to_string()),
-                    Error::Store(_) | Error::Database(_) | Error::Migration(_) => {
-                        ("store", error.to_string())
-                    }
-                    _ => (
-                        "protocol",
-                        match error {
-                            Error::Protocol(message) => message.clone(),
-                            _ => error.to_string(),
-                        },
-                    ),
-                };
-                let _ = self
-                    .store
-                    .finish_run(
-                        self.run.run_id(),
-                        crate::store::RunStatus::Failed,
-                        None,
-                        Some((category, summary.as_str())),
-                    )
-                    .await;
-                self.run.cancel();
+                let defer_to_runtime = matches!(
+                    error,
+                    Error::Protocol(message) if message == "core event channel closed"
+                );
+                if !defer_to_runtime {
+                    let (category, summary) = match error {
+                        Error::Provider(_) | Error::Http(_) => ("provider", error.to_string()),
+                        Error::Store(_) | Error::Database(_) | Error::Migration(_) => {
+                            ("store", error.to_string())
+                        }
+                        _ => (
+                            "protocol",
+                            match error {
+                                Error::Protocol(message) => message.clone(),
+                                _ => error.to_string(),
+                            },
+                        ),
+                    };
+                    let _ = self
+                        .store
+                        .finish_run(
+                            self.run.run_id(),
+                            crate::store::RunStatus::Failed,
+                            None,
+                            Some((category, summary.as_str())),
+                        )
+                        .await;
+                    self.run.cancel();
+                }
             }
         }
         result
@@ -254,6 +260,10 @@ impl ConversationOutput {
                 }
                 Input::Event(None) => {
                     worker.abort();
+                    if self.superseded.is_cancelled() {
+                        self.abort_execs().await;
+                        return Ok(());
+                    }
                     if self.wait_for_run_ended().await {
                         return Ok(());
                     }
@@ -754,7 +764,7 @@ impl ConversationOutput {
         if self.run.phase() == RunPhase::Ended {
             return true;
         }
-        for _ in 0..25 {
+        for _ in 0..150 {
             tokio::time::sleep(std::time::Duration::from_millis(20)).await;
             if self.run.phase() == RunPhase::Ended {
                 return true;

@@ -608,27 +608,31 @@ fn spawn_run_request(
                 tool_runtime: generation.tool_runtime.clone(),
             },
         );
-        if let Err(error) = output.run().await {
-            let engine_outcome = core_run.await.ok();
+        let output_result = output.run().await;
+        let engine_join = core_run.await;
+        if let Err(error) = output_result {
             if !generation.superseded.is_cancelled() {
                 if matches!(
-                    (&error, engine_outcome.as_ref()),
-                    (
-                        Error::Protocol(message),
-                        Some(RunOutcome::Completed | RunOutcome::Cancelled | RunOutcome::Failed(_))
-                    ) if message == "core event channel closed"
+                    &error,
+                    Error::Protocol(message) if message == "core event channel closed"
                 ) {
-                    match engine_outcome.unwrap_or(RunOutcome::Failed(
-                        crate::run::RunFailure::Protocol("engine task exited".into()),
-                    )) {
-                        RunOutcome::Completed => {
+                    match engine_join {
+                        Ok(RunOutcome::Completed) => {
                             super::finish_success(&handle);
                         }
-                        RunOutcome::Cancelled => {}
-                        RunOutcome::Failed(failure) => {
+                        Ok(RunOutcome::Cancelled) => {}
+                        Ok(RunOutcome::Failed(failure)) => {
+                            let _ = super::finish_failed(&handle, &super::cursor_error(failure));
+                        }
+                        Err(join_error) => {
+                            tracing::error!(
+                                request_id = handle.request_id(),
+                                %join_error,
+                                "engine task join failed after core event channel closed"
+                            );
                             let _ = super::finish_failed(
                                 &handle,
-                                &super::cursor_error(failure),
+                                &Error::Protocol("engine exited unexpectedly".into()),
                             );
                         }
                     }
@@ -641,8 +645,12 @@ fn spawn_run_request(
                     let _ = super::finish_failed(&handle, &error);
                 }
             }
-        } else {
-            let _ = core_run.await;
+        } else if let Err(join_error) = engine_join {
+            tracing::error!(
+                request_id = handle.request_id(),
+                %join_error,
+                "engine task join failed after output completed"
+            );
         }
         registry.release(&conversation_id, &run_id).await;
         if generation
