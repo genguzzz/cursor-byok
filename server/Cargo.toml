@@ -27,7 +27,9 @@ eventsource-stream = "0.2"
 flate2 = "1.0"
 futures-util = "0.3"
 hex = "0.4"
+http = "1"
 hudsucker = { version = "0.25", features = ["http2"] }
+http-body-util = "0.1"
 image = { version = "0.25", default-features = false, features = ["gif", "jpeg", "png", "webp"] }
 include_dir = "0.7"
 json5 = "0.4"
@@ -55,7 +57,7 @@ tokio-stream = { version = "0.1", features = ["sync"] }
 tokio-util = "0.7"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-tower-http = { version = "0.6", features = ["cors", "decompression-gzip", "fs"] }
+tower-http = { version = "0.6", features = ["cors", "decompression-gzip", "fs", "set-header"] }
 url = "2"
 uuid = { version = "1", features = ["v4"] }
 x509-parser = "0.18"

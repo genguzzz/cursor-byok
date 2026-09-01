@@ -98,17 +98,35 @@ async fn forward_request(
         Some(service_url) => format!("{}{}", service_url.trim_end_matches('/'), path),
         None => upstream_url(&parts.headers, &proxy.upstream, &path)?,
     };
-
+    let method = parts.method.clone();
     let mut headers = parts.headers;
     headers.remove(UPSTREAM_URL_HEADER);
     headers.remove(header::HOST);
     remove_hop_by_hop_headers(&mut headers);
 
+    let capture_store = crate::debug::capture::store();
+    let request_header = headers.clone();
+    let host = host_of(&url);
+
+    // When debug capture is active, buffer the request body so the hop 2 record
+    // carries the full request bytes (matching the legacy Go whole-body
+    // capture); otherwise keep the streaming path untouched.
+    let (request_body_captured, request_body) = match &capture_store {
+        Some(_) => {
+            let bytes = to_bytes(body, usize::MAX).await.map_err(|error| {
+                crate::Error::Protocol(format!("cannot read request body: {error}"))
+            })?;
+            let captured = truncate_capture(&bytes);
+            (Some(captured), reqwest::Body::from(bytes))
+        }
+        None => (None, reqwest::Body::wrap_stream(body.into_data_stream())),
+    };
+
     let client = proxy.client().await?;
     let upstream = client
-        .request(parts.method.clone(), url)
+        .request(method.clone(), url.clone())
         .headers(headers)
-        .body(reqwest::Body::wrap_stream(body.into_data_stream()))
+        .body(request_body)
         .send()
         .await;
 
@@ -116,12 +134,29 @@ async fn forward_request(
         Ok(response) => response,
         Err(error) => {
             tracing::error!(
-                method = %parts.method,
+                method = %method,
                 path,
                 elapsed_ms = started.elapsed().as_millis(),
                 %error,
                 "Cursor upstream request failed"
             );
+            if capture_store.is_some() {
+                crate::debug::UpstreamHop {
+                    method: method.as_str().to_owned(),
+                    url: url.clone(),
+                    host: host.clone(),
+                    path: path.clone(),
+                    status: 0,
+                    request_id: String::new(),
+                    request_header: request_header.clone(),
+                    response_header: axum::http::HeaderMap::new(),
+                    request_body: request_body_captured.clone().unwrap_or_default(),
+                    response_body: Vec::new(),
+                    error: error.to_string(),
+                    started,
+                }
+                .emit();
+            }
             return Err(error.into());
         }
     };
@@ -129,18 +164,86 @@ async fn forward_request(
     let status = upstream.status();
     let mut response_headers = upstream.headers().clone();
     remove_hop_by_hop_headers(&mut response_headers);
-    let mut response = Response::new(Body::from_stream(upstream.bytes_stream()));
+
+    let response_body = if capture_store.is_some() {
+        let response_header = response_headers.clone();
+        let hop = HopContext {
+            method: method.as_str().to_owned(),
+            url,
+            host,
+            path: path.clone(),
+            status: status.as_u16(),
+            request_header,
+            response_header,
+            request_body: request_body_captured.unwrap_or_default(),
+            started,
+        };
+        let tee = crate::debug::capture::BodyTee::<_, reqwest::Error>::new(
+            upstream.bytes_stream(),
+            move |captured, _size, _truncated, error| {
+                crate::debug::UpstreamHop {
+                    method: hop.method.clone(),
+                    url: hop.url.clone(),
+                    host: hop.host.clone(),
+                    path: hop.path.clone(),
+                    status: hop.status,
+                    request_id: String::new(),
+                    request_header: hop.request_header.clone(),
+                    response_header: hop.response_header.clone(),
+                    request_body: hop.request_body.clone(),
+                    response_body: captured,
+                    error: error.unwrap_or_default(),
+                    started: hop.started,
+                }
+                .emit();
+            },
+        );
+        Body::from_stream(tee)
+    } else {
+        Body::from_stream(upstream.bytes_stream())
+    };
+
+    let mut response = Response::new(response_body);
     *response.status_mut() = status;
     *response.headers_mut() = response_headers;
 
     tracing::info!(
-        method = %parts.method,
-        path,
+        method = %method,
+        path = %path,
         %status,
         elapsed_ms = started.elapsed().as_millis(),
         "forwarded Cursor backend request"
     );
     Ok(response)
+}
+
+/// Metadata captured once and moved into the response tee callback.
+struct HopContext {
+    method: String,
+    url: String,
+    host: String,
+    path: String,
+    status: u16,
+    request_header: axum::http::HeaderMap,
+    response_header: axum::http::HeaderMap,
+    request_body: Vec<u8>,
+    started: Instant,
+}
+
+fn host_of(url: &str) -> String {
+    url::Url::parse(url)
+        .ok()
+        .and_then(|parsed| parsed.host_str().map(str::to_owned))
+        .unwrap_or_default()
+}
+
+fn truncate_capture(bytes: &[u8]) -> Vec<u8> {
+    let limit = crate::debug::capture::MAX_CAPTURE_BYTES;
+    if bytes.len() <= limit {
+        bytes.to_vec()
+    } else {
+        bytes[..limit].to_vec()
+    }
 }
 
 pub async fn forward_buffered(

@@ -1,6 +1,6 @@
 //! Exposes the local desktop application integration.
 mod account;
-mod ca;
+pub mod ca;
 mod proxy;
 mod settings;
 
@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 
 use crate::{
+    debug::{DebugController, DebugServer, DebugServerConfig, DebugStatus},
     store::{ProxyMode, ProxySettingsInput, Store, TabMode, TabSettings},
     Error, Result,
 };
@@ -72,6 +73,7 @@ struct Inner {
     backend_addr: RwLock<Option<SocketAddr>>,
     tab_mode: Arc<RwLock<TabMode>>,
     proxy: Mutex<ProxyRuntime>,
+    debug: tokio::sync::Mutex<Option<DebugController>>,
 }
 
 impl CursorHarness {
@@ -84,6 +86,7 @@ impl CursorHarness {
                 backend_addr: RwLock::new(None),
                 tab_mode: Arc::new(RwLock::new(TabMode::default())),
                 proxy: Mutex::new(ProxyRuntime::default()),
+                debug: tokio::sync::Mutex::new(None),
             }),
         })
     }
@@ -176,6 +179,72 @@ impl CursorHarness {
         };
         self.inner.store.set_proxy_settings(input).await?;
         Ok(enabled)
+    }
+
+    /// 返回调试模式（MITM 抓包）是否已开启。
+    pub async fn debug_enabled(&self) -> bool {
+        let debug = self.inner.debug.lock().await;
+        debug
+            .as_ref()
+            .is_some_and(|controller| matches!(controller.status(), DebugStatus::Running))
+    }
+
+    /// 返回抓包 WebUI 地址（调试开启后才有值）。
+    pub async fn debug_ui_addr(&self) -> Option<String> {
+        let debug = self.inner.debug.lock().await;
+        debug
+            .as_ref()
+            .filter(|controller| matches!(controller.status(), DebugStatus::Running))
+            .map(|controller| format!("http://{}", controller.ui_addr()))
+    }
+
+    /// 开启/关闭「调试模式」：装载抓包 store + 起 WebUI，并同步「调用观测 · 详细模式」。
+    ///
+    /// 开启时安装进程级 capture store（hop1 由主代理抓取，hop2/3 由转发路径抓取）、
+    /// 启动 WebUI，并把 `llm_detailed_logging` 置为 true；关闭时反之。
+    pub async fn set_debug_enabled(&self, enabled: bool) -> Result<()> {
+        if enabled {
+            self.enable_debug().await
+        } else {
+            self.disable_debug().await
+        }
+    }
+
+    /// 打开调试模式：装载 store + 起 WebUI + 同步详细日志。
+    async fn enable_debug(&self) -> Result<()> {
+        // 主代理可能尚未启动（未接管 Cursor），此时抓不到 hop1，但 hop2/3 仍可抓。
+        let main_proxy_url = {
+            let proxy = self.inner.proxy.lock().await;
+            proxy.url().unwrap_or_default()
+        };
+        let mut debug = self.inner.debug.lock().await;
+        if debug.is_none() {
+            let mut config = DebugServerConfig::default();
+            config.proxy_addr = main_proxy_url;
+            let controller = DebugServer::new(config)
+                .build()
+                .map_err(Error::Config)?;
+            controller.install_store();
+            *debug = Some(controller);
+        }
+        let controller = debug.as_ref().expect("debug controller present");
+        if matches!(controller.status(), DebugStatus::Stopped) {
+            controller.start().await.map_err(Error::Config)?;
+        }
+        drop(debug);
+        // 同步「调用观测 · 详细模式」。
+        self.inner.store.set_detailed_logging(true).await?;
+        Ok(())
+    }
+
+    async fn disable_debug(&self) -> Result<()> {
+        // 同步关闭「调用观测 · 详细模式」。
+        self.inner.store.set_detailed_logging(false).await?;
+        let debug = self.inner.debug.lock().await;
+        if let Some(controller) = debug.as_ref() {
+            controller.stop().await;
+        }
+        Ok(())
     }
 
     async fn enable(&self) -> Result<()> {

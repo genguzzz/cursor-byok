@@ -145,9 +145,23 @@ impl Provider for OpenAiChatProvider {
                 &body,
             ).await?;
             let Attempt::Response(response) = attempt else { return };
-            yield ModelEvent::Start { model_call_id: call_id };
+            yield ModelEvent::Start { model_call_id: call_id.clone() };
             let chunk_recorder = recorder.clone();
-            let chunks = response.bytes_stream()
+            let provider_name = if codebuddy { "CodeBuddy" } else { "OpenAI Chat" };
+            let hop = super::retry::ProviderHopMeta {
+                provider: provider_name.to_owned(),
+                model_call_id: call_id.clone(),
+                request_id: run_id.clone(),
+                request_header: headers.clone(),
+                request_body: if let Some(compressed) = &compressed {
+                    compressed.clone()
+                } else {
+                    serde_json::to_vec(&body).unwrap_or_default()
+                },
+                started: std::time::Instant::now(),
+            };
+            let stream = super::retry::tee_provider_response(response, hop);
+            let chunks = stream
                 .map(|chunk| chunk.map_err(Error::from))
                 .then(move |chunk| {
                     let recorder = chunk_recorder.clone();
