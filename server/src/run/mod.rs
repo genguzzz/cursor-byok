@@ -10,6 +10,8 @@ mod model_cycle;
 mod port;
 mod tool_round;
 
+pub(crate) use compaction::window_tail_after_summary;
+
 pub use command::*;
 pub use engine::*;
 pub use event::*;

@@ -15,7 +15,10 @@ Summary:
 
 Guidelines:
 - Maintain factual, concise, third-person descriptions.
-- Preserve specific filenames, error messages, code references, tool calls, and user requirements.
+- Preserve specific filenames, paths, function addresses, commands, tool outcomes, error messages, code references, and user requirements verbatim when they matter for continuation.
+- In section 6, reproduce each user message verbatim or as close to verbatim as possible. Requirements live in user messages.
+- In section 7, list remaining work as actionable items. Mark completed items as done.
+- In section 8, state exactly what was in progress when compaction happened: concrete artifacts already produced, verified facts, and the single next action to take.
+- In section 9, give one imperative next step only when it is clear from the conversation. Omit if uncertain.
 - Do not address the user. Do not include conversational filler or markdown code blocks for the summary headers.
-- Return plain text only.
- 
+- Do not call tools. Return plain text only.

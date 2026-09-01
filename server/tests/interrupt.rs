@@ -1137,7 +1137,7 @@ async fn injected_user_context_interrupts_automatic_compaction() {
     assert!(requests[1]
         .prompt
         .instructions
-        .starts_with("Summarize the conversation for the next model turn."));
+        .contains("compacting conversation history"));
     assert!(!serde_json::to_string(&requests[1].history)
         .unwrap()
         .contains("injected follow-up"));
@@ -1527,6 +1527,16 @@ fn client_run_for_model_with_state(
     model_id: &str,
     state: Option<pb::ConversationStateStructure>,
 ) -> pb::AgentClientMessage {
+    seed_turn_request(request_id, conversation_id, model_id, "cancel-user", state)
+}
+
+fn seed_turn_request(
+    request_id: &str,
+    conversation_id: &str,
+    model_id: &str,
+    message_id: &str,
+    state: Option<pb::ConversationStateStructure>,
+) -> pb::AgentClientMessage {
     pb::AgentClientMessage {
         message: Some(pb::agent_client_message::Message::RunRequest(
             pb::AgentRunRequest {
@@ -1535,7 +1545,7 @@ fn client_run_for_model_with_state(
                         pb::UserMessageAction {
                             user_message: Some(pb::UserMessage {
                                 text: "read".into(),
-                                message_id: "cancel-user".into(),
+                                message_id: message_id.into(),
                                 mode: pb::AgentMode::Agent as i32,
                                 ..Default::default()
                             }),

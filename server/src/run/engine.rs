@@ -587,7 +587,7 @@ impl RunEngine {
             .iter()
             .map(|message| message.message_id.as_str())
             .collect::<HashSet<_>>();
-        let (compactable, retained_request_context) =
+        let (compactable, retained_request_context, retained_tail) =
             super::compaction::partition(messages, &current_ids);
         if compactable.is_empty() {
             return Ok((checkpoint, None));
@@ -706,7 +706,11 @@ impl RunEngine {
         };
         let mut replacement = retained_request_context.into_iter().collect::<Vec<_>>();
         replacement.push(summary_message);
-        replacement.extend(prepared.initial_messages.iter().cloned());
+        if retained_tail.is_empty() {
+            replacement.extend(prepared.initial_messages.iter().cloned());
+        } else {
+            replacement.extend(retained_tail);
+        }
         let mut checkpoint = self
             .store
             .replace_checkpoint(
