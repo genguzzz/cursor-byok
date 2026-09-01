@@ -21,8 +21,24 @@ pub(super) async fn start(
             codec::mcp_state_request(id, call)
         }
         "callmcptool" => {
-            let server = required(call, "server")?;
-            let tool = required(call, "toolName")?;
+            let Some(server) = optional(call, "server") else {
+                return Ok(ToolStart {
+                    messages: Vec::new(),
+                    completion: Some(result::mcp_failure(
+                        call,
+                        "CallMcpTool is missing server".into(),
+                    )?),
+                });
+            };
+            let Some(tool) = optional(call, "toolName") else {
+                return Ok(ToolStart {
+                    messages: Vec::new(),
+                    completion: Some(result::mcp_failure(
+                        call,
+                        "CallMcpTool is missing toolName".into(),
+                    )?),
+                });
+            };
             let Some(route) = context
                 .mcp_routes
                 .get(&(server.to_string(), tool.to_string()))
@@ -49,12 +65,11 @@ pub(super) async fn start(
     })
 }
 
-fn required<'a>(call: &'a ToolCall, name: &str) -> Result<&'a str> {
+fn optional<'a>(call: &'a ToolCall, name: &str) -> Option<&'a str> {
     call.arguments
         .get(name)
         .and_then(serde_json::Value::as_str)
         .filter(|value| !value.is_empty())
-        .ok_or_else(|| Error::Protocol(format!("{} is missing {name}", call.name)))
 }
 
 pub(super) async fn start_dynamic(

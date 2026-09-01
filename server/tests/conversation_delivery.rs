@@ -345,6 +345,185 @@ async fn background_shell_completion_wakes_the_parent_with_the_captured_notifica
     assert_eq!(metadata.task_id.as_deref(), Some("977679"));
 }
 
+#[tokio::test]
+async fn background_completion_unpauses_goal_and_appends_simulated_user_message() {
+    let (_directory, store) = fixtures::temp_store().await;
+    let provider = fake_provider::FakeProvider::default();
+    provider.push(stop_response("model-call", "followed up"));
+    let assets = PromptAssets::load(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("prompt/cursor")
+            .as_path(),
+    )
+    .unwrap();
+    let registry = TransportRegistry::new(
+        store.clone(),
+        Arc::new(provider.clone()),
+        PromptCompiler::new(assets),
+    );
+    let handle = registry.get_or_create("wake-sync-request").await.unwrap();
+    let paused_state = pb::ConversationStateStructure {
+        goal_state: Some(pb::GoalState {
+            conversation_id: "parent-conversation".into(),
+            status: pb::GoalStatus::Paused as i32,
+            continuation_count: 1,
+            ..Default::default()
+        }),
+        subagent_runs_by_parent_tool_call_id: HashMap::from([(
+            "task-call".into(),
+            pb::SubagentRunState {
+                parent_tool_call_id: "task-call".into(),
+                status: pb::SubagentRunStatus::Backgrounded as i32,
+                ..Default::default()
+            },
+        )]),
+        mode: Some(pb::AgentMode::Multitask as i32),
+        ..Default::default()
+    };
+    let (checkpoint, protocol_events) = drive_completion_with_protocol_events(
+        &handle,
+        completion_run("child-id", "wake-sync-run", paused_state),
+    )
+    .await;
+
+    assert!(
+        protocol_events
+            .iter()
+            .any(|event| event == "user_message_appended"),
+        "expected UserMessageAppended after background wake, got {protocol_events:?}"
+    );
+    let goal = checkpoint.goal_state.expect("goal state");
+    assert_eq!(goal.status, pb::GoalStatus::Active as i32);
+    assert_eq!(goal.continuation_count, 2);
+    let subagent = checkpoint
+        .subagent_runs_by_parent_tool_call_id
+        .get("task-call")
+        .expect("subagent run");
+    assert_eq!(subagent.status, pb::SubagentRunStatus::Success as i32);
+    assert!(subagent.completed_timestamp_ms.is_some());
+}
+
+async fn drive_completion_with_protocol_events(
+    handle: &TransportHandle,
+    message: pb::AgentClientMessage,
+) -> (pb::ConversationStateStructure, Vec<String>) {
+    let mut output = handle.subscribe();
+    handle
+        .command(TransportCommand::Append {
+            seqno: 0,
+            message: Box::new(message),
+        })
+        .await
+        .unwrap();
+
+    let mut append_seqno = 1;
+    let mut blobs = HashMap::new();
+    let mut final_checkpoint = None;
+    let mut protocol_events = Vec::new();
+    loop {
+        let frame = tokio::time::timeout(std::time::Duration::from_secs(5), output.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        let (flags, payload) = connect::decode_frames(&frame).unwrap().pop().unwrap();
+        if flags & connect::END_STREAM_FLAG != 0 {
+            break;
+        }
+        let server = pb::AgentServerMessage::decode(payload).unwrap();
+        match server.message {
+            Some(pb::agent_server_message::Message::ExecServerMessage(exec)) => {
+                assert_eq!(exec.id, 0);
+                assert!(matches!(
+                    exec.message,
+                    Some(pb::exec_server_message::Message::RequestContextArgs(_))
+                ));
+                handle
+                    .command(TransportCommand::Append {
+                        seqno: append_seqno,
+                        message: Box::new(pb::AgentClientMessage {
+                            message: Some(
+                                pb::agent_client_message::Message::ExecClientControlMessage(
+                                    pb::ExecClientControlMessage {
+                                        message: Some(
+                                            pb::exec_client_control_message::Message::StreamClose(
+                                                pb::ExecClientStreamClose { id: 0 },
+                                            ),
+                                        ),
+                                    },
+                                ),
+                            ),
+                        }),
+                    })
+                    .await
+                    .unwrap();
+                append_seqno += 1;
+                handle
+                    .command(TransportCommand::Append {
+                        seqno: append_seqno,
+                        message: Box::new(pb::AgentClientMessage {
+                            message: Some(pb::agent_client_message::Message::ExecClientMessage(
+                                pb::ExecClientMessage {
+                                    id: 0,
+                                    message: Some(
+                                        pb::exec_client_message::Message::RequestContextResult(
+                                            pb::RequestContextResult {
+                                                result: Some(
+                                                    pb::request_context_result::Result::Success(
+                                                        pb::RequestContextSuccess {
+                                                            request_context: Some(
+                                                                pb::RequestContext::default(),
+                                                            ),
+                                                            ..Default::default()
+                                                        },
+                                                    ),
+                                                ),
+                                            },
+                                        ),
+                                    ),
+                                    ..Default::default()
+                                },
+                            )),
+                        }),
+                    })
+                    .await
+                    .unwrap();
+                append_seqno += 1;
+            }
+            Some(pb::agent_server_message::Message::KvServerMessage(kv)) => {
+                if let Some(pb::kv_server_message::Message::SetBlobArgs(set)) = &kv.message {
+                    blobs.insert(set.blob_id.clone(), set.blob_data.clone());
+                }
+                handle
+                    .command(TransportCommand::Append {
+                        seqno: append_seqno,
+                        message: Box::new(kv_ack(kv.id)),
+                    })
+                    .await
+                    .unwrap();
+                append_seqno += 1;
+            }
+            Some(pb::agent_server_message::Message::InteractionUpdate(update)) => {
+                if matches!(
+                    update.message,
+                    Some(pb::interaction_update::Message::UserMessageAppended(_))
+                ) {
+                    protocol_events.push("user_message_appended".into());
+                }
+            }
+            Some(pb::agent_server_message::Message::ConversationCheckpointUpdate(state))
+                if state.pending_tool_calls.is_empty() =>
+            {
+                final_checkpoint = Some(state);
+            }
+            _ => {}
+        }
+    }
+    (
+        final_checkpoint.expect("settled completion checkpoint"),
+        protocol_events,
+    )
+}
+
 async fn drive_completion(
     handle: &TransportHandle,
     message: pb::AgentClientMessage,

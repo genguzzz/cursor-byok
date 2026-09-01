@@ -5,6 +5,14 @@ use crate::{
     model::{CanonicalMessage, RunId},
 };
 
+#[derive(Clone, Debug)]
+pub struct BackgroundWakeCompletion {
+    pub tool_call_id: String,
+    pub status: pb::BackgroundTaskStatus,
+    pub output_path: Option<String>,
+    pub completion_reason: pb::BackgroundTaskCompletionReason,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MessageDelivery {
     Ignore,
@@ -18,6 +26,8 @@ pub struct CompiledMessages {
     pub target_run_id: Option<RunId>,
     pub messages: Vec<CanonicalMessage>,
     pub delivery: MessageDelivery,
+    pub turn_user: Option<pb::UserMessage>,
+    pub background_completions: Vec<BackgroundWakeCompletion>,
 }
 
 impl CompiledMessages {
@@ -27,6 +37,8 @@ impl CompiledMessages {
             target_run_id: None,
             messages: Vec::new(),
             delivery: MessageDelivery::Ignore,
+            turn_user: None,
+            background_completions: Vec::new(),
         }
     }
 }
