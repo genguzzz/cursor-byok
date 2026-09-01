@@ -20,7 +20,9 @@ use crate::{
 
 type BlobSetSender = oneshot::Sender<Result<()>>;
 
-const SET_TIMEOUT: Duration = Duration::from_secs(30 * 60);
+const KV_SET_ATTEMPTS: u32 = 3;
+const KV_SET_ATTEMPT_TIMEOUT: Duration = Duration::from_secs(20);
+const KV_SET_RETRY_DELAY: Duration = Duration::from_secs(2);
 const GET_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 
 #[derive(Clone)]
@@ -99,6 +101,67 @@ impl BlobSynchronizer {
         if self.inner.acked_blobs.lock().await.contains(blob_id) {
             return Ok(());
         }
+        let mut last_error = None;
+        for attempt in 1..=KV_SET_ATTEMPTS {
+            if self.inner.acked_blobs.lock().await.contains(blob_id) {
+                if attempt > 1 {
+                    tracing::info!(
+                        request_id = self.request_id(),
+                        blob_id = blob_id.to_base64(),
+                        attempt,
+                        "KV SET satisfied by acknowledgement from a prior attempt"
+                    );
+                }
+                return Ok(());
+            }
+            match self.ensure_set_once(blob_id, data, attempt).await {
+                Ok(()) => {
+                    if attempt > 1 {
+                        tracing::info!(
+                            request_id = self.request_id(),
+                            blob_id = blob_id.to_base64(),
+                            byte_count = data.len(),
+                            attempt,
+                            "KV SET succeeded after retry"
+                        );
+                    }
+                    return Ok(());
+                }
+                Err(error) => {
+                    if matches!(error, Error::Cancelled) {
+                        return Err(error);
+                    }
+                    tracing::warn!(
+                        request_id = self.request_id(),
+                        blob_id = blob_id.to_base64(),
+                        byte_count = data.len(),
+                        attempt,
+                        max_attempts = KV_SET_ATTEMPTS,
+                        %error,
+                        "KV SET attempt failed"
+                    );
+                    last_error = Some(error);
+                    if attempt < KV_SET_ATTEMPTS {
+                        tokio::time::sleep(KV_SET_RETRY_DELAY).await;
+                    }
+                }
+            }
+        }
+        let error = last_error.unwrap_or_else(|| {
+            Error::Protocol(format!("KV SET failed: {}", blob_id.to_base64()))
+        });
+        tracing::error!(
+            request_id = self.request_id(),
+            blob_id = blob_id.to_base64(),
+            byte_count = data.len(),
+            attempts = KV_SET_ATTEMPTS,
+            %error,
+            "KV SET exhausted all attempts"
+        );
+        Err(error)
+    }
+
+    async fn ensure_set_once(&self, blob_id: &BlobId, data: &[u8], attempt: u32) -> Result<()> {
         let id = self.inner.next_id.fetch_add(1, Ordering::Relaxed);
         let (sender, receiver) = oneshot::channel();
         self.inner.set_requests.lock().await.insert(
@@ -131,7 +194,10 @@ impl BlobSynchronizer {
         let result = tokio::select! {
             result = receiver => result.map_err(|_| Error::Protocol("KV SET response channel closed".into()))?,
             _ = cancellation.cancelled() => Err(Error::Cancelled),
-            _ = tokio::time::sleep(SET_TIMEOUT) => Err(Error::Protocol(format!("KV SET timed out: {}", blob_id.to_base64()))),
+            _ = tokio::time::sleep(KV_SET_ATTEMPT_TIMEOUT) => Err(Error::Protocol(format!(
+                "KV SET timed out (attempt {attempt}/{KV_SET_ATTEMPTS}): {}",
+                blob_id.to_base64()
+            ))),
         };
         if result.is_err() {
             self.inner.set_requests.lock().await.remove(&id);
@@ -317,12 +383,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn set_timeout_allows_slow_cursor_acknowledgements() {
-        assert_eq!(SET_TIMEOUT, Duration::from_secs(30 * 60));
+    fn get_timeout_allows_slow_cursor_responses() {
+        assert_eq!(GET_TIMEOUT, Duration::from_secs(10 * 60));
     }
 
     #[test]
-    fn get_timeout_allows_slow_cursor_responses() {
-        assert_eq!(GET_TIMEOUT, Duration::from_secs(10 * 60));
+    fn set_retries_use_short_attempt_timeouts() {
+        assert_eq!(KV_SET_ATTEMPTS, 3);
+        assert_eq!(KV_SET_ATTEMPT_TIMEOUT, Duration::from_secs(20));
     }
 }
