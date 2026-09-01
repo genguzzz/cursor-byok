@@ -80,8 +80,9 @@ impl RunEngine {
         if client.events.send(RunEvent::Ended(outcome.clone())).is_err() {
             tracing::warn!(
                 run_id = %prepared.run_id,
+                conversation_id = %prepared.conversation_id,
                 outcome = ?outcome,
-                "failed to deliver RunEvent::Ended"
+                "failed to deliver RunEvent::Ended; Cursor client may show stale planning state"
             );
         }
         tracing::info!(outcome = ?outcome, usage = ?usage, "Run ended");

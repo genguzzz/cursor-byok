@@ -62,7 +62,12 @@ impl CheckpointWorker {
                 builder.record_context_tokens(job.context_tokens);
                 let presentation = job.presentation;
                 let ready = job.ready;
-                let result = match job.kind {
+                let tool_started_round = match &job.kind {
+                    CheckpointKind::ToolStarted { round_id, .. } => Some(round_id.clone()),
+                    _ => None,
+                };
+                let kind = job.kind;
+                let result = match kind {
                     CheckpointKind::Settled(checkpoint_id)
                     | CheckpointKind::ToolSettled(checkpoint_id) => {
                         publish_settled(
@@ -123,7 +128,20 @@ impl CheckpointWorker {
                     if let Some(ready) = ready {
                         let _ = ready.send(Err(error.to_string()));
                     }
-                    tracing::error!(%error, "failed to build or publish Cursor checkpoint");
+                    if let Some(round_id) = tool_started_round {
+                        tracing::warn!(
+                            request_id = handle.request_id(),
+                            %round_id,
+                            %error,
+                            "ToolStarted checkpoint publish failed; run continues, ToolSettled will retry publish"
+                        );
+                        continue;
+                    }
+                    tracing::error!(
+                        request_id = handle.request_id(),
+                        %error,
+                        "failed to build or publish Cursor checkpoint"
+                    );
                     let _ = failures.send(error).await;
                     break;
                 }

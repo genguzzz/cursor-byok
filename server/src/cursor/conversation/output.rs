@@ -208,7 +208,10 @@ impl ConversationOutput {
                 }
             };
             match input {
-                Input::CheckpointFailure(Some(error)) => return Err(error),
+                Input::CheckpointFailure(Some(error)) => {
+                    tracing::error!(%error, "checkpoint worker failed; terminating Cursor session output");
+                    return Err(error);
+                }
                 Input::CheckpointFailure(None) => {
                     checkpoint_worker_open = false;
                 }
