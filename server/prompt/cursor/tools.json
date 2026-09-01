@@ -504,6 +504,22 @@
     {
       "type": "function",
       "function": {
+        "name": "ListMcpResources",
+        "description": "Lists read-only resources exposed by configured MCP servers. Use this to discover available MCP resources before calling FetchMcpResource. Optionally scope the listing to a single server.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "server": {
+              "description": "Optional MCP server identifier. When omitted, lists resources from all configured servers.",
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
         "name": "Read",
         "description": "Reads a file from the local filesystem. This tool can also read image files when called with the appropriate path. Formats supported: jpeg/jpg, png, gif, webp.",
         "parameters": {
@@ -569,6 +585,57 @@
               "type": "string"
             }
           }
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "WriteShellStdin",
+        "description": "Writes characters to the stdin of a running background shell identified by shell_id. Use this to respond to interactive prompts in a backgrounded Shell job.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "shell_id": {
+              "description": "Shell id of the background job, as returned by a backgrounded Shell result.",
+              "type": "integer",
+              "minimum": 0
+            },
+            "chars": {
+              "description": "Characters to write to the shell stdin.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "shell_id",
+            "chars"
+          ]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "SearchConversations",
+        "description": "Search a fast local index of the user's local conversations and cached cloud agent conversations. Every unquoted keyword must match the same conversation, so queries with many keywords often return no results; run several searches with 1–2 keywords each instead. Use quotes only for a short exact phrase. Returns conversation IDs, titles, and short snippets—not full transcripts. Some cloud agent conversations may not be searchable.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "description": "One or two keywords, or a short exact phrase in quotes, to search for in conversation titles and visible user/assistant message text. Every unquoted keyword must match the same conversation; use separate searches for additional keywords.",
+              "minLength": 1,
+              "type": "string"
+            },
+            "limit": {
+              "description": "Maximum number of conversation results to return (1-100). Defaults to 20.",
+              "maximum": 100,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "query"
+          ]
         }
       }
     },

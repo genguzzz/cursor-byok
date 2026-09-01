@@ -234,6 +234,11 @@ pub fn tool_placeholder(name: &str, call_id: &str) -> Result<pb::ToolCall> {
         }
         "awaitshell" => Tool::AwaitToolCall(pb::AwaitToolCall::default()),
         "getmcptools" => Tool::GetMcpToolsToolCall(pb::GetMcpToolsToolCall::default()),
+        "listmcpresources" => Tool::ListMcpResourcesToolCall(pb::ListMcpResourcesToolCall::default()),
+        "searchconversations" => {
+            Tool::SearchConversationsToolCall(pb::SearchConversationsToolCall::default())
+        }
+        "writeshellstdin" => Tool::WriteShellStdinToolCall(pb::WriteShellStdinToolCall::default()),
         _ => return Err(Error::Protocol(format!("unsupported tool: {name}"))),
     };
     Ok(pb::ToolCall {
@@ -286,6 +291,12 @@ pub fn render_tool_call(call: &ToolCall, completed: bool) -> Result<pb::ToolCall
             .get(name)
             .and_then(Value::as_str)
             .map(str::to_string)
+    };
+    let int = |name: &str| {
+        call.arguments
+            .get(name)
+            .and_then(Value::as_i64)
+            .map(|value| value as i32)
     };
     match output.tool.as_mut() {
         Some(pb::tool_call::Tool::ShellToolCall(tool)) => {
@@ -509,6 +520,11 @@ pub fn render_tool_call(call: &ToolCall, completed: bool) -> Result<pb::ToolCall
                 tool_call_id: call.call_id.clone(),
             })
         }
+        Some(pb::tool_call::Tool::ListMcpResourcesToolCall(tool)) => {
+            tool.args = Some(pb::ListMcpResourcesExecArgs {
+                server: optional("server"),
+            })
+        }
         Some(pb::tool_call::Tool::AwaitToolCall(tool)) => {
             tool.args = Some(pb::AwaitArgs {
                 task_id: string("shell_id"),
@@ -518,6 +534,13 @@ pub fn render_tool_call(call: &ToolCall, completed: bool) -> Result<pb::ToolCall
                     .and_then(Value::as_u64)
                     .map(|value| value as u32),
                 regex: optional("pattern"),
+            })
+        }
+        Some(pb::tool_call::Tool::SearchConversationsToolCall(tool)) => {
+            tool.args = Some(pb::ConversationSearchArgs {
+                query: string("query"),
+                tool_call_id: call.call_id.clone(),
+                limit: int("limit"),
             })
         }
         _ => {}
@@ -587,6 +610,39 @@ fn now_ms() -> u64 {
 mod tests {
     use super::tool_placeholder;
     use crate::cursor::protocol::proto::agent::v1 as pb;
+
+    #[test]
+    fn search_conversations_renders_as_a_search_conversations_placeholder() {
+        let tool = tool_placeholder("SearchConversations", "call-1")
+            .unwrap()
+            .tool;
+        assert!(matches!(
+            tool,
+            Some(pb::tool_call::Tool::SearchConversationsToolCall(_))
+        ));
+    }
+
+    #[test]
+    fn list_mcp_resources_renders_as_a_list_mcp_resources_placeholder() {
+        let tool = tool_placeholder("ListMcpResources", "call-1")
+            .unwrap()
+            .tool;
+        assert!(matches!(
+            tool,
+            Some(pb::tool_call::Tool::ListMcpResourcesToolCall(_))
+        ));
+    }
+
+    #[test]
+    fn write_shell_stdin_renders_as_a_write_shell_stdin_placeholder() {
+        let tool = tool_placeholder("WriteShellStdin", "call-1")
+            .unwrap()
+            .tool;
+        assert!(matches!(
+            tool,
+            Some(pb::tool_call::Tool::WriteShellStdinToolCall(_))
+        ));
+    }
 
     #[test]
     fn bash_renders_as_a_shell_placeholder() {

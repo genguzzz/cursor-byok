@@ -159,6 +159,18 @@ pub fn request(id: u32, call: &ToolCall, context: &ExecContext) -> Result<pb::Ag
                 "smartModeBlockReason",
             )?,
         }),
+        "searchconversations" => Message::ConversationSearchArgs(pb::ConversationSearchArgs {
+            query: string("query")?,
+            tool_call_id: call.call_id.clone(),
+            limit: int("limit"),
+        }),
+        "listmcpresources" => Message::ListMcpResourcesExecArgs(pb::ListMcpResourcesExecArgs {
+            server: optional_string("server"),
+        }),
+        "writeshellstdin" => Message::WriteShellStdinArgs(pb::WriteShellStdinArgs {
+            shell_id: shell_id(call)?,
+            chars: string("chars")?,
+        }),
         other => {
             return Err(Error::Protocol(format!(
                 "tool {other} is not executed through ExecServerMessage"
@@ -501,6 +513,22 @@ fn normalize(value: &str) -> String {
         .collect()
 }
 
+fn shell_id(call: &ToolCall) -> Result<u32> {
+    let Some(value) = call.arguments.get("shell_id") else {
+        return Err(Error::Protocol(format!("{} is missing shell_id", call.name)));
+    };
+    if let Some(value) = value.as_u64() {
+        return u32::try_from(value)
+            .map_err(|_| Error::Protocol(format!("{} shell_id is out of range", call.name)));
+    }
+    let value = value.as_str().ok_or_else(|| {
+        Error::Protocol(format!("{} shell_id must be an integer", call.name))
+    })?;
+    value
+        .parse::<u32>()
+        .map_err(|_| Error::Protocol(format!("{} shell_id must be an integer", call.name)))
+}
+
 pub(crate) fn json_object_to_prost(
     value: &Map<String, Value>,
 ) -> std::collections::HashMap<String, prost_types::Value> {
@@ -558,5 +586,73 @@ mod tests {
             panic!("expected ShellStreamArgs");
         };
         assert_eq!(args.command, "ls -la");
+    }
+
+    #[test]
+    fn search_conversations_is_encoded_as_conversation_search_args() {
+        let call = ToolCall {
+            index: 0,
+            call_id: "call-search".into(),
+            model_call_id: "model-1".into(),
+            name: "SearchConversations".into(),
+            arguments_text: String::new(),
+            arguments: json!({ "query": "byok tools", "limit": 10 }),
+        };
+        let message = request(1, &call, &ExecContext::default()).unwrap();
+        let Some(pb::agent_server_message::Message::ExecServerMessage(exec)) = message.message
+        else {
+            panic!("expected an ExecServerMessage");
+        };
+        let Some(pb::exec_server_message::Message::ConversationSearchArgs(args)) = exec.message
+        else {
+            panic!("expected ConversationSearchArgs");
+        };
+        assert_eq!(args.query, "byok tools");
+        assert_eq!(args.limit, Some(10));
+        assert_eq!(args.tool_call_id, "call-search");
+    }
+
+    #[test]
+    fn list_mcp_resources_is_encoded_as_list_mcp_resources_exec_args() {
+        let call = ToolCall {
+            index: 0,
+            call_id: "call-list".into(),
+            model_call_id: "model-1".into(),
+            name: "ListMcpResources".into(),
+            arguments_text: String::new(),
+            arguments: json!({ "server": "user-obsidian" }),
+        };
+        let message = request(1, &call, &ExecContext::default()).unwrap();
+        let Some(pb::agent_server_message::Message::ExecServerMessage(exec)) = message.message
+        else {
+            panic!("expected an ExecServerMessage");
+        };
+        let Some(pb::exec_server_message::Message::ListMcpResourcesExecArgs(args)) = exec.message
+        else {
+            panic!("expected ListMcpResourcesExecArgs");
+        };
+        assert_eq!(args.server.as_deref(), Some("user-obsidian"));
+    }
+
+    #[test]
+    fn write_shell_stdin_is_encoded_as_write_shell_stdin_args() {
+        let call = ToolCall {
+            index: 0,
+            call_id: "call-stdin".into(),
+            model_call_id: "model-1".into(),
+            name: "WriteShellStdin".into(),
+            arguments_text: String::new(),
+            arguments: json!({ "shell_id": 7, "chars": "y\n" }),
+        };
+        let message = request(1, &call, &ExecContext::default()).unwrap();
+        let Some(pb::agent_server_message::Message::ExecServerMessage(exec)) = message.message
+        else {
+            panic!("expected an ExecServerMessage");
+        };
+        let Some(pb::exec_server_message::Message::WriteShellStdinArgs(args)) = exec.message else {
+            panic!("expected WriteShellStdinArgs");
+        };
+        assert_eq!(args.shell_id, 7);
+        assert_eq!(args.chars, "y\n");
     }
 }

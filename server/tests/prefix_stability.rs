@@ -140,7 +140,7 @@ fn every_prompt_mode_loads_the_captured_tool_set() {
             .as_path(),
     )
     .unwrap();
-    assert_eq!(assets.mode(Mode::Agent).tools.len(), 22);
+    assert_eq!(assets.mode(Mode::Agent).tools.len(), 25);
     assert_eq!(
         assets
             .mode(Mode::Agent)
@@ -151,6 +151,7 @@ fn every_prompt_mode_loads_the_captured_tool_set() {
         vec![
             "Shell",
             "AwaitShell",
+            "WriteShellStdin",
             "Grep",
             "Delete",
             "WebSearch",
@@ -166,6 +167,8 @@ fn every_prompt_mode_loads_the_captured_tool_set() {
             "AskQuestion",
             "Task",
             "GetMcpTools",
+            "SearchConversations",
+            "ListMcpResources",
             "FetchMcpResource",
             "SwitchMode",
             "CallMcpTool",
@@ -180,6 +183,7 @@ fn every_prompt_mode_loads_the_captured_tool_set() {
             "AskQuestion",
             "CallMcpTool",
             "Delete",
+            "ListMcpResources",
             "FetchMcpResource",
             "Glob",
             "Grep",
@@ -187,6 +191,7 @@ fn every_prompt_mode_loads_the_captured_tool_set() {
             "ReadLints",
             "Shell",
             "AwaitShell",
+            "WriteShellStdin",
             "StrReplace",
             "Task",
             "TodoWrite",
@@ -196,7 +201,7 @@ fn every_prompt_mode_loads_the_captured_tool_set() {
             "SembleSearch",
             "SembleFindRelated",
         ],
-        "87fce4415dd68ca758b74ef20538460182b914e205475f066b0cc5893cf57800",
+        "01001fd980e87a5186af2dc4a3534bbcc002f2be872fb800d0759490ce7836ae",
     );
     assert_mode(
         &assets,
@@ -204,6 +209,7 @@ fn every_prompt_mode_loads_the_captured_tool_set() {
         &[
             "Shell",
             "AwaitShell",
+            "WriteShellStdin",
             "Glob",
             "Grep",
             "Read",
@@ -214,12 +220,13 @@ fn every_prompt_mode_loads_the_captured_tool_set() {
             "AskQuestion",
             "CreatePlan",
             "Task",
+            "ListMcpResources",
             "FetchMcpResource",
             "CallMcpTool",
             "SembleSearch",
             "SembleFindRelated",
         ],
-        "7157ac07c538c616f19f035c2c91888f75c66887b60d2c521af752ee0817e39e",
+        "4307bef2617cdfa468a73343fa53af7224d7e085b638437ab7b227235bf4a7b4",
     );
     assert_mode(
         &assets,
@@ -228,6 +235,7 @@ fn every_prompt_mode_loads_the_captured_tool_set() {
             "AskQuestion",
             "CallMcpTool",
             "Delete",
+            "ListMcpResources",
             "FetchMcpResource",
             "Glob",
             "Grep",
@@ -235,6 +243,7 @@ fn every_prompt_mode_loads_the_captured_tool_set() {
             "ReadLints",
             "Shell",
             "AwaitShell",
+            "WriteShellStdin",
             "StrReplace",
             "Task",
             "TodoWrite",
@@ -244,7 +253,7 @@ fn every_prompt_mode_loads_the_captured_tool_set() {
             "SembleSearch",
             "SembleFindRelated",
         ],
-        "87fce4415dd68ca758b74ef20538460182b914e205475f066b0cc5893cf57800",
+        "01001fd980e87a5186af2dc4a3534bbcc002f2be872fb800d0759490ce7836ae",
     );
     assert_mode(
         &assets,
@@ -253,6 +262,7 @@ fn every_prompt_mode_loads_the_captured_tool_set() {
             "AskQuestion",
             "CallMcpTool",
             "Delete",
+            "ListMcpResources",
             "FetchMcpResource",
             "Glob",
             "Grep",
@@ -260,6 +270,7 @@ fn every_prompt_mode_loads_the_captured_tool_set() {
             "ReadLints",
             "Shell",
             "AwaitShell",
+            "WriteShellStdin",
             "StrReplace",
             "SwitchMode",
             "Task",
@@ -271,7 +282,7 @@ fn every_prompt_mode_loads_the_captured_tool_set() {
             "SembleSearch",
             "SembleFindRelated",
         ],
-        "97d2e476819b0c627f9bd22dce1e2dcb49a7fbc72ded7a7df9e99538ecaf958d",
+        "dc7ec179d58214c676b4dff4aa05caf6d6f8289fcc908efc27105f5da9d0c637",
     );
     assert_mode(
         &assets,
@@ -279,6 +290,7 @@ fn every_prompt_mode_loads_the_captured_tool_set() {
         &[
             "Shell",
             "AwaitShell",
+            "WriteShellStdin",
             "Grep",
             "Delete",
             "WebSearch",
@@ -292,6 +304,7 @@ fn every_prompt_mode_loads_the_captured_tool_set() {
             "Read",
             "Glob",
             "GetMcpTools",
+            "ListMcpResources",
             "FetchMcpResource",
             "SwitchMode",
             "UpdateCurrentStep",
@@ -299,7 +312,7 @@ fn every_prompt_mode_loads_the_captured_tool_set() {
             "SembleSearch",
             "SembleFindRelated",
         ],
-        "1fb5d72eddd2a1304f530ed23ce33da5931a81695b4403ae1c6700ff343dce54",
+        "9d67fe941124b28a595b9e1264a9020b47584aeae06921189df40c15d73efbcd",
     );
     assert_mode(
         &assets,
@@ -309,7 +322,7 @@ fn every_prompt_mode_loads_the_captured_tool_set() {
     );
     assert_eq!(
         schema_digest(&assets.mode(Mode::Agent).tools),
-        "e254700ad451dca5e77fe0452f90ca2be7f30da1cec006509a3147f12cde9e8c"
+        "c14a3611bc5d6f65f488f988ccd67f3b3d78f8135629457fca576f832e22e549"
     );
     let task = assets
         .mode(Mode::Agent)
@@ -536,6 +549,7 @@ fn subagent_uses_the_agent_prompt_and_only_the_captured_tool_delta() {
         vec![
             "Shell",
             "AwaitShell",
+            "WriteShellStdin",
             "Grep",
             "Delete",
             "WebSearch",
@@ -548,6 +562,7 @@ fn subagent_uses_the_agent_prompt_and_only_the_captured_tool_delta() {
             "Read",
             "Glob",
             "GetMcpTools",
+            "ListMcpResources",
             "FetchMcpResource",
             "SwitchMode",
             "UpdateCurrentStep",

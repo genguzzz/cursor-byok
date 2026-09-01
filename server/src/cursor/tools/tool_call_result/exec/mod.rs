@@ -81,6 +81,21 @@ pub(crate) fn from_exec(
                 _ => render::write(result)?,
             });
         }
+        (
+            Some(Tool::SearchConversationsToolCall(tool)),
+            Message::ConversationSearchResult(result),
+        ) => {
+            tool.result = Some(result.clone());
+        }
+        (
+            Some(Tool::ListMcpResourcesToolCall(tool)),
+            Message::ListMcpResourcesExecResult(result),
+        ) => {
+            tool.result = Some(result.clone());
+        }
+        (Some(Tool::WriteShellStdinToolCall(tool)), Message::WriteShellStdinResult(result)) => {
+            tool.result = Some(result.clone());
+        }
         _ => {
             return Err(Error::Protocol(format!(
                 "unexpected Exec result for tool {}",

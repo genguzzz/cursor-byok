@@ -16,6 +16,9 @@ pub(super) fn output(
         Message::McpResult(value) => mcp(value),
         Message::ReadMcpResourceExecResult(value) => read_mcp(value),
         Message::SubagentResult(value) => task(value, call),
+        Message::ConversationSearchResult(value) => conversation_search(value),
+        Message::ListMcpResourcesExecResult(value) => list_mcp_resources(value),
+        Message::WriteShellStdinResult(value) => write_shell_stdin(value),
         _ => Err(Error::Protocol(
             "unsupported terminal ExecClientMessage".into(),
         )),
@@ -410,6 +413,181 @@ fn creates_subagent(call: &ToolCall) -> bool {
     )
 }
 
+fn conversation_search(value: &pb::ConversationSearchResult) -> Result<(String, bool)> {
+    use pb::conversation_search_result::Result as R;
+    match value.result.as_ref().ok_or_else(|| missing("conversation search"))? {
+        R::Success(success) => Ok((conversation_search_success(success), false)),
+        R::Error(value) => Ok((value.error.clone(), true)),
+    }
+}
+
+fn conversation_search_success(value: &pb::ConversationSearchSuccess) -> String {
+    if value.hits.is_empty() {
+        return "No matching conversations found.".into();
+    }
+    let mut lines = vec![format!("Found {} conversation(s):", value.hits.len())];
+    for (index, hit) in value.hits.iter().enumerate() {
+        lines.push(format!(
+            "{}. [{}] {} ({})",
+            index + 1,
+            conversation_search_source(hit.source),
+            hit.title,
+            hit.conversation_id
+        ));
+        if hit.updated_at_ms > 0 {
+            lines.push(format!("   updated_at_ms={}", hit.updated_at_ms));
+        }
+        if let Some(snippet) = hit.snippet.as_deref().filter(|snippet| !snippet.is_empty()) {
+            lines.push(format!("   snippet: {snippet}"));
+        }
+    }
+    let mut notes = Vec::new();
+    if value.truncated {
+        notes.push("truncated");
+    }
+    if value.partial {
+        notes.push("partial");
+    }
+    if value.rebuilding {
+        notes.push("rebuilding");
+    }
+    if !notes.is_empty() {
+        lines.push(format!("[{}]", notes.join(", ")));
+    }
+    lines.join("\n")
+}
+
+fn conversation_search_source(value: i32) -> &'static str {
+    match pb::ConversationSearchSource::try_from(value) {
+        Ok(pb::ConversationSearchSource::Local) => "local",
+        Ok(pb::ConversationSearchSource::CloudCache) => "cloud_cache",
+        Ok(pb::ConversationSearchSource::Unspecified) | Err(_) => "unknown",
+    }
+}
+
+fn list_mcp_resources(value: &pb::ListMcpResourcesExecResult) -> Result<(String, bool)> {
+    use pb::list_mcp_resources_exec_result::Result as R;
+    match value
+        .result
+        .as_ref()
+        .ok_or_else(|| missing("list MCP resources"))?
+    {
+        R::Success(success) => Ok((list_mcp_resources_success(success), false)),
+        R::Error(value) => Ok((value.error.clone(), true)),
+        R::Rejected(value) => Ok((value.reason.clone(), true)),
+    }
+}
+
+fn list_mcp_resources_success(value: &pb::ListMcpResourcesSuccess) -> String {
+    if value.resources.is_empty() {
+        return "No MCP resources found.".into();
+    }
+    value
+        .resources
+        .iter()
+        .map(|resource| {
+            let mut parts = vec![format!("{} ({})", resource.uri, resource.server)];
+            if let Some(name) = resource.name.as_deref().filter(|name| !name.is_empty()) {
+                parts.push(format!("name: {name}"));
+            }
+            if let Some(description) = resource
+                .description
+                .as_deref()
+                .filter(|description| !description.is_empty())
+            {
+                parts.push(format!("description: {description}"));
+            }
+            if let Some(mime_type) = resource
+                .mime_type
+                .as_deref()
+                .filter(|mime_type| !mime_type.is_empty())
+            {
+                parts.push(format!("mime_type: {mime_type}"));
+            }
+            parts.join(" | ")
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn write_shell_stdin(value: &pb::WriteShellStdinResult) -> Result<(String, bool)> {
+    use pb::write_shell_stdin_result::Result as R;
+    match value
+        .result
+        .as_ref()
+        .ok_or_else(|| missing("write shell stdin"))?
+    {
+        R::Success(success) => Ok((
+            format!(
+                "wrote stdin to shell_id={} terminal_file_length_before_input_written={}",
+                success.shell_id, success.terminal_file_length_before_input_written
+            ),
+            false,
+        )),
+        R::Error(value) => Ok((value.error.clone(), true)),
+    }
+}
+
 fn missing(name: &str) -> Error {
     Error::Protocol(format!("{name} returned no result"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{conversation_search_success, list_mcp_resources_success, write_shell_stdin};
+    use crate::cursor::protocol::proto::agent::v1 as pb;
+
+    #[test]
+    fn conversation_search_success_formats_hits_for_the_model() {
+        let text = conversation_search_success(&pb::ConversationSearchSuccess {
+            hits: vec![pb::ConversationSearchHit {
+                conversation_id: "conv-1".into(),
+                title: "BYOK tools".into(),
+                source: pb::ConversationSearchSource::Local as i32,
+                updated_at_ms: 1_700_000_000_000,
+                snippet: Some("SearchConversations missing".into()),
+            }],
+            truncated: true,
+            partial: false,
+            rebuilding: false,
+        });
+        assert!(text.contains("BYOK tools"));
+        assert!(text.contains("conv-1"));
+        assert!(text.contains("SearchConversations missing"));
+        assert!(text.contains("[truncated]"));
+    }
+
+    #[test]
+    fn list_mcp_resources_success_formats_resources_for_the_model() {
+        let text = list_mcp_resources_success(&pb::ListMcpResourcesSuccess {
+            resources: vec![pb::list_mcp_resources_exec_result::McpResource {
+                uri: "note://vault/readme".into(),
+                name: Some("readme".into()),
+                description: Some("Vault readme".into()),
+                mime_type: Some("text/markdown".into()),
+                server: "user-obsidian".into(),
+                annotations: Default::default(),
+            }],
+        });
+        assert!(text.contains("note://vault/readme"));
+        assert!(text.contains("user-obsidian"));
+        assert!(text.contains("Vault readme"));
+    }
+
+    #[test]
+    fn write_shell_stdin_success_formats_confirmation_for_the_model() {
+        let (text, is_error) =
+            write_shell_stdin(&pb::WriteShellStdinResult {
+                result: Some(pb::write_shell_stdin_result::Result::Success(
+                    pb::WriteShellStdinSuccess {
+                        shell_id: 7,
+                        terminal_file_length_before_input_written: 42,
+                    },
+                )),
+            })
+            .unwrap();
+        assert!(!is_error);
+        assert!(text.contains("shell_id=7"));
+        assert!(text.contains("terminal_file_length_before_input_written=42"));
+    }
 }
