@@ -18,7 +18,8 @@ use crate::{
         },
         transport::{OrderedInbox, TransportHandle},
     },
-    run::{CommandResult, RunEngine, RunHandle, RunPhase},
+    run::{CommandResult, RunEngine, RunHandle, RunOutcome, RunPhase},
+    Error,
 };
 
 use super::{
@@ -791,11 +792,36 @@ fn spawn_run_request(
                 tool_runtime: generation.tool_runtime.clone(),
             },
         );
-        let finish = match output.run().await {
+        let output_result = output.run().await;
+        let engine_outcome = core_run.await.ok();
+        let finish = match output_result {
             Ok(finish) => finish,
             Err(error) => {
                 if generation.superseded.is_cancelled() {
                     RunFinish::Transport(TransportFinish::Cancelled)
+                } else if matches!(
+                    (&error, engine_outcome.as_ref()),
+                    (
+                        Error::Protocol(message),
+                        Some(RunOutcome::Completed | RunOutcome::Cancelled | RunOutcome::Failed(_))
+                    ) if message == "core event channel closed"
+                ) {
+                    match engine_outcome.unwrap_or(RunOutcome::Failed(
+                        crate::run::RunFailure::Protocol("engine task exited".into()),
+                    )) {
+                        RunOutcome::Completed => RunFinish::Transport(TransportFinish::Success),
+                        RunOutcome::Cancelled => RunFinish::Transport(TransportFinish::Cancelled),
+                        RunOutcome::Failed(failure) => {
+                            tracing::error!(
+                                request_id = handle.request_id(),
+                                error = %super::cursor_error(failure.clone()),
+                                "Cursor session failed"
+                            );
+                            RunFinish::Transport(TransportFinish::Failed(super::cursor_error(
+                                failure,
+                            )))
+                        }
+                    }
                 } else {
                     tracing::error!(
                         request_id = handle.request_id(),
@@ -806,7 +832,6 @@ fn spawn_run_request(
                 }
             }
         };
-        let _ = core_run.await;
         registry.release(&conversation_id, &run_id).await;
         if generation
             .run

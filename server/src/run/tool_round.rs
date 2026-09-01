@@ -214,11 +214,7 @@ pub(super) async fn execute(
 }
 
 async fn send(client: &RunPort, event: RunEvent) -> std::result::Result<(), RunOutcome> {
-    client
-        .events
-        .send(event)
-        .await
-        .map_err(|_| client_failure())
+    client.events.send(event).map_err(|_| client_failure())
 }
 
 fn failed(error: crate::Error) -> RunOutcome {
