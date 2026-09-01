@@ -36,9 +36,46 @@ struct OpenTool {
     ended: bool,
 }
 
+struct ThinkingDeltaCoalescer {
+    pending: String,
+}
+
+impl ThinkingDeltaCoalescer {
+    const FLUSH_BYTES: usize = 512;
+
+    fn new() -> Self {
+        Self {
+            pending: String::new(),
+        }
+    }
+
+    async fn push(
+        &mut self,
+        client: &mpsc::UnboundedSender<RunEvent>,
+        delta: String,
+    ) -> std::result::Result<(), &'static str> {
+        self.pending.push_str(&delta);
+        if self.pending.len() >= Self::FLUSH_BYTES {
+            self.flush(client).await?;
+        }
+        Ok(())
+    }
+
+    async fn flush(
+        &mut self,
+        client: &mpsc::UnboundedSender<RunEvent>,
+    ) -> std::result::Result<(), &'static str> {
+        if self.pending.is_empty() {
+            return Ok(());
+        }
+        let delta = std::mem::take(&mut self.pending);
+        send(client, RunEvent::ThinkingDelta(delta)).await
+    }
+}
+
 pub async fn consume_model_cycle(
     mut stream: ProviderStream,
-    client: &mpsc::Sender<RunEvent>,
+    client: &mpsc::UnboundedSender<RunEvent>,
     cancellation: &CancellationToken,
 ) -> std::result::Result<ModelCycleResult, ModelCycleFailure> {
     let mut model_call_id = None;
@@ -46,6 +83,7 @@ pub async fn consume_model_cycle(
     let mut reasoning = String::new();
     let mut text_open = false;
     let mut thinking_started = None::<Instant>;
+    let mut thinking_coalescer = ThinkingDeltaCoalescer::new();
     let mut tools = BTreeMap::<usize, OpenTool>::new();
     let mut call_ids = std::collections::HashSet::new();
     let mut replay_state = None;
@@ -60,7 +98,13 @@ pub async fn consume_model_cycle(
             biased;
             next = stream.next() => next,
             _ = cancellation.cancelled() => {
-                interrupt_cycle(client, text_open, thinking_started.take()).await;
+                interrupt_cycle(
+                    client,
+                    text_open,
+                    thinking_started.take(),
+                    &mut thinking_coalescer,
+                )
+                .await;
                 return Err(failure(
                     RunFailure::Client("run was cancelled".into()),
                     text,
@@ -71,7 +115,13 @@ pub async fn consume_model_cycle(
         };
         let Some(next) = next else {
             if cancellation.is_cancelled() {
-                interrupt_cycle(client, text_open, thinking_started.take()).await;
+                interrupt_cycle(
+                    client,
+                    text_open,
+                    thinking_started.take(),
+                    &mut thinking_coalescer,
+                )
+                .await;
                 return Err(failure(
                     RunFailure::Client("run was cancelled".into()),
                     text,
@@ -143,18 +193,22 @@ pub async fn consume_model_cycle(
                     Err("provider emitted ThinkingDelta before ThinkingStart")
                 } else {
                     reasoning.push_str(&delta);
-                    send(client, RunEvent::ThinkingDelta(delta)).await
+                    thinking_coalescer.push(client, delta).await
                 }
             }
             ModelEvent::ThinkingEnd => {
                 if let Some(started) = thinking_started.take() {
-                    send(
-                        client,
-                        RunEvent::ThinkingEnd {
-                            duration: started.elapsed(),
-                        },
-                    )
-                    .await
+                    if thinking_coalescer.flush(client).await.is_err() {
+                        Err("client event channel closed")
+                    } else {
+                        send(
+                            client,
+                            RunEvent::ThinkingEnd {
+                                duration: started.elapsed(),
+                            },
+                        )
+                        .await
+                    }
                 } else {
                     Err("provider emitted ThinkingEnd before ThinkingStart")
                 }
@@ -296,6 +350,14 @@ pub async fn consume_model_cycle(
             usage,
         ));
     }
+    if thinking_coalescer.flush(client).await.is_err() {
+        return Err(failure(
+            RunFailure::Client("client event channel closed".into()),
+            text,
+            reasoning,
+            usage,
+        ));
+    }
     if let Some(usage) = usage {
         if send(client, RunEvent::Usage(usage)).await.is_err() {
             return Err(failure(
@@ -326,28 +388,29 @@ pub async fn consume_model_cycle(
 }
 
 async fn send(
-    client: &mpsc::Sender<RunEvent>,
+    client: &mpsc::UnboundedSender<RunEvent>,
     event: RunEvent,
 ) -> std::result::Result<(), &'static str> {
     client
         .send(event)
-        .await
         .map_err(|_| "client event channel closed")
 }
 
 async fn interrupt_cycle(
-    client: &mpsc::Sender<RunEvent>,
+    client: &mpsc::UnboundedSender<RunEvent>,
     text_open: bool,
     thinking_started: Option<Instant>,
+    thinking_coalescer: &mut ThinkingDeltaCoalescer,
 ) {
     if text_open {
         let _ = send(client, RunEvent::TextEnd).await;
     }
-    if let Some(started) = thinking_started {
+    if thinking_started.is_some() {
+        let _ = thinking_coalescer.flush(client).await;
         let _ = send(
             client,
             RunEvent::ThinkingEnd {
-                duration: started.elapsed(),
+                duration: thinking_started.unwrap().elapsed(),
             },
         )
         .await;

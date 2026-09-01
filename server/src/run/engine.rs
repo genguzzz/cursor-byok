@@ -43,7 +43,7 @@ impl RunEngine {
             Err(error) => {
                 let outcome = RunOutcome::Failed(error.into());
                 client.phase.finish();
-                let _ = client.events.send(RunEvent::Ended(outcome.clone())).await;
+                let _ = client.events.send(RunEvent::Ended(outcome.clone()));
                 tracing::info!(outcome = ?outcome, "Run claim failed");
                 return outcome;
             }
@@ -77,12 +77,7 @@ impl RunEngine {
             tracing::error!(run_id = %prepared.run_id, %error, "failed to persist Run outcome");
         }
         client.phase.finish();
-        if client
-            .events
-            .send(RunEvent::Ended(outcome.clone()))
-            .await
-            .is_err()
-        {
+        if client.events.send(RunEvent::Ended(outcome.clone())).is_err() {
             tracing::warn!(
                 run_id = %prepared.run_id,
                 outcome = ?outcome,
@@ -821,7 +816,7 @@ pub(super) async fn wait_for_state_ready(
 }
 
 pub(super) async fn emit(client: &RunPort, event: RunEvent) -> Result<(), ()> {
-    client.events.send(event).await.map_err(|_| ())
+    client.events.send(event).map_err(|_| ())
 }
 
 pub(super) fn client_failure() -> RunOutcome {

@@ -18,7 +18,8 @@ use crate::{
         },
         transport::{OrderedInbox, TransportHandle},
     },
-    run::{CommandResult, RunEngine, RunHandle},
+    run::{CommandResult, RunEngine, RunHandle, RunOutcome},
+    Error,
 };
 
 use super::{
@@ -608,16 +609,41 @@ fn spawn_run_request(
             },
         );
         if let Err(error) = output.run().await {
+            let engine_outcome = core_run.await.ok();
             if !generation.superseded.is_cancelled() {
-                tracing::error!(
-                    request_id = handle.request_id(),
-                    %error,
-                    "Cursor session failed"
-                );
-                let _ = super::finish_failed(&handle, &error);
+                if matches!(
+                    (&error, engine_outcome.as_ref()),
+                    (
+                        Error::Protocol(message),
+                        Some(RunOutcome::Completed | RunOutcome::Cancelled | RunOutcome::Failed(_))
+                    ) if message == "core event channel closed"
+                ) {
+                    match engine_outcome.unwrap_or(RunOutcome::Failed(
+                        crate::run::RunFailure::Protocol("engine task exited".into()),
+                    )) {
+                        RunOutcome::Completed => {
+                            super::finish_success(&handle);
+                        }
+                        RunOutcome::Cancelled => {}
+                        RunOutcome::Failed(failure) => {
+                            let _ = super::finish_failed(
+                                &handle,
+                                &super::cursor_error(failure),
+                            );
+                        }
+                    }
+                } else {
+                    tracing::error!(
+                        request_id = handle.request_id(),
+                        %error,
+                        "Cursor session failed"
+                    );
+                    let _ = super::finish_failed(&handle, &error);
+                }
             }
+        } else {
+            let _ = core_run.await;
         }
-        let _ = core_run.await;
         registry.release(&conversation_id, &run_id).await;
         if generation
             .run

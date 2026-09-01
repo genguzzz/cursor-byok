@@ -181,10 +181,12 @@ impl ConversationOutput {
                 self.abort_execs().await;
                 return Ok(());
             }
-            let input = if let Ok(action) = self.runtime_actions.try_recv() {
-                Input::RuntimeAction(Some(Box::new(action)))
-            } else if let Some(completion) = ready.pop_front() {
+            let input = if let Some(completion) = ready.pop_front() {
                 Input::Completion(completion)
+            } else if let Ok(event) = self.core.events.try_recv() {
+                Input::Event(Some(event))
+            } else if let Ok(action) = self.runtime_actions.try_recv() {
+                Input::RuntimeAction(Some(Box::new(action)))
             } else {
                 tokio::select! {
                     biased;
@@ -193,8 +195,8 @@ impl ConversationOutput {
                         self.abort_execs().await;
                         return Ok(());
                     }
-                    action = self.runtime_actions.recv() => Input::RuntimeAction(action.map(Box::new)),
                     event = self.core.events.recv() => Input::Event(event),
+                    action = self.runtime_actions.recv() => Input::RuntimeAction(action.map(Box::new)),
                     completion = self.results.recv() => Input::CompletionResult(completion),
                     failure = worker.failures.recv(), if checkpoint_worker_open => Input::CheckpointFailure(failure),
                 }
@@ -989,7 +991,7 @@ enum Input {
     CheckpointFailure(Option<Error>),
 }
 
-fn cursor_error(failure: RunFailure) -> Error {
+pub(crate) fn cursor_error(failure: RunFailure) -> Error {
     match failure {
         RunFailure::Protocol(message) => Error::Protocol(message),
         RunFailure::Provider(message) => Error::Provider(message),
