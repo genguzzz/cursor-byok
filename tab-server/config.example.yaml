@@ -1,0 +1,23 @@
+# cursor-tab-server 配置示例（脱敏）
+# 复制为 config.yaml 并填入真实 token 后使用。
+#
+# token 与 cursor-byok 中 CodeBuddy 模型（cb_*）使用同一个 key，
+# 即 copilot.tencent.com 账号下的 JWT。切勿把真实 config.yaml 提交到仓库。
+token: ""
+
+upstream:
+  base_url: "https://copilot.tencent.com/v2"
+  endpoint: "/chat/completions"
+  model: "deepseek-v4-flash-ioa"
+  timeout_sec: 30
+  headers: {}
+
+tab:
+  max_input_chars: 12000
+  max_output_tokens: 256
+  enable_next_edit: true
+  enable_git_commit_message: true
+
+server:
+  listen_addr: ":8041"
+  log: true
