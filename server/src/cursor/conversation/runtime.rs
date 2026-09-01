@@ -793,25 +793,29 @@ fn spawn_run_request(
             },
         );
         let output_result = output.run().await;
-        let engine_outcome = core_run.await.ok();
+        let engine_join = core_run.await;
         let finish = match output_result {
-            Ok(finish) => finish,
+            Ok(finish) => {
+                if let Err(join_error) = &engine_join {
+                    tracing::error!(
+                        request_id = handle.request_id(),
+                        %join_error,
+                        "engine task join failed after output completed"
+                    );
+                }
+                finish
+            }
             Err(error) => {
                 if generation.superseded.is_cancelled() {
                     RunFinish::Transport(TransportFinish::Cancelled)
                 } else if matches!(
-                    (&error, engine_outcome.as_ref()),
-                    (
-                        Error::Protocol(message),
-                        Some(RunOutcome::Completed | RunOutcome::Cancelled | RunOutcome::Failed(_))
-                    ) if message == "core event channel closed"
+                    &error,
+                    Error::Protocol(message) if message == "core event channel closed"
                 ) {
-                    match engine_outcome.unwrap_or(RunOutcome::Failed(
-                        crate::run::RunFailure::Protocol("engine task exited".into()),
-                    )) {
-                        RunOutcome::Completed => RunFinish::Transport(TransportFinish::Success),
-                        RunOutcome::Cancelled => RunFinish::Transport(TransportFinish::Cancelled),
-                        RunOutcome::Failed(failure) => {
+                    match engine_join {
+                        Ok(RunOutcome::Completed) => RunFinish::Transport(TransportFinish::Success),
+                        Ok(RunOutcome::Cancelled) => RunFinish::Transport(TransportFinish::Cancelled),
+                        Ok(RunOutcome::Failed(failure)) => {
                             tracing::error!(
                                 request_id = handle.request_id(),
                                 error = %super::cursor_error(failure.clone()),
@@ -819,6 +823,16 @@ fn spawn_run_request(
                             );
                             RunFinish::Transport(TransportFinish::Failed(super::cursor_error(
                                 failure,
+                            )))
+                        }
+                        Err(join_error) => {
+                            tracing::error!(
+                                request_id = handle.request_id(),
+                                %join_error,
+                                "engine task join failed after core event channel closed"
+                            );
+                            RunFinish::Transport(TransportFinish::Failed(Error::Protocol(
+                                "engine exited unexpectedly".into(),
                             )))
                         }
                     }
