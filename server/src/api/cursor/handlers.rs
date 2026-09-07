@@ -7,12 +7,14 @@ use axum::{
     Router,
 };
 use tower_http::decompression::RequestDecompressionLayer;
+use prost::Message;
 
 use crate::{
+
     api::cursor::{
         bidi,
         proxy::{self, CursorProxy},
-        run_sse,
+        run, run_sse,
     },
     cursor::{
         protocol::{
@@ -27,6 +29,14 @@ use crate::{
     },
     Result,
 };
+
+#[derive(Clone, PartialEq, Message)]
+struct CliServerConfig {
+    #[prost(string, tag = "6")]
+    config_version: String,
+    #[prost(bool, optional, tag = "28")]
+    cli_sandbox_default_enabled: Option<bool>,
+}
 
 pub fn router(
     registry: TransportRegistry,
@@ -46,6 +56,7 @@ fn router_with_proxy(
     let free_entitlements = FreeEntitlementCache::default();
     Router::new()
         .route("/__byok-api__/healthz", get(health))
+        .route("/agent.v1.AgentService/Run", post(run::run))
         .route("/agent.v1.AgentService/RunSSE", post(run_sse_handler))
         .route("/aiserver.v1.BidiService/BidiAppend", post(bidi_handler))
         .route(
@@ -70,7 +81,7 @@ fn router_with_proxy(
         )
         .route(
             "/aiserver.v1.ServerConfigService/GetServerConfig",
-            post(server_config::get),
+            post(server_config),
         )
         .route(
             "/aiserver.v1.AiService/AvailableModels",
@@ -184,6 +195,27 @@ async fn is_connected() -> Result<Response<Body>> {
     response.headers_mut().insert(
         header::CONTENT_TYPE,
         HeaderValue::from_static("application/proto"),
+    );
+    Ok(response)
+}
+
+/// Keeps modern Cursor CLI traffic on the configured local endpoint. The
+/// official response may advertise a separate Agent URL, which would bypass
+/// the local BYOK `AgentService/Run` route after model discovery.
+async fn server_config() -> Result<Response<Body>> {
+    let response = CliServerConfig {
+        config_version: "cursor-byok-cli-local".into(),
+        cli_sandbox_default_enabled: Some(true),
+    };
+    let mut response = Response::new(Body::from(response.encode_to_vec()));
+    *response.status_mut() = StatusCode::OK;
+    response.headers_mut().insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("application/proto"),
+    );
+    response.headers_mut().insert(
+        "connect-protocol-version",
+        HeaderValue::from_static("1"),
     );
     Ok(response)
 }
