@@ -166,6 +166,27 @@ impl ControlService {
         &self.cursor_harness
     }
 
+    pub async fn cursor_accounts(
+        &self,
+        probe: bool,
+    ) -> Result<Vec<crate::local_app::CursorAccountView>> {
+        self.cursor_harness.cursor_accounts(probe).await
+    }
+
+    pub async fn switch_cursor_account(
+        &self,
+        account_id: &str,
+    ) -> Result<Vec<crate::local_app::CursorAccountView>> {
+        self.cursor_harness.switch_cursor_account(account_id).await
+    }
+
+    pub async fn delete_cursor_account(
+        &self,
+        account_id: &str,
+    ) -> Result<Vec<crate::local_app::CursorAccountView>> {
+        self.cursor_harness.delete_cursor_account(account_id).await
+    }
+
     pub async fn plugins(&self) -> Vec<PluginDescriptor> {
         self.plugins.plugins().await
     }

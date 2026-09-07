@@ -77,7 +77,11 @@ impl RunEngine {
             tracing::error!(run_id = %prepared.run_id, %error, "failed to persist Run outcome");
         }
         client.phase.finish();
-        if client.events.send(RunEvent::Ended(outcome.clone())).is_err() {
+        if client
+            .events
+            .send(RunEvent::Ended(outcome.clone()))
+            .is_err()
+        {
             tracing::warn!(
                 run_id = %prepared.run_id,
                 conversation_id = %prepared.conversation_id,

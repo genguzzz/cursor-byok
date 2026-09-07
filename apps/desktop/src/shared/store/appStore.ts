@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from "react";
-import { api, type CursorHarnessStatus, type LlmCall, type Model, type ModelInput, type Overview, type PluginDescriptor, type PluginRuntimeStatus, type PortSettings } from "../api";
+import { api, type CursorAccount, type CursorHarnessStatus, type LlmCall, type Model, type ModelInput, type Overview, type PluginDescriptor, type PluginRuntimeStatus, type PortSettings } from "../api";
 import { applyTheme, isThemeId, type ThemeId } from "../theme/theme";
 
 export type AppSnapshot = {
@@ -15,6 +15,7 @@ export type AppSnapshot = {
   cursorBusy: boolean;
   pluginRuntime: PluginRuntimeStatus | null;
   plugins: PluginDescriptor[];
+  cursorAccounts: CursorAccount[];
 };
 
 const savedTheme = (): ThemeId => {
@@ -49,6 +50,7 @@ let snapshot: AppSnapshot = {
   cursorBusy: false,
   pluginRuntime: null,
   plugins: [],
+  cursorAccounts: [],
 };
 
 const listeners = new Set<() => void>();
@@ -148,6 +150,20 @@ export const appStore = {
       update({ error: cause instanceof Error ? cause.message : String(cause) });
       return null;
     }
+  },
+  async refreshCursorAccounts(probe = false) {
+    try {
+      update({ cursorAccounts: await api.cursorAccounts(probe) });
+    } catch (cause) {
+      update({ error: cause instanceof Error ? cause.message : String(cause) });
+    }
+  },
+  async switchCursorAccount(accountId: string) {
+    update({ cursorAccounts: await api.switchCursorAccount(accountId) });
+  },
+  async deleteCursorAccount(accountId: string) {
+    await api.deleteCursorAccount(accountId);
+    update({ cursorAccounts: await api.cursorAccounts() });
   },
   async refreshPlugins() {
     try {

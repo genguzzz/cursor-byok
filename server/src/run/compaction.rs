@@ -351,14 +351,14 @@ mod tests {
     #[test]
     fn partition_keeps_request_context_outside_summary() {
         let messages = vec![
-            CanonicalMessage::text(
-                "request-context:ctx",
-                Role::User,
-                Origin::Runtime,
-                "rules",
-            ),
+            CanonicalMessage::text("request-context:ctx", Role::User, Origin::Runtime, "rules"),
             CanonicalMessage::text("runtime:turn-1", Role::User, Origin::Runtime, "task"),
-            CanonicalMessage::text("assistant:turn-1", Role::Assistant, Origin::Assistant, "work"),
+            CanonicalMessage::text(
+                "assistant:turn-1",
+                Role::Assistant,
+                Origin::Assistant,
+                "work",
+            ),
         ];
         let current_ids = HashSet::from(["runtime:turn-1"]);
         let (compactable, retained_context, retained_tail) = partition(&messages, &current_ids);
@@ -424,17 +424,15 @@ mod tests {
         let (compactable, _, retained_tail) = partition(&messages, &current_ids);
 
         project_messages(&compactable).expect("compactable history must project");
-        assert!(
-            !compactable.iter().any(|message| {
-                matches!(
-                    message.content,
-                    MessageContent::Assistant {
-                        tool_calls: ref calls,
-                        ..
-                    } if !calls.is_empty()
-                )
-            })
-        );
+        assert!(!compactable.iter().any(|message| {
+            matches!(
+                message.content,
+                MessageContent::Assistant {
+                    tool_calls: ref calls,
+                    ..
+                } if !calls.is_empty()
+            )
+        }));
         assert!(retained_tail.iter().any(|message| {
             matches!(
                 message.content,

@@ -20,10 +20,15 @@ pub fn response_event(
             text: text.clone(),
             is_server_notice: false,
         }),
-        ModelEvent::ThinkingDelta(text) => Message::ThinkingDelta(pb::ThinkingDeltaUpdate {
-            text: text.clone(),
-            thinking_style: Some(pb::ThinkingStyle::Default as i32),
-        }),
+        ModelEvent::ThinkingDelta { text, style } => {
+            Message::ThinkingDelta(pb::ThinkingDeltaUpdate {
+                text: text.clone(),
+                thinking_style: Some(match style {
+                    crate::provider::ThinkingStyle::Default => pb::ThinkingStyle::Default as i32,
+                    crate::provider::ThinkingStyle::Gpt5 => pb::ThinkingStyle::Gpt5 as i32,
+                }),
+            })
+        }
         ModelEvent::ToolCallStart { call_id, name, .. } => {
             Message::PartialToolCall(pb::PartialToolCallUpdate {
                 call_id: call_id.clone(),
@@ -168,5 +173,36 @@ pub fn server_interaction(message: pb::interaction_update::Message) -> pb::Agent
                 message: Some(message),
             },
         )),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+
+    use super::*;
+
+    #[test]
+    fn gpt5_reasoning_delta_keeps_its_presentation_style() {
+        let message = response_event(
+            &ModelEvent::ThinkingDelta {
+                text: "正在分析请求。".into(),
+                style: crate::provider::ThinkingStyle::Gpt5,
+            },
+            "",
+            &BTreeMap::new(),
+        )
+        .unwrap()
+        .unwrap();
+        let pb::agent_server_message::Message::InteractionUpdate(update) = message.message.unwrap()
+        else {
+            panic!("expected interaction update");
+        };
+        let Some(pb::interaction_update::Message::ThinkingDelta(delta)) = update.message else {
+            panic!("expected thinking delta");
+        };
+
+        assert_eq!(delta.text, "正在分析请求。");
+        assert_eq!(delta.thinking_style, Some(pb::ThinkingStyle::Gpt5 as i32));
     }
 }

@@ -1,6 +1,8 @@
 use std::time::Duration;
 
-use cursor_server::local_app::{CursorHarness, CursorHarnessStatus, IntegrationState, PROXYMAN_PROXY_ADDR};
+use cursor_server::local_app::{
+    CursorHarness, CursorHarnessStatus, IntegrationState, PROXYMAN_PROXY_ADDR,
+};
 use tauri::{
     menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem},
     tray::TrayIconBuilder,
@@ -54,14 +56,7 @@ pub fn create(app: &mut App, harness: CursorHarness) -> tauri::Result<()> {
         false,
         None::<&str>,
     )?;
-    let debug = CheckMenuItem::with_id(
-        app,
-        DEBUG_MENU_ID,
-        "调试模式",
-        true,
-        false,
-        None::<&str>,
-    )?;
+    let debug = CheckMenuItem::with_id(app, DEBUG_MENU_ID, "调试模式", true, false, None::<&str>)?;
     // Display-only line; disabled so it never looks clickable.
     let status = MenuItem::with_id(app, STATUS_MENU_ID, "状态: 读取中…", false, None::<&str>)?;
     let quit = MenuItem::with_id(app, QUIT_MENU_ID, "退出", true, None::<&str>)?;

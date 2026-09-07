@@ -748,8 +748,8 @@ mod tests {
         // daemon.json 不存在时原样返回(无法解析不是错误)。
         let _base = "http://tclaude-daemon/v1/messages?beta=true".to_string();
         // 无法在测试中依赖真实的 ~/.tclaude/daemon.json，只验证非 tclaude 主机不受影响。
-        let untouched = resolve_tclaude_daemon_host("https://api.anthropic.com/v1/messages".into())
-            .unwrap();
+        let untouched =
+            resolve_tclaude_daemon_host("https://api.anthropic.com/v1/messages".into()).unwrap();
         assert_eq!(untouched, "https://api.anthropic.com/v1/messages");
     }
 

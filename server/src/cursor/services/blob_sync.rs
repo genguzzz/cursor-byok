@@ -148,9 +148,8 @@ impl BlobSynchronizer {
                 }
             }
         }
-        let error = last_error.unwrap_or_else(|| {
-            Error::Protocol(format!("KV SET failed: {}", blob_id.to_base64()))
-        });
+        let error = last_error
+            .unwrap_or_else(|| Error::Protocol(format!("KV SET failed: {}", blob_id.to_base64())));
         tracing::error!(
             request_id = self.request_id(),
             blob_id = blob_id.to_base64(),

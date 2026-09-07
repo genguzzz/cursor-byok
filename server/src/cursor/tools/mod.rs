@@ -6,8 +6,8 @@ use std::{
 
 use tokio::sync::Mutex;
 
-pub mod codec;
 pub(crate) mod await_shell;
+pub mod codec;
 pub(crate) mod compat;
 pub(crate) mod edit;
 pub(crate) mod registry;

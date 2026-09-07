@@ -6,7 +6,7 @@ use crate::{
         ContentPart, ModelInvocation, ModelLatency, ProjectedContent, ProjectedMessage,
         ProviderReplayState, Role, Usage,
     },
-    provider::{FinishReason, ModelEvent},
+    provider::{FinishReason, ModelEvent, ThinkingStyle},
     Error, Result,
 };
 
@@ -124,7 +124,10 @@ pub fn model_event(value: &serde_json::Value) -> Result<ModelEvent> {
         "text-delta" => ModelEvent::TextDelta(required_str(value, "text")?.to_owned()),
         "text-end" => ModelEvent::TextEnd,
         "thinking-start" => ModelEvent::ThinkingStart,
-        "thinking-delta" => ModelEvent::ThinkingDelta(required_str(value, "text")?.to_owned()),
+        "thinking-delta" => ModelEvent::ThinkingDelta {
+            text: required_str(value, "text")?.to_owned(),
+            style: ThinkingStyle::Default,
+        },
         "thinking-end" => ModelEvent::ThinkingEnd,
         "tool-call-start" => ModelEvent::ToolCallStart {
             index: required_index(value)?,

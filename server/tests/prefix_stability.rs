@@ -535,7 +535,10 @@ fn subagent_uses_the_agent_prompt_and_only_the_captured_tool_delta() {
     let subagent_prompt = compiler
         .prompt_spec(Mode::Subagent, &ModelSpec::new("model"), &[], false)
         .unwrap();
-    assert_eq!(agent_prompt.instructions, subagent_prompt.instructions);
+    assert!(agent_prompt.instructions.contains("<conversation_summary>"));
+    assert!(!subagent_prompt
+        .instructions
+        .contains("<conversation_summary>"));
 
     let request = compiler
         .prompt_spec(Mode::Subagent, &ModelSpec::new("model"), &[], false)

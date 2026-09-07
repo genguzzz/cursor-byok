@@ -1,13 +1,13 @@
 //! Configures the local application proxy.
 use std::{net::SocketAddr, sync::Arc, time::Instant};
 
+use http_body_util::BodyExt as _;
 use hudsucker::{
     certificate_authority::RcgenAuthority,
     hyper::{Request, Uri},
     rustls::crypto::aws_lc_rs,
     Body, HttpContext, HttpHandler, Proxy, RequestOrResponse,
 };
-use http_body_util::BodyExt as _;
 use tokio::{net::TcpListener, sync::oneshot, task::JoinHandle};
 
 use parking_lot::{Mutex, RwLock};
@@ -261,11 +261,7 @@ impl HttpHandler for CursorRelay {
     ) -> RequestOrResponse {
         let (mut parts, body) = request.into_parts();
         let original = parts.uri.clone();
-        let host = parts
-            .uri
-            .host()
-            .map(str::to_owned)
-            .unwrap_or_default();
+        let host = parts.uri.host().map(str::to_owned).unwrap_or_default();
         let cursor_host = is_cursor_host(&host);
         let locally_routed = should_route_locally(original.path(), *self.tab_mode.read());
 

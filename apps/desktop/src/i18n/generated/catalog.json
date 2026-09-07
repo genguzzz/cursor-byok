@@ -33,7 +33,7 @@
       "refs": [
         {
           "file": "features/models/CursorModelEditor.tsx",
-          "line": 152,
+          "line": 153,
           "column": 40
         }
       ]
@@ -80,6 +80,20 @@
           "file": "features/plugins/PluginResourcePanels.tsx",
           "line": 243,
           "column": 16
+        }
+      ]
+    },
+    "03a6429eba2e6795": {
+      "source": "已删除 {email}",
+      "kind": "template",
+      "placeholders": [
+        "email"
+      ],
+      "refs": [
+        {
+          "file": "features/accounts/CursorAccountsPage.tsx",
+          "line": 45,
+          "column": 15
         }
       ]
     },
@@ -205,7 +219,7 @@
       "refs": [
         {
           "file": "features/models/CursorModelEditor.tsx",
-          "line": 182,
+          "line": 183,
           "column": 16
         },
         {
@@ -338,6 +352,18 @@
         }
       ]
     },
+    "0ccf2064fe49eb2c": {
+      "source": "临时",
+      "kind": "text",
+      "placeholders": [],
+      "refs": [
+        {
+          "file": "features/accounts/CursorAccountsPage.tsx",
+          "line": 119,
+          "column": 61
+        }
+      ]
+    },
     "0d2dab3d62eb73d6": {
       "source": "全部统计数据已清理",
       "kind": "text",
@@ -428,6 +454,18 @@
         }
       ]
     },
+    "11afd2a534395b18": {
+      "source": "有效",
+      "kind": "text",
+      "placeholders": [],
+      "refs": [
+        {
+          "file": "features/accounts/CursorAccountsPage.tsx",
+          "line": 147,
+          "column": 26
+        }
+      ]
+    },
     "124be3f86f197802": {
       "source": "Token 消耗",
       "kind": "text",
@@ -447,7 +485,7 @@
       "refs": [
         {
           "file": "features/models/CursorModelEditor.tsx",
-          "line": 169,
+          "line": 170,
           "column": 16
         },
         {
@@ -512,7 +550,7 @@
       "refs": [
         {
           "file": "features/models/CursorModelEditor.tsx",
-          "line": 154,
+          "line": 155,
           "column": 286
         }
       ]
@@ -524,12 +562,12 @@
       "refs": [
         {
           "file": "features/models/CursorModelEditor.tsx",
-          "line": 143,
+          "line": 144,
           "column": 59
         },
         {
           "file": "features/models/CursorModelEditor.tsx",
-          "line": 143,
+          "line": 144,
           "column": 124
         }
       ]
@@ -778,17 +816,17 @@
       "refs": [
         {
           "file": "features/models/CursorModelEditor.tsx",
-          "line": 158,
+          "line": 159,
           "column": 49
         },
         {
           "file": "features/models/CursorModelEditor.tsx",
-          "line": 160,
+          "line": 161,
           "column": 50
         },
         {
           "file": "features/models/CursorModelEditor.tsx",
-          "line": 163,
+          "line": 164,
           "column": 50
         }
       ]
@@ -902,7 +940,7 @@
       "refs": [
         {
           "file": "features/models/CursorModelEditor.tsx",
-          "line": 154,
+          "line": 155,
           "column": 42
         }
       ]
@@ -928,7 +966,7 @@
       "refs": [
         {
           "file": "shell/AppLayout.tsx",
-          "line": 240,
+          "line": 241,
           "column": 14
         }
       ]
@@ -945,6 +983,18 @@
         }
       ]
     },
+    "2c1bdb2ae6a3c1dc": {
+      "source": "无效",
+      "kind": "text",
+      "placeholders": [],
+      "refs": [
+        {
+          "file": "features/accounts/CursorAccountsPage.tsx",
+          "line": 149,
+          "column": 28
+        }
+      ]
+    },
     "2caeaec539e78898": {
       "source": "思考预算 Token",
       "kind": "text",
@@ -952,7 +1002,7 @@
       "refs": [
         {
           "file": "features/models/CursorModelEditor.tsx",
-          "line": 165,
+          "line": 166,
           "column": 27
         },
         {
@@ -979,6 +1029,16 @@
       "kind": "text",
       "placeholders": [],
       "refs": [
+        {
+          "file": "features/accounts/CursorAccountsPage.tsx",
+          "line": 78,
+          "column": 20
+        },
+        {
+          "file": "features/accounts/CursorAccountsPage.tsx",
+          "line": 90,
+          "column": 20
+        },
         {
           "file": "features/home/overview/OverviewTimeRangeFilter.tsx",
           "line": 110,
@@ -1031,12 +1091,12 @@
         },
         {
           "file": "shell/AppLayout.tsx",
-          "line": 230,
+          "line": 231,
           "column": 20
         },
         {
           "file": "shell/AppLayout.tsx",
-          "line": 241,
+          "line": 242,
           "column": 20
         }
       ]
@@ -1079,7 +1139,7 @@
       "refs": [
         {
           "file": "features/models/CursorModelEditor.tsx",
-          "line": 155,
+          "line": 156,
           "column": 42
         }
       ]
@@ -1141,7 +1201,7 @@
       "refs": [
         {
           "file": "shell/AppLayout.tsx",
-          "line": 229,
+          "line": 230,
           "column": 14
         }
       ]
@@ -1166,6 +1226,16 @@
       "placeholders": [],
       "refs": [
         {
+          "file": "features/accounts/CursorAccountsPage.tsx",
+          "line": 91,
+          "column": 21
+        },
+        {
+          "file": "features/accounts/CursorAccountsPage.tsx",
+          "line": 131,
+          "column": 16
+        },
+        {
           "file": "features/models/CursorModelCards.tsx",
           "line": 167,
           "column": 96
@@ -1184,6 +1254,18 @@
           "file": "features/plugins/PluginResourcePanels.tsx",
           "line": 271,
           "column": 68
+        }
+      ]
+    },
+    "2fe0e3339ac4d1bb": {
+      "source": "已过期",
+      "kind": "text",
+      "placeholders": [],
+      "refs": [
+        {
+          "file": "features/accounts/CursorAccountsPage.tsx",
+          "line": 148,
+          "column": 28
         }
       ]
     },
@@ -1213,6 +1295,23 @@
           "file": "features/plugins/PluginResourcePanels.tsx",
           "line": 228,
           "column": 56
+        }
+      ]
+    },
+    "311bb313fdeca6aa": {
+      "source": "账号",
+      "kind": "text",
+      "placeholders": [],
+      "refs": [
+        {
+          "file": "features/accounts/CursorAccountsPage.tsx",
+          "line": 71,
+          "column": 14
+        },
+        {
+          "file": "shell/AppLayout.tsx",
+          "line": 77,
+          "column": 47
         }
       ]
     },
@@ -1274,7 +1373,7 @@
         },
         {
           "file": "shell/AppLayout.tsx",
-          "line": 242,
+          "line": 243,
           "column": 21
         }
       ]
@@ -1433,6 +1532,18 @@
           "file": "features/settings/SettingsPage.tsx",
           "line": 240,
           "column": 39
+        }
+      ]
+    },
+    "3acaa83343cf235b": {
+      "source": "未检测",
+      "kind": "text",
+      "placeholders": [],
+      "refs": [
+        {
+          "file": "features/accounts/CursorAccountsPage.tsx",
+          "line": 150,
+          "column": 28
         }
       ]
     },
@@ -1638,6 +1749,20 @@
         }
       ]
     },
+    "460afd26947565c2": {
+      "source": "已切换到 {email}",
+      "kind": "template",
+      "placeholders": [
+        "email"
+      ],
+      "refs": [
+        {
+          "file": "features/accounts/CursorAccountsPage.tsx",
+          "line": 30,
+          "column": 15
+        }
+      ]
+    },
     "461d6a57900c2ed7": {
       "source": "连通性测试失败：{error}",
       "kind": "template",
@@ -1771,7 +1896,7 @@
       "refs": [
         {
           "file": "features/models/CursorModelEditor.tsx",
-          "line": 158,
+          "line": 159,
           "column": 25
         },
         {
@@ -1851,7 +1976,7 @@
       "refs": [
         {
           "file": "features/models/CursorModelEditor.tsx",
-          "line": 149,
+          "line": 150,
           "column": 145
         }
       ]
@@ -1868,7 +1993,7 @@
         },
         {
           "file": "shell/AppLayout.tsx",
-          "line": 202,
+          "line": 203,
           "column": 67
         }
       ]
@@ -1892,7 +2017,7 @@
       "refs": [
         {
           "file": "features/models/CursorModelEditor.tsx",
-          "line": 207,
+          "line": 208,
           "column": 41
         }
       ]
@@ -2046,12 +2171,12 @@
       "refs": [
         {
           "file": "features/models/CursorModelEditor.tsx",
-          "line": 160,
+          "line": 161,
           "column": 27
         },
         {
           "file": "features/models/CursorModelEditor.tsx",
-          "line": 163,
+          "line": 164,
           "column": 27
         },
         {
@@ -2080,7 +2205,7 @@
       "refs": [
         {
           "file": "features/models/CursorModelEditor.tsx",
-          "line": 156,
+          "line": 157,
           "column": 69
         }
       ]
@@ -2219,7 +2344,7 @@
       "refs": [
         {
           "file": "shell/AppLayout.tsx",
-          "line": 246,
+          "line": 247,
           "column": 11
         }
       ]
@@ -2353,7 +2478,7 @@
       "refs": [
         {
           "file": "shared/api.ts",
-          "line": 488,
+          "line": 506,
           "column": 43
         }
       ]
@@ -2492,7 +2617,7 @@
       "refs": [
         {
           "file": "shell/AppLayout.tsx",
-          "line": 79,
+          "line": 80,
           "column": 47
         }
       ]
@@ -2615,12 +2740,12 @@
       "refs": [
         {
           "file": "shared/store/appStore.ts",
-          "line": 208,
+          "line": 224,
           "column": 23
         },
         {
           "file": "shared/store/appStore.ts",
-          "line": 215,
+          "line": 231,
           "column": 25
         }
       ]
@@ -2680,7 +2805,7 @@
       "refs": [
         {
           "file": "shared/api.ts",
-          "line": 483,
+          "line": 501,
           "column": 43
         }
       ]
@@ -2728,7 +2853,7 @@
       "refs": [
         {
           "file": "features/models/CursorModelEditor.tsx",
-          "line": 176,
+          "line": 177,
           "column": 16
         },
         {
@@ -2747,7 +2872,7 @@
       "refs": [
         {
           "file": "App.tsx",
-          "line": 52,
+          "line": 54,
           "column": 19
         }
       ]
@@ -2834,7 +2959,7 @@
       "refs": [
         {
           "file": "shared/api.ts",
-          "line": 420,
+          "line": 435,
           "column": 21
         }
       ]
@@ -2888,7 +3013,7 @@
       "refs": [
         {
           "file": "features/models/CursorModelEditor.tsx",
-          "line": 154,
+          "line": 155,
           "column": 298
         }
       ]
@@ -3004,7 +3129,7 @@
       "refs": [
         {
           "file": "features/models/CursorModelEditor.tsx",
-          "line": 149,
+          "line": 150,
           "column": 115
         }
       ]
@@ -3091,7 +3216,7 @@
       "refs": [
         {
           "file": "shell/AppLayout.tsx",
-          "line": 248,
+          "line": 249,
           "column": 16
         }
       ]
@@ -3103,7 +3228,7 @@
       "refs": [
         {
           "file": "features/models/CursorModelEditor.tsx",
-          "line": 143,
+          "line": 144,
           "column": 76
         }
       ]
@@ -3290,6 +3415,20 @@
         }
       ]
     },
+    "99803fb3bcbc35d4": {
+      "source": "切换到 {email}？若 Cursor 未立即生效，重新打开 Cursor。",
+      "kind": "template",
+      "placeholders": [
+        "email"
+      ],
+      "refs": [
+        {
+          "file": "features/accounts/CursorAccountsPage.tsx",
+          "line": 84,
+          "column": 11
+        }
+      ]
+    },
     "9b1b7ed518ee401d": {
       "source": "将在系统浏览器中打开使用教程，是否继续？",
       "kind": "text",
@@ -3297,7 +3436,7 @@
       "refs": [
         {
           "file": "shell/AppLayout.tsx",
-          "line": 235,
+          "line": 236,
           "column": 11
         }
       ]
@@ -3331,12 +3470,12 @@
         },
         {
           "file": "features/models/CursorModelEditor.tsx",
-          "line": 164,
+          "line": 165,
           "column": 27
         },
         {
           "file": "features/models/CursorModelEditor.tsx",
-          "line": 164,
+          "line": 165,
           "column": 58
         }
       ]
@@ -3650,7 +3789,7 @@
       "refs": [
         {
           "file": "shell/AppLayout.tsx",
-          "line": 231,
+          "line": 232,
           "column": 21
         }
       ]
@@ -3727,7 +3866,7 @@
       "refs": [
         {
           "file": "features/models/CursorModelEditor.tsx",
-          "line": 150,
+          "line": 151,
           "column": 61
         }
       ]
@@ -3766,7 +3905,7 @@
         },
         {
           "file": "features/models/CursorModelEditor.tsx",
-          "line": 155,
+          "line": 156,
           "column": 25
         }
       ]
@@ -3802,7 +3941,7 @@
       "refs": [
         {
           "file": "features/models/CursorModelEditor.tsx",
-          "line": 156,
+          "line": 157,
           "column": 118
         }
       ]
@@ -3881,12 +4020,12 @@
         },
         {
           "file": "shell/AppLayout.tsx",
-          "line": 262,
+          "line": 263,
           "column": 64
         },
         {
           "file": "shell/AppLayout.tsx",
-          "line": 262,
+          "line": 263,
           "column": 125
         }
       ]
@@ -4146,7 +4285,7 @@
       "refs": [
         {
           "file": "features/models/CursorModelEditor.tsx",
-          "line": 155,
+          "line": 156,
           "column": 99
         }
       ]
@@ -4214,7 +4353,7 @@
       "refs": [
         {
           "file": "shell/AppLayout.tsx",
-          "line": 253,
+          "line": 254,
           "column": 24
         }
       ]
@@ -4360,12 +4499,12 @@
       "refs": [
         {
           "file": "features/models/CursorModelEditor.tsx",
-          "line": 161,
+          "line": 162,
           "column": 27
         },
         {
           "file": "features/models/CursorModelEditor.tsx",
-          "line": 161,
+          "line": 162,
           "column": 58
         }
       ]
@@ -4442,8 +4581,20 @@
         },
         {
           "file": "features/models/CursorModelEditor.tsx",
-          "line": 154,
+          "line": 155,
           "column": 25
+        }
+      ]
+    },
+    "cb62ebd689ee8f20": {
+      "source": "当前",
+      "kind": "text",
+      "placeholders": [],
+      "refs": [
+        {
+          "file": "features/accounts/CursorAccountsPage.tsx",
+          "line": 118,
+          "column": 82
         }
       ]
     },
@@ -4456,6 +4607,18 @@
           "file": "features/plugins/PluginManagementPage.tsx",
           "line": 104,
           "column": 9
+        }
+      ]
+    },
+    "cd3266d91ae10abc": {
+      "source": "删除账号",
+      "kind": "text",
+      "placeholders": [],
+      "refs": [
+        {
+          "file": "features/accounts/CursorAccountsPage.tsx",
+          "line": 89,
+          "column": 14
         }
       ]
     },
@@ -4524,7 +4687,7 @@
       "refs": [
         {
           "file": "features/models/CursorModelEditor.tsx",
-          "line": 165,
+          "line": 166,
           "column": 50
         }
       ]
@@ -4589,7 +4752,7 @@
       "refs": [
         {
           "file": "features/models/CursorModelEditor.tsx",
-          "line": 149,
+          "line": 150,
           "column": 70
         },
         {
@@ -4613,6 +4776,18 @@
           "file": "shared/ui/Modal.tsx",
           "line": 99,
           "column": 153
+        }
+      ]
+    },
+    "d4868d37148a9a68": {
+      "source": "还没有保存的 Cursor 账号",
+      "kind": "text",
+      "placeholders": [],
+      "refs": [
+        {
+          "file": "features/accounts/CursorAccountsPage.tsx",
+          "line": 56,
+          "column": 16
         }
       ]
     },
@@ -4659,17 +4834,17 @@
       "refs": [
         {
           "file": "features/models/CursorModelEditor.tsx",
-          "line": 158,
+          "line": 159,
           "column": 121
         },
         {
           "file": "features/models/CursorModelEditor.tsx",
-          "line": 160,
+          "line": 161,
           "column": 122
         },
         {
           "file": "features/models/CursorModelEditor.tsx",
-          "line": 163,
+          "line": 164,
           "column": 122
         }
       ]
@@ -4681,7 +4856,7 @@
       "refs": [
         {
           "file": "features/models/CursorModelEditor.tsx",
-          "line": 165,
+          "line": 166,
           "column": 137
         }
       ]
@@ -4736,7 +4911,7 @@
       "refs": [
         {
           "file": "shell/AppLayout.tsx",
-          "line": 188,
+          "line": 189,
           "column": 54
         }
       ]
@@ -4772,12 +4947,12 @@
       "refs": [
         {
           "file": "features/models/CursorModelEditor.tsx",
-          "line": 111,
+          "line": 112,
           "column": 88
         },
         {
           "file": "features/models/CursorModelEditor.tsx",
-          "line": 156,
+          "line": 157,
           "column": 54
         }
       ]
@@ -4876,7 +5051,7 @@
         },
         {
           "file": "shell/AppLayout.tsx",
-          "line": 77,
+          "line": 78,
           "column": 29
         }
       ]
@@ -4919,6 +5094,18 @@
           "file": "features/settings/ProxySettingsCard.tsx",
           "line": 75,
           "column": 123
+        }
+      ]
+    },
+    "e0351ba25410c831": {
+      "source": "切换账号",
+      "kind": "text",
+      "placeholders": [],
+      "refs": [
+        {
+          "file": "features/accounts/CursorAccountsPage.tsx",
+          "line": 77,
+          "column": 14
         }
       ]
     },
@@ -5077,7 +5264,7 @@
       "refs": [
         {
           "file": "features/models/CursorModelEditor.tsx",
-          "line": 149,
+          "line": 150,
           "column": 54
         }
       ]
@@ -5135,6 +5322,18 @@
         }
       ]
     },
+    "e6b04970aaafcab4": {
+      "source": "打开此页会读取当前登录。已登录时不会注入临时账号，但可以切换到它。",
+      "kind": "text",
+      "placeholders": [],
+      "refs": [
+        {
+          "file": "features/accounts/CursorAccountsPage.tsx",
+          "line": 57,
+          "column": 14
+        }
+      ]
+    },
     "e77e3d58b0dcffaa": {
       "source": "耗时",
       "kind": "text",
@@ -5159,12 +5358,12 @@
       "refs": [
         {
           "file": "features/models/CursorModelEditor.tsx",
-          "line": 142,
+          "line": 143,
           "column": 25
         },
         {
           "file": "features/models/CursorModelEditor.tsx",
-          "line": 142,
+          "line": 143,
           "column": 55
         }
       ]
@@ -5190,6 +5389,20 @@
           "file": "features/models/LegacyModelImport.tsx",
           "line": 71,
           "column": 66
+        }
+      ]
+    },
+    "ea1e78c8ca1bedd1": {
+      "source": "从账号库删除 {email}？不会退出 Cursor 当前登录。",
+      "kind": "template",
+      "placeholders": [
+        "email"
+      ],
+      "refs": [
+        {
+          "file": "features/accounts/CursorAccountsPage.tsx",
+          "line": 96,
+          "column": 11
         }
       ]
     },
@@ -5318,6 +5531,23 @@
         }
       ]
     },
+    "eff514b8b83f29ff": {
+      "source": "切换",
+      "kind": "text",
+      "placeholders": [],
+      "refs": [
+        {
+          "file": "features/accounts/CursorAccountsPage.tsx",
+          "line": 79,
+          "column": 21
+        },
+        {
+          "file": "features/accounts/CursorAccountsPage.tsx",
+          "line": 125,
+          "column": 16
+        }
+      ]
+    },
     "f4694c46b1e19602": {
       "source": "最终请求类型",
       "kind": "text",
@@ -5405,7 +5635,7 @@
         },
         {
           "file": "shell/AppLayout.tsx",
-          "line": 78,
+          "line": 79,
           "column": 46
         }
       ]
@@ -5643,7 +5873,7 @@
       "refs": [
         {
           "file": "shell/AppLayout.tsx",
-          "line": 80,
+          "line": 81,
           "column": 48
         }
       ]

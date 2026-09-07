@@ -66,7 +66,11 @@ pub(crate) struct AwaitShellOutcome {
 pub(crate) fn decode_args(call: &ToolCall) -> Result<AwaitShellArgs> {
     let shell_id = string_arg(call, "shell_id");
     let task_id = string_arg(call, "task_id");
-    let shell_id = if shell_id.is_empty() { task_id } else { shell_id };
+    let shell_id = if shell_id.is_empty() {
+        task_id
+    } else {
+        shell_id
+    };
     let pattern = string_arg(call, "pattern");
 
     let block_until_explicit = call.arguments.get("block_until_ms").is_some();
@@ -215,7 +219,12 @@ pub(crate) fn is_terminal(outcome: &AwaitShellOutcome) -> bool {
     outcome.matched
         || matches!(
             outcome.status.as_str(),
-            "completed" | "rejected" | "permission_denied" | "transport_closed" | "error" | "unknown"
+            "completed"
+                | "rejected"
+                | "permission_denied"
+                | "transport_closed"
+                | "error"
+                | "unknown"
         )
 }
 
@@ -243,19 +252,17 @@ pub(crate) fn build_await_result(outcome: &AwaitShellOutcome) -> pb::AwaitResult
         // empty task_id, so the client renders "Slept for Ns" instead of
         // "Task still running".
         "waited" => Result::Success(pb::AwaitSuccess {
-            await_result: Some(pb::await_success::AwaitResult::Complete(
-                complete(outcome),
-            )),
+            await_result: Some(pb::await_success::AwaitResult::Complete(complete(outcome))),
         }),
-        "completed" | "rejected" | "permission_denied" | "transport_closed"
-            if !outcome.matched =>
-        {
+        "completed" | "rejected" | "permission_denied" | "transport_closed" if !outcome.matched => {
             Result::Complete(complete(outcome))
         }
         _ if outcome.matched => Result::Complete(complete(outcome)),
         _ => Result::StillRunning(still_running(outcome)),
     };
-    pb::AwaitResult { result: Some(result) }
+    pb::AwaitResult {
+        result: Some(result),
+    }
 }
 
 fn complete(outcome: &AwaitShellOutcome) -> pb::AwaitTaskComplete {
@@ -297,7 +304,10 @@ fn string_arg(call: &ToolCall, name: &str) -> String {
         .unwrap_or_default()
 }
 
-fn pattern_match(pattern: &str, output: &str) -> std::result::Result<(bool, Option<String>), String> {
+fn pattern_match(
+    pattern: &str,
+    output: &str,
+) -> std::result::Result<(bool, Option<String>), String> {
     let trimmed = pattern.trim();
     if trimmed.is_empty() {
         return Ok((false, None));
@@ -404,9 +414,10 @@ fn unquote(value: &str) -> &str {
 }
 
 fn has_metadata_key(lines: &[&str], key: &str) -> bool {
-    lines
-        .iter()
-        .any(|line| line.split_once(':').is_some_and(|(name, _)| name.trim() == key))
+    lines.iter().any(|line| {
+        line.split_once(':')
+            .is_some_and(|(name, _)| name.trim() == key)
+    })
 }
 
 fn is_zero(value: &u64) -> bool {
@@ -506,7 +517,11 @@ mod tests {
         let (matched, text) = pattern_match("started", "boot\nserver started\nok").unwrap();
         assert!(matched);
         assert_eq!(text.as_deref(), Some("started"));
-        assert!(!pattern_match("missing", "boot\nserver started\nok").unwrap().0);
+        assert!(
+            !pattern_match("missing", "boot\nserver started\nok")
+                .unwrap()
+                .0
+        );
     }
 
     #[test]

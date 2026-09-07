@@ -307,12 +307,12 @@ impl ConversationOutput {
                         }
                     }
                     RunEvent::ThinkingStart => {}
-                    RunEvent::ThinkingDelta(delta) => {
+                    RunEvent::ThinkingDelta { text: delta, style } => {
                         response_thinking.push_str(&delta);
                         if !self.context.compacting && !auto_compacting {
                             presentation.thinking_delta(&delta);
                             self.emit_model_event(
-                                crate::provider::ModelEvent::ThinkingDelta(delta),
+                                crate::provider::ModelEvent::ThinkingDelta { text: delta, style },
                                 "",
                             )?;
                         }

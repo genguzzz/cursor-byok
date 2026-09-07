@@ -27,7 +27,8 @@ pub(super) fn start(
     let started_at_ms = now_ms();
     tokio::spawn(async move {
         let outcome = wait(&args, &terminals_folder, &mut wake).await;
-        let completion = tool_call_result::await_shell::complete(&call, started_at_ms, &args, &outcome);
+        let completion =
+            tool_call_result::await_shell::complete(&call, started_at_ms, &args, &outcome);
         match completion {
             Ok(completion) => results.send(completion),
             Err(error) => results.send_error(error),
@@ -117,9 +118,7 @@ mod tests {
         let args = decode_args(&call(json!({ "block_until_ms": 60_000 }))).unwrap();
         let (tx, mut rx) = watch::channel(0u64);
 
-        let handle = tokio::spawn(async move {
-            wait(&args, "", &mut rx).await
-        });
+        let handle = tokio::spawn(async move { wait(&args, "", &mut rx).await });
 
         // Give the wait a moment to enter its select, then signal a new user
         // message and confirm it wakes before the full sleep elapses.
@@ -144,13 +143,14 @@ mod tests {
         )
         .expect("write terminal file");
 
-        let args = decode_args(&call(json!({ "shell_id": "4242", "block_until_ms": 60_000 }))).unwrap();
+        let args = decode_args(&call(
+            json!({ "shell_id": "4242", "block_until_ms": 60_000 }),
+        ))
+        .unwrap();
         let (tx, mut rx) = watch::channel(0u64);
         let terminals_folder = dir.path().to_str().expect("utf8 path").to_string();
 
-        let handle = tokio::spawn(async move {
-            wait(&args, &terminals_folder, &mut rx).await
-        });
+        let handle = tokio::spawn(async move { wait(&args, &terminals_folder, &mut rx).await });
 
         tokio::time::sleep(Duration::from_millis(50)).await;
         tx.send_modify(|generation| *generation += 1);

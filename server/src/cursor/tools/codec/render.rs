@@ -234,7 +234,9 @@ pub fn tool_placeholder(name: &str, call_id: &str) -> Result<pb::ToolCall> {
         }
         "awaitshell" => Tool::AwaitToolCall(pb::AwaitToolCall::default()),
         "getmcptools" => Tool::GetMcpToolsToolCall(pb::GetMcpToolsToolCall::default()),
-        "listmcpresources" => Tool::ListMcpResourcesToolCall(pb::ListMcpResourcesToolCall::default()),
+        "listmcpresources" => {
+            Tool::ListMcpResourcesToolCall(pb::ListMcpResourcesToolCall::default())
+        }
         "searchconversations" => {
             Tool::SearchConversationsToolCall(pb::SearchConversationsToolCall::default())
         }
@@ -624,9 +626,7 @@ mod tests {
 
     #[test]
     fn list_mcp_resources_renders_as_a_list_mcp_resources_placeholder() {
-        let tool = tool_placeholder("ListMcpResources", "call-1")
-            .unwrap()
-            .tool;
+        let tool = tool_placeholder("ListMcpResources", "call-1").unwrap().tool;
         assert!(matches!(
             tool,
             Some(pb::tool_call::Tool::ListMcpResourcesToolCall(_))
@@ -635,9 +635,7 @@ mod tests {
 
     #[test]
     fn write_shell_stdin_renders_as_a_write_shell_stdin_placeholder() {
-        let tool = tool_placeholder("WriteShellStdin", "call-1")
-            .unwrap()
-            .tool;
+        let tool = tool_placeholder("WriteShellStdin", "call-1").unwrap().tool;
         assert!(matches!(
             tool,
             Some(pb::tool_call::Tool::WriteShellStdinToolCall(_))

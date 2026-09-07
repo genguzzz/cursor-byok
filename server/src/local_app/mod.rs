@@ -1,5 +1,6 @@
 //! Exposes the local desktop application integration.
 mod account;
+mod accounts;
 pub mod ca;
 mod proxy;
 mod settings;
@@ -214,9 +215,7 @@ impl CursorHarness {
         if debug.is_none() {
             let mut config = DebugServerConfig::default();
             config.proxy_addr = main_proxy_url;
-            let controller = DebugServer::new(config)
-                .build()
-                .map_err(Error::Config)?;
+            let controller = DebugServer::new(config).build().map_err(Error::Config)?;
             controller.install_store();
             *debug = Some(controller);
         }
@@ -286,9 +285,29 @@ impl CursorHarness {
         self.inner.proxy.lock().await.stop().await;
         Ok(())
     }
+
+    pub async fn cursor_accounts(&self, probe: bool) -> Result<Vec<accounts::CursorAccountView>> {
+        accounts::list_accounts(&self.inner.store, probe).await
+    }
+
+    pub async fn switch_cursor_account(
+        &self,
+        account_id: &str,
+    ) -> Result<Vec<accounts::CursorAccountView>> {
+        accounts::switch_account(&self.inner.store, account_id).await
+    }
+
+    pub async fn delete_cursor_account(
+        &self,
+        account_id: &str,
+    ) -> Result<Vec<accounts::CursorAccountView>> {
+        accounts::delete_account(&self.inner.store, account_id).await
+    }
 }
 
 async fn apply_cursor_configuration(proxy_url: &str) -> Result<()> {
     account::inject_if_missing().await?;
     settings::write_proxy_settings(proxy_url)
 }
+
+pub use accounts::CursorAccountView;

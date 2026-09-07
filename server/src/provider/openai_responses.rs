@@ -18,8 +18,15 @@ use super::{
     provider_event_error,
     recorder::recorded_headers,
     retry::{send_with_retry, Attempt, RetryPolicy},
-    CallRecorder, FinishReason, ModelEvent, Provider, ProviderStream,
+    CallRecorder, FinishReason, ModelEvent, Provider, ProviderStream, ThinkingStyle,
 };
+
+const VISIBLE_REASONING_SUMMARY_INSTRUCTIONS: &str =
+    "所有可见的推理摘要必须使用简体中文，并提供详细的高层摘要。不得披露隐藏的思维链；只提供允许展示的摘要。";
+
+fn instructions_with_reasoning_summary_rule(instructions: &str) -> String {
+    format!("{instructions}\n\n{VISIBLE_REASONING_SUMMARY_INSTRUCTIONS}")
+}
 
 #[derive(Default)]
 struct ResponseToolState {
@@ -69,10 +76,12 @@ impl Provider for OpenAiResponsesProvider {
         let recorder = self.recorder.clone();
         Box::pin(try_stream! {
             let ModelInvocation { call_id, request, run_id, .. } = invocation;
+            let thinking_style = ThinkingStyle::for_model(&request.model.model_id);
+            let instructions = instructions_with_reasoning_summary_rule(&request.prompt.instructions);
             let input = responses_input(&request.history)?;
             let mut body = json!({
                 "model": request.model.model_id, "input": input, "stream": true,
-                "instructions": request.prompt.instructions,
+                "instructions": instructions,
                 "include": ["reasoning.encrypted_content"]
             });
             if !request.prompt.tools.is_empty() {
@@ -161,7 +170,12 @@ impl Provider for OpenAiResponsesProvider {
                     }
                     "response.reasoning_summary_text.delta" | "response.reasoning_text.delta" => {
                         if !thinking_open { thinking_open = true; yield ModelEvent::ThinkingStart; }
-                        if let Some(delta) = value.get("delta").and_then(Value::as_str) { yield ModelEvent::ThinkingDelta(delta.into()); }
+                        if let Some(delta) = value.get("delta").and_then(Value::as_str) {
+                            yield ModelEvent::ThinkingDelta {
+                                text: delta.into(),
+                                style: thinking_style,
+                            };
+                        }
                     }
                     "response.reasoning_summary_text.done" | "response.reasoning_text.done" => {
                         if thinking_open { thinking_open = false; yield ModelEvent::ThinkingEnd; }
@@ -384,7 +398,7 @@ fn apply_model(
     }
     if model.reasoning.enabled || model.reasoning.effort.is_some() {
         let mut reasoning = Map::new();
-        reasoning.insert("summary".into(), json!("auto"));
+        reasoning.insert("summary".into(), json!("detailed"));
         if let Some(effort) = &model.reasoning.effort {
             reasoning.insert("effort".into(), json!(effort));
         }
@@ -525,5 +539,44 @@ fn responses_usage(value: &Value) -> Usage {
         reasoning_tokens: value
             .pointer("/output_tokens_details/reasoning_tokens")
             .and_then(Value::as_u64),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::ModelSpec;
+
+    #[test]
+    fn reasoning_requests_detailed_summary() {
+        let mut model = ModelSpec::new("gpt-5.6-terra");
+        model.reasoning.enabled = true;
+        let mut body = json!({});
+
+        apply_model(&mut body, &model, None).unwrap();
+
+        assert_eq!(body.pointer("/reasoning/summary"), Some(&json!("detailed")));
+    }
+
+    #[test]
+    fn visible_reasoning_rule_is_stable_and_chinese() {
+        let instructions = instructions_with_reasoning_summary_rule("base instructions");
+
+        assert_eq!(
+            instructions,
+            "base instructions\n\n所有可见的推理摘要必须使用简体中文，并提供详细的高层摘要。不得披露隐藏的思维链；只提供允许展示的摘要。"
+        );
+    }
+
+    #[test]
+    fn gpt5_reasoning_uses_gpt5_presentation_style() {
+        assert_eq!(
+            ThinkingStyle::for_model("gpt-5.6-terra"),
+            ThinkingStyle::Gpt5
+        );
+        assert_eq!(
+            ThinkingStyle::for_model("claude-sonnet"),
+            ThinkingStyle::Default
+        );
     }
 }

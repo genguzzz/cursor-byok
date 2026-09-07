@@ -2,6 +2,7 @@
 mod cas;
 mod checkpoints;
 mod conversations;
+mod cursor_accounts;
 mod cursor_traces;
 mod input_anchors;
 mod legacy_config;
@@ -18,6 +19,7 @@ mod tool_rounds;
 mod writer;
 
 pub use cas::*;
+pub use cursor_accounts::{CursorAccountRecord, CursorAccountUpsert};
 pub(crate) use cursor_traces::BufferedCursorTraceChunk;
 pub(crate) use llm_calls::BufferedLlmChunk;
 pub use runs::*;

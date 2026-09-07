@@ -404,4 +404,3 @@ fn optional_u64(row: &sqlx::sqlite::SqliteRow, column: &str) -> Result<Option<u6
 fn to_i64(value: u64) -> Result<i64> {
     i64::try_from(value).map_err(|_| Error::Config("token value is too large".into()))
 }
-

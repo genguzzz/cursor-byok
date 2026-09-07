@@ -152,6 +152,21 @@ export interface DesktopSettings {
   show_dock_icon: boolean;
 }
 
+export type CursorAccountValidity = "valid" | "expired" | "invalid" | "unknown";
+
+export interface CursorAccount {
+  id: string;
+  email: string;
+  membership_type: string | null;
+  subscription_status: string | null;
+  sign_up_type: string | null;
+  current: boolean;
+  temporary: boolean;
+  valid: boolean;
+  validity: CursorAccountValidity;
+  last_seen_at_ms: number;
+}
+
 export type PluginRuntimeState = "uninitialized" | "initializing" | "ready" | "failed" | "unsupported";
 export type PluginRuntimePhase = "checking" | "downloading" | "verifying" | "installing" | "validating";
 
@@ -465,6 +480,9 @@ export const api = {
     const query = params.toString();
     return request<Overview>(`/overview${query ? `?${query}` : ""}`);
   },
+  cursorAccounts: (probe = false) => request<CursorAccount[]>(`/cursor-accounts${probe ? "?probe=1" : ""}`),
+  switchCursorAccount: (accountId: string) => request<CursorAccount[]>(`/cursor-accounts/${encodeURIComponent(accountId)}/switch`, { method: "POST" }),
+  deleteCursorAccount: (accountId: string) => request<void>(`/cursor-accounts/${encodeURIComponent(accountId)}`, { method: "DELETE" }),
   cursorHarness: () => request<CursorHarnessStatus>("/harness/cursor/status"),
   initializeCursorCa: () => request<CursorHarnessStatus>("/harness/cursor/ca/initialize", { method: "POST" }),
   plugins: () => request<PluginDescriptor[]>("/plugins"),

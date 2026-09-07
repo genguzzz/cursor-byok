@@ -515,15 +515,18 @@ fn normalize(value: &str) -> String {
 
 fn shell_id(call: &ToolCall) -> Result<u32> {
     let Some(value) = call.arguments.get("shell_id") else {
-        return Err(Error::Protocol(format!("{} is missing shell_id", call.name)));
+        return Err(Error::Protocol(format!(
+            "{} is missing shell_id",
+            call.name
+        )));
     };
     if let Some(value) = value.as_u64() {
         return u32::try_from(value)
             .map_err(|_| Error::Protocol(format!("{} shell_id is out of range", call.name)));
     }
-    let value = value.as_str().ok_or_else(|| {
-        Error::Protocol(format!("{} shell_id must be an integer", call.name))
-    })?;
+    let value = value
+        .as_str()
+        .ok_or_else(|| Error::Protocol(format!("{} shell_id must be an integer", call.name)))?;
     value
         .parse::<u32>()
         .map_err(|_| Error::Protocol(format!("{} shell_id must be an integer", call.name)))

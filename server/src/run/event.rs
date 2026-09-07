@@ -108,7 +108,10 @@ pub enum RunEvent {
     TextDelta(String),
     TextEnd,
     ThinkingStart,
-    ThinkingDelta(String),
+    ThinkingDelta {
+        text: String,
+        style: crate::provider::ThinkingStyle,
+    },
     ThinkingEnd {
         duration: Duration,
     },

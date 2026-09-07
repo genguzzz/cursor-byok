@@ -51,8 +51,9 @@ fn rules_section() -> &'static Regex {
 
 fn skills_section() -> &'static Regex {
     static PATTERN: OnceLock<Regex> = OnceLock::new();
-    PATTERN
-        .get_or_init(|| Regex::new(r"(?s)<agent_skills\b[^>]*>.*?</agent_skills>").expect("skills section"))
+    PATTERN.get_or_init(|| {
+        Regex::new(r"(?s)<agent_skills\b[^>]*>.*?</agent_skills>").expect("skills section")
+    })
 }
 
 fn mcp_section() -> &'static Regex {
@@ -64,8 +65,9 @@ fn mcp_section() -> &'static Regex {
 
 fn subagents_section() -> &'static Regex {
     static PATTERN: OnceLock<Regex> = OnceLock::new();
-    PATTERN
-        .get_or_init(|| Regex::new(r"(?s)<subagents\b[^>]*>.*?</subagents>").expect("subagents section"))
+    PATTERN.get_or_init(|| {
+        Regex::new(r"(?s)<subagents\b[^>]*>.*?</subagents>").expect("subagents section")
+    })
 }
 
 #[derive(Clone, Copy, Default)]
@@ -140,7 +142,9 @@ pub(crate) fn breakdown(
         }
     }
     let category_total = estimates.iter().sum::<u64>();
-    let total_used_tokens = (used_tokens as u64).max(category_total).min(u32::MAX as u64) as u32;
+    let total_used_tokens = (used_tokens as u64)
+        .max(category_total)
+        .min(u32::MAX as u64) as u32;
 
     let categories = CATEGORIES
         .iter()
@@ -283,7 +287,10 @@ mod tests {
     use super::*;
     use crate::model::Origin;
 
-    fn category<'a>(snapshot: &'a pb::PromptTokenBreakdownSnapshot, id: &str) -> &'a pb::PromptTokenBreakdownCategory {
+    fn category<'a>(
+        snapshot: &'a pb::PromptTokenBreakdownSnapshot,
+        id: &str,
+    ) -> &'a pb::PromptTokenBreakdownCategory {
         snapshot
             .categories
             .iter()
@@ -301,7 +308,8 @@ mod tests {
 
     #[test]
     fn reports_exactly_eight_official_categories_without_the_stolen_token() {
-        let snapshot = breakdown(100, 200_000, None, "be helpful", &[], &HashSet::new(), &[]).unwrap();
+        let snapshot =
+            breakdown(100, 200_000, None, "be helpful", &[], &HashSet::new(), &[]).unwrap();
         let ids = snapshot
             .categories
             .iter()
@@ -325,7 +333,8 @@ mod tests {
 
     #[test]
     fn total_is_at_least_the_sum_of_category_estimates() {
-        let snapshot = breakdown(10, 200_000, None, "be helpful", &[], &HashSet::new(), &[]).unwrap();
+        let snapshot =
+            breakdown(10, 200_000, None, "be helpful", &[], &HashSet::new(), &[]).unwrap();
         let sum = snapshot
             .categories
             .iter()
@@ -351,8 +360,14 @@ mod tests {
         .unwrap();
         let system_estimate = category(&snapshot, "system_prompt").estimated_tokens;
         let conversation_estimate = category(&snapshot, "conversation").estimated_tokens;
-        assert!(system_estimate > 0, "system prompt estimate must be positive");
-        assert!(conversation_estimate > 0, "conversation estimate must be positive");
+        assert!(
+            system_estimate > 0,
+            "system prompt estimate must be positive"
+        );
+        assert!(
+            conversation_estimate > 0,
+            "conversation estimate must be positive"
+        );
     }
 
     #[test]
@@ -363,8 +378,16 @@ mod tests {
             Origin::Runtime,
             "<rules>\nstay safe\n</rules>\n<agent_skills>\n<available_skills>\na skill\n</available_skills>\n</agent_skills>\nplain conversation",
         );
-        let snapshot = breakdown(500, 200_000, None, "be helpful", &[], &HashSet::new(), &[context])
-            .unwrap();
+        let snapshot = breakdown(
+            500,
+            200_000,
+            None,
+            "be helpful",
+            &[],
+            &HashSet::new(),
+            &[context],
+        )
+        .unwrap();
         assert!(category(&snapshot, "rules").estimated_tokens > 0);
         assert!(category(&snapshot, "skills").estimated_tokens > 0);
         assert!(category(&snapshot, "conversation").estimated_tokens > 0);
@@ -381,4 +404,3 @@ mod tests {
         assert!(category(&snapshot, "subagents").estimated_tokens > 0);
     }
 }
-

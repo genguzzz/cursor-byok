@@ -171,7 +171,7 @@ fn event_name(event: &super::ModelEvent) -> &'static str {
         super::ModelEvent::TextDelta(_) => "TextDelta",
         super::ModelEvent::TextEnd => "TextEnd",
         super::ModelEvent::ThinkingStart => "ThinkingStart",
-        super::ModelEvent::ThinkingDelta(_) => "ThinkingDelta",
+        super::ModelEvent::ThinkingDelta { .. } => "ThinkingDelta",
         super::ModelEvent::ThinkingEnd => "ThinkingEnd",
         super::ModelEvent::ToolCallStart { .. } => "ToolCallStart",
         super::ModelEvent::ToolCallArgumentsDelta { .. } => "ToolCallArgsDelta",
@@ -342,9 +342,11 @@ fn build_inner(
             Arc::new(OpenAiChatProvider::new(client, config.clone()).with_recorder(recorder))
         }
         // CodeBuddy reuses the Chat Completions protocol; only its transport metadata differs.
-        ProviderKind::CodeBuddy => {
-            Arc::new(OpenAiChatProvider::new(client, config.clone()).as_codebuddy().with_recorder(recorder))
-        }
+        ProviderKind::CodeBuddy => Arc::new(
+            OpenAiChatProvider::new(client, config.clone())
+                .as_codebuddy()
+                .with_recorder(recorder),
+        ),
         ProviderKind::OpenAiResponses => {
             Arc::new(OpenAiResponsesProvider::new(client, config.clone()).with_recorder(recorder))
         }

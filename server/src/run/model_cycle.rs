@@ -138,12 +138,12 @@ pub async fn consume_model_cycle(
                     send(client, RunEvent::ThinkingStart).await
                 }
             }
-            ModelEvent::ThinkingDelta(delta) => {
+            ModelEvent::ThinkingDelta { text: delta, style } => {
                 if thinking_started.is_none() {
                     Err("provider emitted ThinkingDelta before ThinkingStart")
                 } else {
                     reasoning.push_str(&delta);
-                    send(client, RunEvent::ThinkingDelta(delta)).await
+                    send(client, RunEvent::ThinkingDelta { text: delta, style }).await
                 }
             }
             ModelEvent::ThinkingEnd => {

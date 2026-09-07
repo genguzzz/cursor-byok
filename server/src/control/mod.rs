@@ -1,4 +1,5 @@
 //! Exposes the local control API.
+mod accounts;
 mod ads;
 mod calls;
 mod harness;
@@ -211,6 +212,15 @@ pub fn api_router(service: ControlService) -> Router {
         .route(
             "/__byok-api__/api/harness/cursor/enabled",
             put(harness::set_enabled),
+        )
+        .route("/__byok-api__/api/cursor-accounts", get(accounts::list))
+        .route(
+            "/__byok-api__/api/cursor-accounts/{account_id}/switch",
+            post(accounts::switch_account),
+        )
+        .route(
+            "/__byok-api__/api/cursor-accounts/{account_id}",
+            axum::routing::delete(accounts::remove),
         )
         .with_state(service)
         .layer(desktop_cors())

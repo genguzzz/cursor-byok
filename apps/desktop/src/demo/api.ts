@@ -1,5 +1,6 @@
 import type {
   CallDetail,
+  CursorAccount,
   CursorHarnessStatus,
   LlmCall,
   Model,
@@ -73,6 +74,45 @@ const calls: LlmCall[] = Array.from({ length: 24 }, (_, index) => {
   };
 });
 
+let demoAccounts: CursorAccount[] = [
+  {
+    id: "demo-temporary",
+    email: "cursor@ai.com",
+    membership_type: "ultra",
+    subscription_status: "active",
+    sign_up_type: "Google",
+    current: false,
+    temporary: true,
+    valid: true,
+    validity: "valid",
+    last_seen_at_ms: FIXED_NOW,
+  },
+  {
+    id: "demo-current",
+    email: "dev@example.com",
+    membership_type: "pro",
+    subscription_status: "active",
+    sign_up_type: "Google",
+    current: true,
+    temporary: false,
+    valid: true,
+    validity: "valid",
+    last_seen_at_ms: FIXED_NOW,
+  },
+  {
+    id: "demo-expired",
+    email: "old@example.com",
+    membership_type: "pro",
+    subscription_status: "canceled",
+    sign_up_type: "GitHub",
+    current: false,
+    temporary: false,
+    valid: false,
+    validity: "expired",
+    last_seen_at_ms: FIXED_NOW - 14 * 86_400_000,
+  },
+];
+
 const harnessStatus: CursorHarnessStatus = {
   platform: "macos",
   ca: "ready",
@@ -125,6 +165,17 @@ export function installDemoApi() {
     if (path === "/overview") return json(createOverview(url.searchParams));
     if (path === "/llm-calls") return json(calls);
     if (path.startsWith("/llm-calls/")) return json(createCallDetail(path.slice("/llm-calls/".length)));
+    if (path === "/cursor-accounts" && method === "GET") return json(demoAccounts);
+    if (/^\/cursor-accounts\/[^/]+\/switch$/.test(path) && method === "POST") {
+      const id = decodeURIComponent(path.split("/")[2] ?? "");
+      demoAccounts = demoAccounts.map((account) => ({ ...account, current: account.id === id }));
+      return json(demoAccounts);
+    }
+    if (/^\/cursor-accounts\/[^/]+$/.test(path) && method === "DELETE") {
+      const id = decodeURIComponent(path.slice("/cursor-accounts/".length));
+      demoAccounts = demoAccounts.filter((account) => account.id !== id);
+      return empty();
+    }
     if (path === "/harness/cursor/status") return json(harnessStatus);
     if (path === "/harness/cursor/ca/initialize" || path === "/harness/cursor/enabled") return json(harnessStatus);
     if (path === "/settings/observability" && method === "GET") return json({ detailed });

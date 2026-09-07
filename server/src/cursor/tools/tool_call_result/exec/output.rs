@@ -415,7 +415,11 @@ fn creates_subagent(call: &ToolCall) -> bool {
 
 fn conversation_search(value: &pb::ConversationSearchResult) -> Result<(String, bool)> {
     use pb::conversation_search_result::Result as R;
-    match value.result.as_ref().ok_or_else(|| missing("conversation search"))? {
+    match value
+        .result
+        .as_ref()
+        .ok_or_else(|| missing("conversation search"))?
+    {
         R::Success(success) => Ok((conversation_search_success(success), false)),
         R::Error(value) => Ok((value.error.clone(), true)),
     }
@@ -576,16 +580,15 @@ mod tests {
 
     #[test]
     fn write_shell_stdin_success_formats_confirmation_for_the_model() {
-        let (text, is_error) =
-            write_shell_stdin(&pb::WriteShellStdinResult {
-                result: Some(pb::write_shell_stdin_result::Result::Success(
-                    pb::WriteShellStdinSuccess {
-                        shell_id: 7,
-                        terminal_file_length_before_input_written: 42,
-                    },
-                )),
-            })
-            .unwrap();
+        let (text, is_error) = write_shell_stdin(&pb::WriteShellStdinResult {
+            result: Some(pb::write_shell_stdin_result::Result::Success(
+                pb::WriteShellStdinSuccess {
+                    shell_id: 7,
+                    terminal_file_length_before_input_written: 42,
+                },
+            )),
+        })
+        .unwrap();
         assert!(!is_error);
         assert!(text.contains("shell_id=7"));
         assert!(text.contains("terminal_file_length_before_input_written=42"));

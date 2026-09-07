@@ -1,0 +1,121 @@
+@use "../../styles/typography" as type;
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+  gap: 12px;
+  padding-top: 10px;
+}
+
+.card {
+  min-width: 0;
+  min-height: 150px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 18px;
+}
+
+.top {
+  min-width: 0;
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.identity {
+  min-width: 0;
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.email,
+.meta {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.email {
+  color: var(--vscode-foreground);
+  font-size: type.$font-size-base;
+  font-weight: 600;
+}
+
+.meta {
+  color: var(--vscode-descriptionForeground);
+  font-size: type.$font-size-2xs;
+}
+
+.flags {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 22px;
+}
+
+.badge {
+  flex: 0 0 auto;
+  padding: 3px 8px;
+  color: var(--vscode-descriptionForeground);
+  border: 1px solid var(--vscode-sideBar-border);
+  border-radius: 999px;
+  font-size: type.$font-size-2xs;
+  white-space: nowrap;
+}
+
+.valid,
+.current {
+  color: var(--vscode-testing-iconPassed, #73c991);
+  background: color-mix(in srgb, var(--vscode-testing-iconPassed, #73c991) 10%, transparent);
+  border-color: color-mix(in srgb, var(--vscode-testing-iconPassed, #73c991) 28%, transparent);
+}
+
+.expired,
+.invalid {
+  color: var(--vscode-errorForeground);
+  background: color-mix(in srgb, var(--vscode-errorForeground) 10%, transparent);
+  border-color: color-mix(in srgb, var(--vscode-errorForeground) 28%, transparent);
+}
+
+.unknown {
+  color: var(--vscode-descriptionForeground);
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: nowrap;
+  gap: 7px;
+
+  > button {
+    min-width: 0;
+    flex: 0 1 auto;
+  }
+}
+
+.empty {
+  min-height: 250px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  color: var(--vscode-descriptionForeground);
+  text-align: center;
+  border: 1px dashed var(--vscode-sideBar-border);
+  border-radius: var(--oa-overlay-radius);
+
+  strong {
+    color: var(--vscode-foreground);
+    font-size: type.$font-size-base;
+  }
+
+  span {
+    max-width: 500px;
+    font-size: type.$font-size-xs;
+  }
+}
