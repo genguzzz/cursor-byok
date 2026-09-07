@@ -18,7 +18,7 @@ use super::{
     attempt::{send_once, Attempt},
     map_sse_error, merge_extra_params, provider_event_error,
     recorder::recorded_headers,
-    CallRecorder, FinishReason, ModelEvent, Provider, ProviderStream,
+    CallRecorder, FinishReason, ModelEvent, Provider, ProviderStream, ThinkingStyle,
 };
 
 const DEFAULT_MAX_OUTPUT_TOKENS: u64 = 65_000;
@@ -278,7 +278,10 @@ impl Provider for AnthropicProvider {
                             "text_delta" => if let Some(text) = delta.get("text").and_then(Value::as_str) { yield ModelEvent::TextDelta(text.into()); },
                             "thinking_delta" => if let Some(text) = delta.get("thinking").and_then(Value::as_str) {
                                 thinking_text.entry(index).or_default().push_str(text);
-                                yield ModelEvent::ThinkingDelta(text.into());
+                                yield ModelEvent::ThinkingDelta {
+                                    text: text.into(),
+                                    style: ThinkingStyle::Default,
+                                };
                             },
                             "signature_delta" => if let Some(signature) = delta.get("signature").and_then(Value::as_str) {
                                 thinking_signatures.entry(index).or_default().push_str(signature);

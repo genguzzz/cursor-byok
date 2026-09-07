@@ -21,7 +21,7 @@ use super::{
     attempt::{send_once, Attempt},
     map_sse_error, merge_extra_params, provider_event_error,
     recorder::recorded_headers,
-    CallRecorder, FinishReason, ModelEvent, Provider, ProviderStream,
+    CallRecorder, FinishReason, ModelEvent, Provider, ProviderStream, ThinkingStyle,
 };
 
 #[derive(Default)]
@@ -73,6 +73,7 @@ impl Provider for OpenAiChatProvider {
         let codebuddy = self.codebuddy;
         Box::pin(try_stream! {
             let ModelInvocation { call_id, request, conversation_id, run_id, .. } = invocation;
+            let thinking_style = ThinkingStyle::for_model(&request.model.model_id);
             tracing::debug!(
                 model = %request.model.model_id,
                 call_id = %call_id,
@@ -219,7 +220,10 @@ impl Provider for OpenAiChatProvider {
                     if text_open { text_open = false; yield ModelEvent::TextEnd; }
                     if !thinking_open { thinking_open = true; yield ModelEvent::ThinkingStart; }
                     reasoning.push_str(reasoning_delta);
-                    yield ModelEvent::ThinkingDelta(reasoning_delta.into());
+                    yield ModelEvent::ThinkingDelta {
+                        text: reasoning_delta.into(),
+                        style: thinking_style,
+                    };
                 }
                 if let Some(content) = delta.get("content").and_then(Value::as_str).filter(|text| !text.is_empty()) {
                     for part in think_streamer.process(content) {
@@ -228,7 +232,10 @@ impl Provider for OpenAiChatProvider {
                                 if text_open { text_open = false; yield ModelEvent::TextEnd; }
                                 if !thinking_open { thinking_open = true; yield ModelEvent::ThinkingStart; }
                                 reasoning.push_str(&delta);
-                                yield ModelEvent::ThinkingDelta(delta);
+                                yield ModelEvent::ThinkingDelta {
+                                    text: delta,
+                                    style: thinking_style,
+                                };
                             }
                             StreamPart::Text(text) => {
                                 if thinking_open { thinking_open = false; yield ModelEvent::ThinkingEnd; }
@@ -258,7 +265,10 @@ impl Provider for OpenAiChatProvider {
                         if text_open { text_open = false; yield ModelEvent::TextEnd; }
                         if !thinking_open { thinking_open = true; yield ModelEvent::ThinkingStart; }
                         reasoning.push_str(&delta);
-                        yield ModelEvent::ThinkingDelta(delta);
+                        yield ModelEvent::ThinkingDelta {
+                            text: delta,
+                            style: thinking_style,
+                        };
                     }
                     StreamPart::Text(text) => {
                         if thinking_open { thinking_open = false; yield ModelEvent::ThinkingEnd; }
@@ -539,7 +549,11 @@ impl InlineThinkStreamer {
 
         loop {
             if self.in_think {
-                if let Some(pos) = self.buffer.find("</think>").or_else(|| self.buffer.find("</thought>")) {
+                if let Some(pos) = self
+                    .buffer
+                    .find("</think>")
+                    .or_else(|| self.buffer.find("</thought>"))
+                {
                     let end_tag = if self.buffer[pos..].starts_with("</think>") {
                         "</think>"
                     } else {
@@ -552,7 +566,8 @@ impl InlineThinkStreamer {
                     self.buffer.drain(..pos + end_tag.len());
                     self.in_think = false;
                 } else {
-                    let partial_len = trailing_partial_tag(&self.buffer, &["</think>", "</thought>"]);
+                    let partial_len =
+                        trailing_partial_tag(&self.buffer, &["</think>", "</thought>"]);
                     let emit_len = floor_char_boundary(
                         &self.buffer,
                         self.buffer.len().saturating_sub(partial_len),
@@ -565,7 +580,11 @@ impl InlineThinkStreamer {
                     break;
                 }
             } else {
-                if let Some(pos) = self.buffer.find("<think>").or_else(|| self.buffer.find("<thought>")) {
+                if let Some(pos) = self
+                    .buffer
+                    .find("<think>")
+                    .or_else(|| self.buffer.find("<thought>"))
+                {
                     let start_tag = if self.buffer[pos..].starts_with("<think>") {
                         "<think>"
                     } else {
@@ -720,11 +739,7 @@ mod tests {
     #[test]
     fn inline_think_streamer_handles_utf8_chunk_boundaries() {
         let mut streamer = InlineThinkStreamer::default();
-        let chunks = vec![
-            "<think>分析",
-            "项目",
-            "结构</think>这是答案",
-        ];
+        let chunks = vec!["<think>分析", "项目", "结构</think>这是答案"];
         let mut text = String::new();
         let mut thinking = String::new();
         for chunk in chunks {

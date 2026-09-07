@@ -410,7 +410,10 @@ pub fn meta_mcp_routes(context: &pb::RequestContext) -> HashMap<(String, String)
             // 3. Register by stripped "user-" prefix if applicable
             if let Some(stripped) = server_id.strip_prefix("user-") {
                 if !stripped.is_empty() {
-                    routes.insert((stripped.to_string(), tool.tool_name.clone()), route.clone());
+                    routes.insert(
+                        (stripped.to_string(), tool.tool_name.clone()),
+                        route.clone(),
+                    );
                 }
             }
         }

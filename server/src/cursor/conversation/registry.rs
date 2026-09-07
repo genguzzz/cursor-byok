@@ -6,10 +6,8 @@ use tokio::sync::{mpsc, Mutex, Notify};
 
 use crate::{
     cursor::{
-        compile::BackgroundWakeCompletion,
-        prompting::PromptCompiler,
-        protocol::proto::agent::v1 as pb,
-        transport::TransportHandle,
+        compile::BackgroundWakeCompletion, prompting::PromptCompiler,
+        protocol::proto::agent::v1 as pb, transport::TransportHandle,
     },
     model::{ConversationId, RunId},
     provider::Provider,

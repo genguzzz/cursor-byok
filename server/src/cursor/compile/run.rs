@@ -451,7 +451,7 @@ fn action(request: &pb::AgentRunRequest) -> Result<ActionProjection> {
                     starts_turn: false,
                     compacting: true,
                     background_completion: false,
-            background_completions: Vec::new(),
+                    background_completions: Vec::new(),
                 });
             }
             let mut context = action
@@ -477,7 +477,7 @@ fn action(request: &pb::AgentRunRequest) -> Result<ActionProjection> {
                 starts_turn: true,
                 compacting: false,
                 background_completion: false,
-            background_completions: Vec::new(),
+                background_completions: Vec::new(),
             })
         }
         pb::conversation_action::Action::BackgroundTaskCompletionAction(action) => {
