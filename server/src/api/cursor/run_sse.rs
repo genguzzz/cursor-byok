@@ -18,6 +18,22 @@ use crate::{
 };
 
 pub async fn stream(registry: &TransportRegistry, request_id: &str) -> Result<Response<Body>> {
+    stream_with_content_type(registry, request_id, "text/event-stream").await
+}
+
+/// Streams a direct Connect RPC response for `AgentService/Run`.
+pub async fn stream_connect(
+    registry: &TransportRegistry,
+    request_id: &str,
+) -> Result<Response<Body>> {
+    stream_with_content_type(registry, request_id, "application/connect+proto").await
+}
+
+async fn stream_with_content_type(
+    registry: &TransportRegistry,
+    request_id: &str,
+    content_type: &'static str,
+) -> Result<Response<Body>> {
     let handle = registry.get_or_create(request_id).await?;
     let receiver = handle.subscribe();
     let trace = handle.trace().cloned();
@@ -29,7 +45,7 @@ pub async fn stream(registry: &TransportRegistry, request_id: &str) -> Result<Re
     *response.status_mut() = StatusCode::OK;
     response.headers_mut().insert(
         header::CONTENT_TYPE,
-        HeaderValue::from_static("text/event-stream"),
+        HeaderValue::from_static(content_type),
     );
     response
         .headers_mut()

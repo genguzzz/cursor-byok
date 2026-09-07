@@ -635,10 +635,14 @@ fn usable_plugin_model(model: &PluginModelDescriptor) -> agent::ModelDetails {
 
 fn usable_model(model: &ModelConfig) -> agent::ModelDetails {
     agent::ModelDetails {
+        // The stable hash remains the routing key. Cursor CLI presents
+        // display_model_id in its model picker, so use the user configured
+        // label rather than leaking this internal hash to cc-connect.
         model_id: model.model_hash.clone(),
-        display_model_id: model.model_hash.clone(),
+        display_model_id: model.display_name.clone(),
         display_name: model.display_name.clone(),
         display_name_short: model.display_name.clone(),
+        aliases: vec![model.model_id.clone()],
         thinking_details: Some(agent::ThinkingDetails::default()),
         ..Default::default()
     }
