@@ -13,6 +13,7 @@ use crate::{
 
 pub struct ToolCallStream {
     presentation: Presentation,
+    emits_initial_placeholder: bool,
 }
 
 enum Presentation {
@@ -52,9 +53,11 @@ struct TaskProjection {
 
 impl ToolCallStream {
     pub fn new(name: &str, dynamic_mcp: Option<&pb::McpToolDefinition>) -> Self {
+        let normalized_name = normalized(name);
+        let emits_initial_placeholder = !matches!(normalized_name.as_str(), "shell" | "bash");
         let presentation = match dynamic_mcp {
             Some(definition) => Presentation::DynamicMcp(definition.clone()),
-            None => match normalized(name).as_str() {
+            None => match normalized_name.as_str() {
                 "write" => Presentation::Edit(EditProjection::new("path", "contents")),
                 "strreplace" => Presentation::Edit(EditProjection::new("path", "new_string")),
                 "editnotebook" => {
@@ -65,7 +68,14 @@ impl ToolCallStream {
                 _ => Presentation::Plain,
             },
         };
-        Self { presentation }
+        Self {
+            presentation,
+            emits_initial_placeholder,
+        }
+    }
+
+    pub fn emits_initial_placeholder(&self) -> bool {
+        self.emits_initial_placeholder
     }
 
     pub fn arguments_delta(
@@ -249,6 +259,13 @@ mod tests {
             arguments_text: arguments_text.into(),
             arguments: serde_json::Value::Null,
         }
+    }
+
+    #[test]
+    fn shell_waits_for_its_first_argument_delta_before_creating_a_card() {
+        let stream = ToolCallStream::new("Shell", None);
+
+        assert!(!stream.emits_initial_placeholder());
     }
 
     #[test]

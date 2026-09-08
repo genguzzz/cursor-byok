@@ -141,6 +141,70 @@ fn create_main_window(
     builder.build()
 }
 
+fn initialize_desktop(
+    app: &mut tauri::App,
+    started_by_autostart: bool,
+) -> std::result::Result<(), Box<dyn std::error::Error>> {
+    app.handle().plugin(tauri_plugin_autostart::init(
+        tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+        Some(vec![AUTOSTART_ARG]),
+    ))?;
+    let config = {
+        let mut config = Config::desktop()?;
+        // 插件的 minAppVersion 按桌面应用版本判定,而不是内嵌 server 库的版本。
+        config.app_version = env!("CARGO_PKG_VERSION").into();
+        config
+    };
+    #[cfg(dev)]
+    let config = {
+        let mut config = config;
+        config.console = Some(ConsoleSource::Proxy(
+            "http://127.0.0.1:1420"
+                .parse()
+                .expect("Vite development URL"),
+        ));
+        config
+    };
+    let server = tauri::async_runtime::block_on(App::new(config))?
+        .merge_router(desktop_api_router(app.handle().clone()));
+    #[cfg(not(dev))]
+    let server = server.merge_router(frontend::router(app.handle().clone()));
+    let listener = tauri::async_runtime::block_on(server.bind())?;
+    let address = listener.local_addr()?;
+    tauri::async_runtime::block_on(server.harness().cleanup_stale_settings())?;
+    let desktop_settings =
+        tauri::async_runtime::block_on(server.store().desktop_settings()).unwrap_or_default();
+    #[cfg(target_os = "macos")]
+    app.handle()
+        .set_dock_visibility(desktop_settings.show_dock_icon)?;
+    let shutdown = CancellationToken::new();
+    let server_shutdown = shutdown.clone();
+    let app_handle = app.handle().clone();
+    let harness = server.harness();
+    let task = tauri::async_runtime::spawn(async move {
+        let result = server.serve_on(listener, server_shutdown).await;
+        if let Err(error) = &result {
+            tracing::error!(%error, "desktop server stopped unexpectedly");
+            app_handle.exit(1);
+        }
+        result
+    });
+    app.manage(DesktopRuntime {
+        shutdown,
+        server: Mutex::new(Some(task)),
+        exiting: AtomicBool::new(false),
+    });
+    let window = create_main_window(app.handle(), address)?;
+    if desktop_settings.silent_start && started_by_autostart {
+        tracing::info!("silent autostart enabled; keeping the main window hidden");
+    } else {
+        window.show()?;
+        window.set_focus()?;
+    }
+    tray::create(app, harness)?;
+    Ok(())
+}
+
 pub fn run() -> ExitCode {
     let diagnostics = match StartupDiagnostics::initialize() {
         Ok(diagnostics) => diagnostics,
@@ -158,6 +222,7 @@ pub fn run() -> ExitCode {
     );
 
     let started_by_autostart = std::env::args_os().any(|arg| arg == AUTOSTART_ARG);
+    let log_directory = diagnostics.log_directory().to_path_buf();
 
     let app = tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![open_terminal_with_command])
@@ -171,64 +236,10 @@ pub fn run() -> ExitCode {
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(move |app| {
-            app.handle().plugin(tauri_plugin_autostart::init(
-                tauri_plugin_autostart::MacosLauncher::LaunchAgent,
-                Some(vec![AUTOSTART_ARG]),
-            ))?;
-            let config = {
-                let mut config = Config::desktop()?;
-                // 插件的 minAppVersion 按桌面应用版本判定,而不是内嵌 server 库的版本。
-                config.app_version = env!("CARGO_PKG_VERSION").into();
-                config
-            };
-            #[cfg(dev)]
-            let config = {
-                let mut config = config;
-                config.console = Some(ConsoleSource::Proxy(
-                    "http://127.0.0.1:1420"
-                        .parse()
-                        .expect("Vite development URL"),
-                ));
-                config
-            };
-            let server = tauri::async_runtime::block_on(App::new(config))?
-                .merge_router(desktop_api_router(app.handle().clone()));
-            #[cfg(not(dev))]
-            let server = server.merge_router(frontend::router(app.handle().clone()));
-            let listener = tauri::async_runtime::block_on(server.bind())?;
-            let address = listener.local_addr()?;
-            tauri::async_runtime::block_on(server.harness().cleanup_stale_settings())?;
-            let desktop_settings =
-                tauri::async_runtime::block_on(server.store().desktop_settings())
-                    .unwrap_or_default();
-            #[cfg(target_os = "macos")]
-            app.handle()
-                .set_dock_visibility(desktop_settings.show_dock_icon)?;
-            let shutdown = CancellationToken::new();
-            let server_shutdown = shutdown.clone();
-            let app_handle = app.handle().clone();
-            let harness = server.harness();
-            let task = tauri::async_runtime::spawn(async move {
-                let result = server.serve_on(listener, server_shutdown).await;
-                if let Err(error) = &result {
-                    tracing::error!(%error, "desktop server stopped unexpectedly");
-                    app_handle.exit(1);
-                }
-                result
-            });
-            app.manage(DesktopRuntime {
-                shutdown,
-                server: Mutex::new(Some(task)),
-                exiting: AtomicBool::new(false),
-            });
-            let window = create_main_window(app.handle(), address)?;
-            if desktop_settings.silent_start && started_by_autostart {
-                tracing::info!("silent autostart enabled; keeping the main window hidden");
-            } else {
-                window.show()?;
-                window.set_focus()?;
+            if let Err(error) = initialize_desktop(app, started_by_autostart) {
+                startup::report_startup_failure(error.as_ref(), &log_directory);
+                std::process::exit(1);
             }
-            tray::create(app, harness)?;
             Ok(())
         })
         .build(tauri::generate_context!());

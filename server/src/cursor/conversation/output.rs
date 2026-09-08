@@ -337,18 +337,19 @@ impl ConversationOutput {
                             arguments_text: String::new(),
                             arguments: serde_json::Value::Null,
                         };
-                        self.emit_model_event(
-                            crate::provider::ModelEvent::ToolCallStart {
-                                index,
-                                call_id,
-                                name: name.clone(),
-                            },
-                            &model_call_id,
-                        )?;
-                        streams.insert(
-                            index,
-                            ToolCallStream::new(&name, self.context.dynamic_tools.get(&name)),
-                        );
+                        let stream =
+                            ToolCallStream::new(&name, self.context.dynamic_tools.get(&name));
+                        if stream.emits_initial_placeholder() {
+                            self.emit_model_event(
+                                crate::provider::ModelEvent::ToolCallStart {
+                                    index,
+                                    call_id,
+                                    name: name.clone(),
+                                },
+                                &model_call_id,
+                            )?;
+                        }
+                        streams.insert(index, stream);
                         calls.insert(index, call);
                     }
                     RunEvent::ToolCallArgumentsDelta { index, delta } => {

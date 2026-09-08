@@ -446,9 +446,68 @@ mod tests {
             .unwrap();
 
             assert_eq!(checksum_after, checksum_before);
-            assert_eq!(versions, vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
+            assert_eq!(versions, vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
             assert_eq!(checkpoint_table_exists, 1);
         }
+    }
+
+    #[tokio::test]
+    async fn existing_argument_error_history_applies_cursor_accounts() {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        let historical = migrator_with_line_endings(MigrationLineEndings::Lf);
+        let through_claude = Migrator {
+            migrations: Cow::Owned(historical.iter().take(11).cloned().collect()),
+            ..Migrator::DEFAULT
+        };
+        through_claude.run(&pool).await.unwrap();
+        let checksums_before: Vec<(i64, Vec<u8>)> =
+            sqlx::query_as("SELECT version, checksum FROM _sqlx_migrations ORDER BY version")
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+
+        run(&pool, Path::new("argument-error-history.db"))
+            .await
+            .unwrap();
+
+        let checksums_after: Vec<(i64, Vec<u8>)> = sqlx::query_as(
+            "SELECT version, checksum FROM _sqlx_migrations WHERE version <= 11 ORDER BY version",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        let versions: Vec<i64> =
+            sqlx::query_scalar("SELECT version FROM _sqlx_migrations ORDER BY version")
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        let argument_error_column_exists: i64 = sqlx::query_scalar(
+            "SELECT EXISTS(
+                SELECT 1 FROM pragma_table_info('tool_round_calls')
+                WHERE name = 'argument_error'
+             )",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        let cursor_accounts_exists: i64 = sqlx::query_scalar(
+            "SELECT EXISTS(
+                SELECT 1 FROM sqlite_master
+                WHERE type = 'table' AND name = 'cursor_accounts'
+             )",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+        assert_eq!(checksums_after, checksums_before);
+        assert_eq!(versions, vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
+        assert_eq!(argument_error_column_exists, 1);
+        assert_eq!(cursor_accounts_exists, 1);
     }
 
     #[test]
