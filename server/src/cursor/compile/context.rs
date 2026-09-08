@@ -1,8 +1,10 @@
 //! Compiles rules, skills, MCP metadata, and environment context.
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
-    path::Path,
+    path::{Path, PathBuf},
 };
+
+use serde::Deserialize;
 
 use prost::Message;
 use serde_json::Value;
@@ -35,10 +37,15 @@ pub async fn hydrate(
         .and_then(|action| action.request_context_parts.as_ref())
     else {
         if is_background_completion(request) {
-            return context_sync
+            let mut context = context_sync
                 .load(request.conversation_id.as_deref().unwrap_or_default())
-                .await;
+                .await?;
+            merge_direct_skill_options(&mut context, request);
+            enrich_filesystem_skills(&mut context);
+            return Ok(context);
         }
+        merge_direct_skill_options(&mut context, request);
+        enrich_filesystem_skills(&mut context);
         return Ok(context);
     };
 
@@ -59,6 +66,8 @@ pub async fn hydrate(
         context.mcp_instructions = current.mcp_instructions;
         context.mcp_file_system_options = current.mcp_file_system_options;
         context.mcp_meta_tool_options = current.mcp_meta_tool_options;
+        merge_direct_skill_options(&mut context, request);
+        enrich_filesystem_skills(&mut context);
         return Ok(context);
     }
 
@@ -108,7 +117,144 @@ pub async fn hydrate(
         context.mcp_file_system_options = part.mcp_file_system_options;
         context.mcp_meta_tool_options = part.mcp_meta_tool_options;
     }
+    merge_direct_skill_options(&mut context, request);
+    enrich_filesystem_skills(&mut context);
     Ok(context)
+}
+
+fn merge_direct_skill_options(context: &mut pb::RequestContext, request: &pb::AgentRunRequest) {
+    let Some(direct) = request
+        .skill_options
+        .as_ref()
+        .filter(|options| !options.skill_descriptors.is_empty())
+    else {
+        return;
+    };
+    let options = context.skill_options.get_or_insert_with(Default::default);
+    for descriptor in &direct.skill_descriptors {
+        if descriptor.readme_file_path.trim().is_empty()
+            || options
+                .skill_descriptors
+                .iter()
+                .any(|existing| existing.readme_file_path == descriptor.readme_file_path)
+        {
+            continue;
+        }
+        options.skill_descriptors.push(descriptor.clone());
+    }
+}
+
+fn enrich_filesystem_skills(context: &mut pb::RequestContext) {
+    if !context.agent_skills.is_empty()
+        || !context.rules.is_empty()
+        || context
+            .skill_options
+            .as_ref()
+            .is_some_and(|options| !options.skill_descriptors.is_empty())
+    {
+        return;
+    }
+    let home = dirs::home_dir();
+    let workspaces = context
+        .env
+        .as_ref()
+        .map(|env| {
+            let mut paths = env.workspace_paths.clone();
+            if !env.project_folder.trim().is_empty() {
+                paths.push(env.project_folder.clone());
+            }
+            if let Some(path) = &env.process_working_directory {
+                paths.push(path.clone());
+            }
+            paths
+        })
+        .unwrap_or_default();
+    let mut roots = Vec::new();
+    if let Some(home) = home {
+        roots.extend([
+            home.join(".cursor/skills-cursor"),
+            home.join(".claude/skills"),
+            home.join(".cursor/skills"),
+        ]);
+    }
+    for workspace in workspaces {
+        let workspace = PathBuf::from(workspace);
+        roots.extend([
+            workspace.join(".agents/skills"),
+            workspace.join(".claude/skills"),
+            workspace.join(".cursor/skills"),
+        ]);
+    }
+
+    let mut seen = HashSet::new();
+    for root in roots {
+        let Ok(entries) = std::fs::read_dir(root) else {
+            continue;
+        };
+        let mut paths = entries
+            .flatten()
+            .filter_map(|entry| entry.file_type().ok().filter(|kind| kind.is_dir() || kind.is_symlink()).map(|_| entry.path().join("SKILL.md")))
+            .collect::<Vec<_>>();
+        paths.sort();
+        for path in paths {
+            let canonical = std::fs::canonicalize(&path).unwrap_or(path.clone());
+            if !seen.insert(canonical) {
+                continue;
+            }
+            let Ok(content) = std::fs::read_to_string(&path) else {
+                continue;
+            };
+            let Some(description) = skill_description(&content) else {
+                continue;
+            };
+            context.agent_skills.push(pb::AgentSkill {
+                full_path: path.to_string_lossy().into_owned(),
+                content,
+                description,
+                ..Default::default()
+            });
+        }
+    }
+}
+
+#[derive(Deserialize)]
+struct SkillFrontmatter {
+    description: Option<String>,
+}
+
+fn skill_description(content: &str) -> Option<String> {
+    let remainder = content.strip_prefix("---\n")?;
+    let (frontmatter, _) = remainder.split_once("\n---")?;
+    serde_yaml::from_str::<SkillFrontmatter>(frontmatter)
+        .ok()?
+        .description
+        .filter(|description| !description.trim().is_empty())
+}
+
+#[cfg(test)]
+mod direct_skill_tests {
+    use super::*;
+
+    #[test]
+    fn direct_cli_skill_options_survive_context_replacement() {
+        let path = "/root/.cursor/skills/forum-web/SKILL.md";
+        let request = pb::AgentRunRequest {
+            skill_options: Some(pb::SkillOptions {
+                skill_descriptors: vec![pb::SkillDescriptor {
+                    readme_file_path: path.into(),
+                    description: "Forum search skill.".into(),
+                    ..Default::default()
+                }],
+            }),
+            ..Default::default()
+        };
+        let mut context = pb::RequestContext::default();
+        merge_direct_skill_options(&mut context, &request);
+        assert_eq!(
+            context.skill_options.unwrap().skill_descriptors[0].readme_file_path,
+            path
+        );
+    }
 }
 
 fn is_background_completion(request: &pb::AgentRunRequest) -> bool {
