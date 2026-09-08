@@ -56,14 +56,21 @@ impl StartupDiagnostics {
     }
 
     pub(crate) fn report_fatal(&self, error: &(dyn Error + 'static)) {
-        let details = error_chain(error);
-        tracing::error!(
-            error = %details,
-            log_directory = %self.log_directory.display(),
-            "desktop failed to start"
-        );
-        show_fatal_dialog(&details, Some(&self.log_directory));
+        report_startup_failure(error, &self.log_directory);
     }
+}
+
+pub(crate) fn report_startup_failure(
+    error: &(dyn Error + 'static),
+    log_directory: &std::path::Path,
+) {
+    let details = error_chain(error);
+    tracing::error!(
+        error = %details,
+        log_directory = %log_directory.display(),
+        "desktop failed to start"
+    );
+    show_fatal_dialog(&details, Some(log_directory));
 }
 
 pub(crate) fn report_logging_failure(error: &(dyn Error + 'static)) {
