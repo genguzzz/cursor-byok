@@ -22,6 +22,13 @@ pub async fn hydrate(
     context_sync: &RequestContextSynchronizer,
 ) -> Result<pb::RequestContext> {
     let mut context = request_context(request).cloned().unwrap_or_default();
+    if context
+        .skill_options
+        .as_ref()
+        .is_none_or(|options| options.skill_descriptors.is_empty())
+    {
+        context.skill_options = request.skill_options.clone();
+    }
     let Some(parts) = request
         .action
         .as_ref()
@@ -253,18 +260,38 @@ pub fn compile_context(context: &pb::RequestContext, today: &str) -> String {
     if !rules.is_empty() {
         sections.push(format!("<rules>\n{}\n</rules>", rules.join("\n")));
     }
-    let skills = context
+    let mut seen_skill_paths = HashSet::new();
+    let mut skills = Vec::new();
+    let mut append_skill = |path: &str, description: &str| {
+        let path = path.trim();
+        let description = description.trim();
+        if path.is_empty() || description.is_empty() || !seen_skill_paths.insert(path.to_owned()) {
+            return;
+        }
+        skills.push(format!(
+            "<agent_skill fullPath=\"{}\">{}</agent_skill>",
+            xml(path),
+            xml(description),
+        ));
+    };
+    for skill in context
         .agent_skills
         .iter()
         .filter(|skill| !skill.disable_model_invocation)
-        .map(|skill| {
-            format!(
-                "<agent_skill fullPath=\"{}\">{}</agent_skill>",
-                xml(&skill.full_path),
-                xml(&skill.description),
-            )
-        })
-        .collect::<Vec<_>>();
+    {
+        append_skill(&skill.full_path, &skill.description);
+    }
+    // Cursor CLI sends its normal capability catalog through SkillOptions.
+    // Desktop clients may additionally populate AgentSkills, but treating that
+    // as the only source silently removes every skill for CLI-originated runs.
+    for descriptor in context
+        .skill_options
+        .as_ref()
+        .into_iter()
+        .flat_map(|options| &options.skill_descriptors)
+    {
+        append_skill(&descriptor.readme_file_path, &descriptor.description);
+    }
     if !skills.is_empty() {
         sections.push(format!(
             "<agent_skills>\n<available_skills>\n{}\n</available_skills>\n</agent_skills>",
