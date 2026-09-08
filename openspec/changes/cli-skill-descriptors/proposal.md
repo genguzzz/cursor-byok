@@ -10,8 +10,10 @@ block for CLI-only skill catalogs.
 ## Change
 
 Project deduplicated `SkillOptions.skill_descriptors` alongside `agent_skills`.
-When the request context has no skill descriptors, hydrate it from the direct
-`AgentRunRequest.skill_options` field before compiling provider context.
+When the request context lacks descriptors, merge the direct
+`AgentRunRequest.skill_options` field before compiling provider context. When
+the CLI sends no skills or rules, scan the same local and workspace skill
+roots used by the legacy backend to build `AgentSkill` entries.
 
 ## Validation
 

@@ -3,7 +3,9 @@
 ```text
 cc-connect → Cursor CLI AgentRunRequest
   ├── request_context.skill_options
-  └── direct skill_options fallback
+  ├── direct skill_options fallback
+  └── when the CLI sends no skills or rules:
+        local `~/.cursor/skills*`, `~/.claude/skills`, and workspace skills
         → compile_context
              → <agent_skills><available_skills>
                   → provider request
