@@ -187,6 +187,7 @@ fn enrich_filesystem_skills(context: &mut pb::RequestContext) {
     }
 
     let mut seen = HashSet::new();
+    let root_count = roots.len();
     for root in roots {
         let Ok(entries) = std::fs::read_dir(root) else {
             continue;
@@ -215,6 +216,11 @@ fn enrich_filesystem_skills(context: &mut pb::RequestContext) {
             });
         }
     }
+    tracing::info!(
+        skill_count = context.agent_skills.len(),
+        root_count,
+        "enriched Cursor CLI request context from local skill directories"
+    );
 }
 
 #[derive(Deserialize)]
