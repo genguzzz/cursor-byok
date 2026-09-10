@@ -9,7 +9,10 @@ use prost::Message;
 
 use crate::{
     api::cursor::proxy::{self, CursorProxy},
-    cursor::{protocol::proto::agent::v1 as agent, transport::TransportRegistry},
+    cursor::{
+        protocol::proto::agent::v1 as agent, services::startup_metadata,
+        transport::TransportRegistry,
+    },
     model::{format_token_count, parse_token_count, ModelConfig},
     plugin::PluginModelDescriptor,
     Error, Result,
@@ -227,23 +230,22 @@ const EFFORTS: [(&str, &str); 5] = [
     ("xhigh", "Extra High"),
     ("max", "Max"),
 ];
-const DEFAULT_CONTEXT: &str = "200k";
-
 fn context_options(context_window_tokens: Option<u64>) -> Vec<(String, String)> {
-    let mut contexts = CONTEXTS
-        .into_iter()
-        .map(|(value, display_name)| (value.to_owned(), display_name.to_owned()))
-        .collect::<Vec<_>>();
-    if let Some(tokens) = context_window_tokens {
-        let value = tokens.to_string();
-        let duplicate = contexts
-            .iter()
-            .any(|(existing, _)| parse_token_count(existing) == Some(tokens));
-        if !duplicate {
-            contexts.push((value, format!("{} (Custom)", format_token_count(tokens))));
+    match context_window_tokens {
+        Some(tokens) => {
+            let known = CONTEXTS
+                .into_iter()
+                .find(|(value, _)| parse_token_count(value) == Some(tokens));
+            let (value, display_name) = known
+                .map(|(value, display_name)| (value.to_owned(), display_name.to_owned()))
+                .unwrap_or_else(|| (tokens.to_string(), format_token_count(tokens)));
+            vec![(value, display_name)]
         }
+        None => CONTEXTS
+            .into_iter()
+            .map(|(value, display_name)| (value.to_owned(), display_name.to_owned()))
+            .collect(),
     }
-    contexts
 }
 
 pub async fn available_models(
@@ -272,6 +274,10 @@ pub async fn available_models(
         models: available_models,
     }
     .encode_to_vec();
+    if startup_metadata::is_local_request(request.headers()) {
+        startup_metadata::consume(request).await?;
+        return Ok(local_response(local));
+    }
     match proxy::forward_buffered(&proxy, request).await {
         Ok(upstream) => merge_response(upstream, local),
         Err(error) => {
@@ -304,6 +310,10 @@ pub async fn usable_models(
             .collect(),
     }
     .encode_to_vec();
+    if startup_metadata::is_local_request(request.headers()) {
+        startup_metadata::consume(request).await?;
+        return Ok(local_response(local));
+    }
     match proxy::forward_buffered(&proxy, request).await {
         Ok(upstream) => merge_response(upstream, local),
         Err(error) => {
@@ -598,8 +608,9 @@ fn model_variants(
     } else {
         &[None]
     };
+    let default_context = contexts.first().map(|(value, _)| value.as_str());
     let mut variants = Vec::with_capacity(contexts.len() * efforts.len() * 2);
-    for (context, context_name) in contexts {
+    for context in contexts {
         for effort in efforts {
             for fast in [false, true] {
                 variants.push(model_variant(
@@ -607,7 +618,7 @@ fn model_variants(
                     display_name,
                     tooltip,
                     context,
-                    context_name,
+                    default_context == Some(context.0.as_str()),
                     *effort,
                     fast,
                 ));
@@ -621,14 +632,15 @@ fn model_variant(
     name: &str,
     display_name: &str,
     tooltip: &TooltipData,
-    context: &str,
-    context_name: &str,
+    context: &(String, String),
+    is_default_context: bool,
     effort: Option<(&str, &str)>,
     fast: bool,
 ) -> ModelVariant {
+    let (context, context_name) = context;
     let mut suffix = Vec::with_capacity(3);
-    if context != DEFAULT_CONTEXT {
-        suffix.push(context_name);
+    if !is_default_context {
+        suffix.push(context_name.as_str());
     }
     if let Some((_, effort_name)) = effort {
         suffix.push(effort_name);
@@ -645,7 +657,7 @@ fn model_variant(
         )
     };
     let is_default =
-        context == DEFAULT_CONTEXT && !fast && effort.is_none_or(|(effort, _)| effort == "high");
+        is_default_context && !fast && effort.is_none_or(|(effort, _)| effort == "high");
     let mut parameter_values = vec![ModelParameterValue {
         id: "context".into(),
         value: context.into(),
@@ -861,6 +873,37 @@ mod tests {
         assert_eq!(
             nudge.models_with_no_default_switch,
             vec!["local-model-hash"]
+        );
+    }
+
+    #[test]
+    fn configured_context_is_the_only_published_context_and_the_default() {
+        let contexts = context_options(Some(1_050_000));
+        assert_eq!(contexts, vec![("1050000".into(), "1050K".into())]);
+
+        let variants = model_variants(
+            "model",
+            "Model",
+            &TooltipData {
+                markdown_content: None,
+            },
+            &contexts,
+            true,
+        );
+        assert_eq!(variants.len(), EFFORTS.len() * 2);
+        assert!(variants
+            .iter()
+            .all(|variant| variant.parameter_values[0].value == "1050000"));
+        assert!(variants
+            .iter()
+            .any(|variant| variant.is_default_non_max_config == Some(true)));
+    }
+
+    #[test]
+    fn known_configured_context_uses_the_canonical_value() {
+        assert_eq!(
+            context_options(Some(1_000_000)),
+            vec![("1m".into(), "1M".into())]
         );
     }
 }

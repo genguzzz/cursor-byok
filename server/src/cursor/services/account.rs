@@ -7,7 +7,7 @@ use axum::{
 use prost::Message;
 use serde_json::Value;
 
-use crate::{api::cursor::proxy, local_app, Result};
+use crate::{api::cursor::proxy, cursor::services::startup_metadata, local_app, Result};
 
 use super::entitlement::FreeEntitlementCache;
 
@@ -370,11 +370,23 @@ async fn local_or_forward(
     request: Request<Body>,
     local: impl FnOnce() -> Result<Response<Body>>,
 ) -> Result<Response<Body>> {
-    if local_app::request_uses_local_cursor_token(request.headers()) {
+    if local_app::request_uses_local_cursor_token(request.headers())
+        || startup_metadata::is_local_request(request.headers())
+    {
         consume_body(request).await?;
         return local();
     }
-    proxy::forward(Extension(upstream), request).await
+    match proxy::forward_buffered(&upstream, request).await {
+        Ok(response) if response.status.is_success() => Ok(response.into_response()),
+        Ok(response) => {
+            tracing::debug!(status = %response.status, "Cursor identity upstream rejected request; using local identity");
+            local()
+        }
+        Err(error) => {
+            tracing::warn!(%error, "Cursor identity upstream unavailable; using local identity");
+            local()
+        }
+    }
 }
 
 async fn consume_body(request: Request<Body>) -> Result<()> {

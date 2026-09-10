@@ -6,11 +6,10 @@ use axum::{
     routing::{get, post},
     Router,
 };
-use tower_http::decompression::RequestDecompressionLayer;
 use prost::Message;
+use tower_http::decompression::RequestDecompressionLayer;
 
 use crate::{
-
     api::cursor::{
         bidi,
         proxy::{self, CursorProxy},
@@ -23,7 +22,8 @@ use crate::{
         },
         services::{
             account, analytics, commit_message, compatibility, entitlement::FreeEntitlementCache,
-            knowledge, model_catalog, server_config, tab,
+            knowledge, model_catalog, observability::CursorTraceRecorder, server_config,
+            startup_metadata, tab,
         },
         transport::{TransportParent, TransportRegistry},
     },
@@ -120,6 +120,26 @@ fn router_with_proxy(
             post(model_catalog::default_model_nudge),
         )
         .route(
+            "/aiserver.v1.DashboardService/GetManagedSkills",
+            post(startup_metadata::optional),
+        )
+        .route(
+            "/aiserver.v1.DashboardService/GetTeamAdminSettingsOrEmptyIfNotInTeam",
+            post(startup_metadata::optional),
+        )
+        .route(
+            "/aiserver.v1.DashboardService/GetEffectiveUserPlugins",
+            post(startup_metadata::optional),
+        )
+        .route(
+            "/aiserver.v1.DashboardService/GetUserPrivacyMode",
+            post(startup_metadata::optional),
+        )
+        .route(
+            "/aiserver.v1.AnalyticsService/TrackEvents",
+            post(startup_metadata::optional),
+        )
+        .route(
             "/aiserver.v1.AuthService/GetEmail",
             post(account::get_email),
         )
@@ -213,10 +233,9 @@ async fn server_config() -> Result<Response<Body>> {
         header::CONTENT_TYPE,
         HeaderValue::from_static("application/proto"),
     );
-    response.headers_mut().insert(
-        "connect-protocol-version",
-        HeaderValue::from_static("1"),
-    );
+    response
+        .headers_mut()
+        .insert("connect-protocol-version", HeaderValue::from_static("1"));
     Ok(response)
 }
 
