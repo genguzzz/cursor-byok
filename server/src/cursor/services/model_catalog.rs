@@ -10,6 +10,7 @@ use prost::Message;
 use crate::{
     api::cursor::proxy::{self, CursorProxy},
     cursor::{protocol::proto::agent::v1 as agent, transport::TransportRegistry},
+    local_app,
     model::{format_token_count, parse_token_count, ModelConfig},
     plugin::PluginModelDescriptor,
     Error, Result,
@@ -227,23 +228,22 @@ const EFFORTS: [(&str, &str); 5] = [
     ("xhigh", "Extra High"),
     ("max", "Max"),
 ];
-const DEFAULT_CONTEXT: &str = "200k";
-
 fn context_options(context_window_tokens: Option<u64>) -> Vec<(String, String)> {
-    let mut contexts = CONTEXTS
-        .into_iter()
-        .map(|(value, display_name)| (value.to_owned(), display_name.to_owned()))
-        .collect::<Vec<_>>();
-    if let Some(tokens) = context_window_tokens {
-        let value = tokens.to_string();
-        let duplicate = contexts
-            .iter()
-            .any(|(existing, _)| parse_token_count(existing) == Some(tokens));
-        if !duplicate {
-            contexts.push((value, format!("{} (Custom)", format_token_count(tokens))));
+    match context_window_tokens {
+        Some(tokens) => {
+            let known = CONTEXTS
+                .into_iter()
+                .find(|(value, _)| parse_token_count(value) == Some(tokens));
+            let (value, display_name) = known
+                .map(|(value, display_name)| (value.to_owned(), display_name.to_owned()))
+                .unwrap_or_else(|| (tokens.to_string(), format_token_count(tokens)));
+            vec![(value, display_name)]
         }
+        None => CONTEXTS
+            .into_iter()
+            .map(|(value, display_name)| (value.to_owned(), display_name.to_owned()))
+            .collect(),
     }
-    contexts
 }
 
 pub async fn available_models(
@@ -272,6 +272,9 @@ pub async fn available_models(
         models: available_models,
     }
     .encode_to_vec();
+    if uses_local_catalog(request.headers()) {
+        return Ok(local_response(local));
+    }
     match proxy::forward_buffered(&proxy, request).await {
         Ok(upstream) => merge_response(upstream, local),
         Err(error) => {
@@ -304,6 +307,9 @@ pub async fn usable_models(
             .collect(),
     }
     .encode_to_vec();
+    if uses_local_catalog(request.headers()) {
+        return Ok(local_response(local));
+    }
     match proxy::forward_buffered(&proxy, request).await {
         Ok(upstream) => merge_response(upstream, local),
         Err(error) => {
@@ -311,6 +317,10 @@ pub async fn usable_models(
             Ok(local_response(local))
         }
     }
+}
+
+fn uses_local_catalog(headers: &axum::http::HeaderMap) -> bool {
+    local_app::request_uses_local_cursor_token(headers)
 }
 
 pub async fn default_model_for_cli(
@@ -598,8 +608,9 @@ fn model_variants(
     } else {
         &[None]
     };
+    let default_context = contexts.first().map(|(value, _)| value.as_str());
     let mut variants = Vec::with_capacity(contexts.len() * efforts.len() * 2);
-    for (context, context_name) in contexts {
+    for context in contexts {
         for effort in efforts {
             for fast in [false, true] {
                 variants.push(model_variant(
@@ -607,7 +618,7 @@ fn model_variants(
                     display_name,
                     tooltip,
                     context,
-                    context_name,
+                    default_context == Some(context.0.as_str()),
                     *effort,
                     fast,
                 ));
@@ -621,14 +632,15 @@ fn model_variant(
     name: &str,
     display_name: &str,
     tooltip: &TooltipData,
-    context: &str,
-    context_name: &str,
+    context: &(String, String),
+    is_default_context: bool,
     effort: Option<(&str, &str)>,
     fast: bool,
 ) -> ModelVariant {
+    let (context, context_name) = context;
     let mut suffix = Vec::with_capacity(3);
-    if context != DEFAULT_CONTEXT {
-        suffix.push(context_name);
+    if !is_default_context {
+        suffix.push(context_name.as_str());
     }
     if let Some((_, effort_name)) = effort {
         suffix.push(effort_name);
@@ -645,7 +657,7 @@ fn model_variant(
         )
     };
     let is_default =
-        context == DEFAULT_CONTEXT && !fast && effort.is_none_or(|(effort, _)| effort == "high");
+        is_default_context && !fast && effort.is_none_or(|(effort, _)| effort == "high");
     let mut parameter_values = vec![ModelParameterValue {
         id: "context".into(),
         value: context.into(),
@@ -841,6 +853,65 @@ mod tests {
         };
         assert_eq!(credentials.api_key, CLI_LOCAL_MODEL_API_KEY);
         assert_eq!(credentials.base_url, None);
+    }
+
+    #[test]
+    fn local_cursor_identity_uses_only_the_local_catalog() {
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert(
+            header::AUTHORIZATION,
+            crate::local_app::local_cursor_authorization()
+                .parse()
+                .unwrap(),
+        );
+        assert!(uses_local_catalog(&headers));
+
+        headers.insert(
+            header::AUTHORIZATION,
+            HeaderValue::from_static("Bearer official-cursor-token"),
+        );
+        assert!(!uses_local_catalog(&headers));
+    }
+
+    #[test]
+    fn configured_models_only_publish_their_actual_context_window() {
+        let mut configured = model();
+        configured.context_window_tokens = Some(1_050_000);
+
+        let available = available_model(&configured);
+        let context_values = available.parameter_definitions[0]
+            .parameter_type
+            .as_ref()
+            .and_then(|parameter| parameter.enum_parameter.as_ref())
+            .expect("context enum")
+            .values
+            .iter()
+            .map(|value| (value.value.as_str(), value.display_name.as_deref()))
+            .collect::<Vec<_>>();
+
+        assert_eq!(context_values, vec![("1050000", Some("1050K"))]);
+        assert_eq!(available.variants.len(), EFFORTS.len() * 2);
+        assert!(available
+            .variants
+            .iter()
+            .all(|variant| variant.parameter_values[0].value == "1050000"));
+        let default = available
+            .variants
+            .iter()
+            .find(|variant| variant.is_default_non_max_config == Some(true))
+            .expect("default variant");
+        assert!(default
+            .parameter_values
+            .iter()
+            .any(|value| value.id == "reasoning" && value.value == "high"));
+    }
+
+    #[test]
+    fn known_configured_context_uses_the_canonical_value() {
+        assert_eq!(
+            context_options(Some(1_000_000)),
+            vec![("1m".into(), "1M".into())]
+        );
     }
 
     #[test]

@@ -48,6 +48,13 @@ pub async fn update_conversation_metadata(
     .await
 }
 
+pub async fn optional_metadata(
+    Extension(proxy): Extension<CursorProxy>,
+    request: Request<Body>,
+) -> Result<Response<Body>> {
+    route(&proxy, request, EmptyResponse {}).await
+}
+
 async fn route<M: Message>(
     proxy: &CursorProxy,
     request: Request<Body>,

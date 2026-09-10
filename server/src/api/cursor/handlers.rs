@@ -61,6 +61,18 @@ fn router_with_proxy(
             post(compatibility::user_privacy_mode),
         )
         .route(
+            "/aiserver.v1.DashboardService/GetManagedSkills",
+            post(compatibility::optional_metadata),
+        )
+        .route(
+            "/aiserver.v1.DashboardService/GetTeamAdminSettingsOrEmptyIfNotInTeam",
+            post(compatibility::optional_metadata),
+        )
+        .route(
+            "/aiserver.v1.AnalyticsService/TrackEvents",
+            post(compatibility::optional_metadata),
+        )
+        .route(
             "/agent.v1.AgentService/UpdateConversationMetadata",
             post(compatibility::update_conversation_metadata),
         )
