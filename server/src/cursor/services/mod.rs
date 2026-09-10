@@ -7,5 +7,6 @@ pub mod context_sync;
 pub mod knowledge;
 pub mod model_catalog;
 pub mod observability;
+pub mod startup_metadata;
 pub mod tab;
 pub mod usage;

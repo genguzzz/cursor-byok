@@ -6,11 +6,10 @@ use axum::{
     routing::{get, post},
     Router,
 };
-use tower_http::decompression::RequestDecompressionLayer;
 use prost::Message;
+use tower_http::decompression::RequestDecompressionLayer;
 
 use crate::{
-
     api::cursor::{
         bidi,
         proxy::{self, CursorProxy},
@@ -22,7 +21,8 @@ use crate::{
             proto::{agent::v1 as agent, aiserver::v1 as ai},
         },
         services::{
-            account, analytics, knowledge, model_catalog, observability::CursorTraceRecorder, tab,
+            account, analytics, knowledge, model_catalog, observability::CursorTraceRecorder,
+            startup_metadata, tab,
         },
         transport::{TransportParent, TransportRegistry},
     },
@@ -59,6 +59,10 @@ fn router_with_proxy(
             post(server_config),
         )
         .route(
+            "/aiserver.v1.AiService/GetServerConfig",
+            post(server_config),
+        )
+        .route(
             "/aiserver.v1.AiService/AvailableModels",
             post(model_catalog::available_models),
         )
@@ -69,6 +73,34 @@ fn router_with_proxy(
         .route(
             "/aiserver.v1.AiService/GetUsableModels",
             post(model_catalog::usable_models),
+        )
+        .route(
+            "/agent.v1.AgentService/GetDefaultModelForCli",
+            post(model_catalog::default_model_for_cli),
+        )
+        .route(
+            "/aiserver.v1.AiService/GetDefaultModelForCli",
+            post(model_catalog::default_model_for_cli),
+        )
+        .route(
+            "/aiserver.v1.DashboardService/GetManagedSkills",
+            post(startup_metadata::optional),
+        )
+        .route(
+            "/aiserver.v1.DashboardService/GetTeamAdminSettingsOrEmptyIfNotInTeam",
+            post(startup_metadata::optional),
+        )
+        .route(
+            "/aiserver.v1.DashboardService/GetEffectiveUserPlugins",
+            post(startup_metadata::optional),
+        )
+        .route(
+            "/aiserver.v1.DashboardService/GetUserPrivacyMode",
+            post(startup_metadata::optional),
+        )
+        .route(
+            "/aiserver.v1.AnalyticsService/TrackEvents",
+            post(startup_metadata::optional),
         )
         .route(
             "/aiserver.v1.AuthService/GetEmail",
@@ -141,10 +173,9 @@ async fn server_config() -> Result<Response<Body>> {
         header::CONTENT_TYPE,
         HeaderValue::from_static("application/proto"),
     );
-    response.headers_mut().insert(
-        "connect-protocol-version",
-        HeaderValue::from_static("1"),
-    );
+    response
+        .headers_mut()
+        .insert("connect-protocol-version", HeaderValue::from_static("1"));
     Ok(response)
 }
 

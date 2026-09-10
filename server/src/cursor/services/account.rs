@@ -7,7 +7,7 @@ use axum::{
 use prost::Message;
 use serde_json::{Map, Value};
 
-use crate::{api::cursor::proxy, Result};
+use crate::{api::cursor::proxy, cursor::services::startup_metadata, Result};
 
 const LOCAL_AUTH_ID: &str = "local_ultra";
 const LOCAL_EMAIL: &str = "cursor@ai.com";
@@ -251,6 +251,10 @@ async fn forward_or(
     request: Request<Body>,
     fallback: impl FnOnce() -> Result<Response<Body>>,
 ) -> Result<Response<Body>> {
+    if startup_metadata::is_local_request(request.headers()) {
+        startup_metadata::consume(request).await?;
+        return fallback();
+    }
     match proxy::forward_buffered(&upstream, request).await {
         Ok(response) if response.status.is_success() => Ok(response.into_response()),
         Ok(response) => {
