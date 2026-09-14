@@ -83,24 +83,43 @@ impl Provider for OpenAiChatProvider {
                 "OpenAI Chat provider stream started"
             );
             let messages = openai_chat_messages(&request.prompt.instructions, &request.history)?;
-            let mut body = json!({
-                "model": request.model.model_id,
-                "messages": messages,
-                "stream": true,
-                "stream_options": {"include_usage": true}
-            });
+            let mut body = if codebuddy {
+                json!({
+                    "model": request.model.model_id,
+                    "messages": messages,
+                    "stream": true,
+                })
+            } else {
+                json!({
+                    "model": request.model.model_id,
+                    "messages": messages,
+                    "stream": true,
+                    "stream_options": {"include_usage": true}
+                })
+            };
             if !request.prompt.tools.is_empty() {
                 body["tools"] = json!(request.prompt.tools.iter().map(|tool| json!({"type":"function","function":{
                     "name": tool.name, "description": tool.description, "parameters": tool.parameters
                 }})).collect::<Vec<_>>());
             }
-            apply_model(&mut body, &request.model, config.max_output_tokens)?;
+            apply_model(
+                &mut body,
+                &request.model,
+                config.max_output_tokens,
+                codebuddy,
+            )?;
             if codebuddy {
                 // Applied before extra_params so a user override still wins.
-                super::codebuddy::decorate_body(&mut body, request.model.reasoning.effort.as_deref())?;
+                super::codebuddy::decorate_body(
+                    &mut body,
+                    &request.model.model_id,
+                    request.model.reasoning.effort.as_deref(),
+                )?;
             }
             merge_extra_params(&mut body, &request.model.extra_params)?;
-            apply_openai_prompt_cache_key(&mut body, &request.model.model_id)?;
+            if !codebuddy {
+                apply_openai_prompt_cache_key(&mut body, &request.model.model_id)?;
+            }
             apply_body_allowlist(&mut body, config.allowed_body_fields.as_ref())?;
             let headers = if codebuddy {
                 let identity = super::codebuddy::CallIdentity::new(
@@ -108,7 +127,12 @@ impl Provider for OpenAiChatProvider {
                     &run_id,
                     &call_id,
                 );
-                super::codebuddy::headers(&config.custom_headers, &config.api_key, &identity)?
+                super::codebuddy::headers(
+                    &config.custom_headers,
+                    &config.api_key,
+                    &identity,
+                    &request.model.model_id,
+                )?
             } else {
                 config.custom_headers.clone()
             };
@@ -116,7 +140,7 @@ impl Provider for OpenAiChatProvider {
             if let Some(recorder) = &recorder {
                 recorder.request(request_headers.clone(), &body).await?;
             }
-            // CodeBuddy expects a gzipped body and no Accept-Encoding.
+            // CodeBuddy sends a gzipped body while advertising accepted response encodings.
             let compressed = if codebuddy {
                 Some(super::codebuddy::gzip(&serde_json::to_vec(&body)?)?)
             } else {
@@ -309,12 +333,20 @@ fn apply_model(
     body: &mut Value,
     model: &crate::model::ModelSpec,
     route_max_output_tokens: Option<u64>,
+    codebuddy: bool,
 ) -> Result<()> {
     let object = body
         .as_object_mut()
         .ok_or_else(|| Error::Provider("OpenAI Chat request body is not an object".into()))?;
     if let Some(max) = model.max_output_tokens.or(route_max_output_tokens) {
-        object.insert("max_completion_tokens".into(), json!(max));
+        object.insert(
+            if codebuddy {
+                "max_tokens".into()
+            } else {
+                "max_completion_tokens".into()
+            },
+            json!(max),
+        );
     }
     if let Some(effort) = &model.reasoning.effort {
         object.insert("reasoning_effort".into(), json!(effort));
@@ -420,24 +452,13 @@ fn chat_content(_role: &Role, parts: &[ContentPart]) -> Result<Value> {
             .map(|part| match part {
                 ContentPart::Text { text } => Ok(json!({"type":"text", "text":text})),
                 ContentPart::Image {
-                    mime_type,
-                    data,
-                    path,
-                } => {
-                    let mut image_url = json!({
-                        "url": format!(
-                            "data:{mime_type};base64,{}",
-                            STANDARD.encode(data)
-                        ),
-                    });
-                    if !path.is_empty() {
-                        image_url["path"] = json!(path);
+                    mime_type, data, ..
+                } => Ok(json!({
+                    "type": "image_url",
+                    "image_url": {
+                        "url": format!("data:{mime_type};base64,{}", STANDARD.encode(data))
                     }
-                    Ok(json!({
-                        "type": "image_url",
-                        "image_url": image_url,
-                    }))
-                }
+                })),
             })
             .collect::<Result<Vec<_>>>()?,
     ))
@@ -670,7 +691,7 @@ mod tests {
     use std::{io::Read, sync::Arc, time::Duration};
 
     #[tokio::test]
-    async fn codebuddy_request_keeps_user_image_and_local_path() {
+    async fn codebuddy_keeps_inline_image_and_matches_ide_body_shape() {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let (sender, receiver) = tokio::sync::oneshot::channel();
@@ -706,7 +727,7 @@ mod tests {
                 request_url: format!("http://{address}/chat/completions"),
                 api_key: "test-key".into(),
                 custom_headers: Default::default(),
-                max_output_tokens: None,
+                max_output_tokens: Some(128_000),
                 claude_code_compat: false,
                 request_timeout: Duration::from_secs(5),
                 allowed_body_fields: None,
@@ -720,16 +741,16 @@ mod tests {
             provider_call_index: 0,
             request: ModelRequest {
                 prompt: PromptSpec {
-                    instructions: String::new(),
+                    instructions: "system".into(),
                     tools: vec![],
                 },
-                model: ModelSpec::new("deepseek-v4-flash-ioa"),
+                model: ModelSpec::new("deepseek-v4.1-flash-ioa"),
                 history: vec![ProjectedMessage {
                     message_id: "runtime:1".into(),
                     role: Role::User,
                     content: ProjectedContent::Parts(vec![
                         ContentPart::Text {
-                            text: "look <selected_images><image path=\"/tmp/a.png\" /></selected_images>".into(),
+                            text: "图片里有什么".into(),
                         },
                         ContentPart::Image {
                             mime_type: "image/png".into(),
@@ -754,17 +775,16 @@ mod tests {
         .unwrap();
         server.abort();
 
-        assert!(body["messages"][0]["content"][0]["text"]
-            .as_str()
-            .unwrap()
-            .contains("/tmp/a.png"));
-        assert_eq!(body["messages"][0]["content"][1]["type"], "image_url");
+        assert_eq!(body["temperature"], 1.0);
+        assert_eq!(body["reasoning_summary"], "auto");
+        assert_eq!(body["max_tokens"], 128_000);
+        assert!(body.get("stream_options").is_none());
+        assert!(body.get("verbosity").is_none());
+        assert!(body.get("reasoning_effort").is_none());
+        assert_eq!(body["messages"][1]["content"][0]["text"], "图片里有什么");
+        assert_eq!(body["messages"][1]["content"][1]["type"], "image_url");
         assert_eq!(
-            body["messages"][0]["content"][1]["image_url"]["path"],
-            "/tmp/a.png"
-        );
-        assert_eq!(
-            body["messages"][0]["content"][1]["image_url"]["url"],
+            body["messages"][1]["content"][1]["image_url"]["url"],
             "data:image/png;base64,AQID"
         );
     }
@@ -873,7 +893,7 @@ mod tests {
     }
 
     #[test]
-    fn chat_content_forwards_local_image_path() {
+    fn chat_content_uses_standard_image_url_without_path_metadata() {
         let parts = [
             ContentPart::Text {
                 text: "look".into(),
@@ -885,7 +905,7 @@ mod tests {
             },
         ];
         let value = chat_content(&Role::User, &parts).unwrap();
-        assert_eq!(value[1]["image_url"]["path"], "/tmp/a.png");
+        assert!(value[1]["image_url"].get("path").is_none());
         assert!(value[1]["image_url"]["url"]
             .as_str()
             .unwrap()

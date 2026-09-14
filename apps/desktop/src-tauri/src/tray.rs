@@ -351,6 +351,7 @@ mod tests {
             configured_models: enabled_models,
             enabled_models,
             integration,
+            settings_applied: true,
             proxy_url: Some("http://127.0.0.1:8080".into()),
             ca_install_command: None,
         }
