@@ -194,7 +194,13 @@ fn enrich_filesystem_skills(context: &mut pb::RequestContext) {
         };
         let mut paths = entries
             .flatten()
-            .filter_map(|entry| entry.file_type().ok().filter(|kind| kind.is_dir() || kind.is_symlink()).map(|_| entry.path().join("SKILL.md")))
+            .filter_map(|entry| {
+                entry
+                    .file_type()
+                    .ok()
+                    .filter(|kind| kind.is_dir() || kind.is_symlink())
+                    .map(|_| entry.path().join("SKILL.md"))
+            })
             .collect::<Vec<_>>();
         paths.sort();
         for path in paths {

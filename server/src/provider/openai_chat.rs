@@ -424,13 +424,25 @@ fn chat_content(_role: &Role, parts: &[ContentPart]) -> Result<Value> {
             .iter()
             .map(|part| match part {
                 ContentPart::Text { text } => Ok(json!({"type":"text", "text":text})),
-                ContentPart::Image { mime_type, data } => Ok(json!({
-                    "type":"image_url",
-                    "image_url":{"url":format!(
-                        "data:{mime_type};base64,{}",
-                        STANDARD.encode(data)
-                    )},
-                })),
+                ContentPart::Image {
+                    mime_type,
+                    data,
+                    path,
+                } => {
+                    let mut image_url = json!({
+                        "url": format!(
+                            "data:{mime_type};base64,{}",
+                            STANDARD.encode(data)
+                        ),
+                    });
+                    if !path.is_empty() {
+                        image_url["path"] = json!(path);
+                    }
+                    Ok(json!({
+                        "type": "image_url",
+                        "image_url": image_url,
+                    }))
+                }
             })
             .collect::<Result<Vec<_>>>()?,
     ))
@@ -758,5 +770,25 @@ mod tests {
         }
         assert_eq!(thinking, "分析项目结构");
         assert_eq!(text, "这是答案");
+    }
+
+    #[test]
+    fn chat_content_forwards_local_image_path() {
+        let parts = [
+            ContentPart::Text {
+                text: "look".into(),
+            },
+            ContentPart::Image {
+                mime_type: "image/png".into(),
+                data: vec![1, 2, 3],
+                path: "/tmp/a.png".into(),
+            },
+        ];
+        let value = chat_content(&Role::User, &parts).unwrap();
+        assert_eq!(value[1]["image_url"]["path"], "/tmp/a.png");
+        assert!(value[1]["image_url"]["url"]
+            .as_str()
+            .unwrap()
+            .starts_with("data:image/png;base64,"));
     }
 }

@@ -59,6 +59,8 @@ pub enum ContentPart {
         mime_type: String,
         #[serde(with = "base64_bytes")]
         data: Vec<u8>,
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        path: String,
     },
 }
 

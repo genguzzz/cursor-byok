@@ -386,12 +386,12 @@ mod tests {
             .await
             .unwrap();
         sqlx::query("UPDATE ItemTable SET value = 'free' WHERE key = ?")
-            .bind("cursorAuth/stripeMembershipType")
+            .bind(MEMBERSHIP_KEY)
             .execute(&mut connection)
             .await
             .unwrap();
         sqlx::query("DELETE FROM ItemTable WHERE key = ?")
-            .bind("cursorAuth/stripeMembershipAuthId")
+            .bind(ACCESS_TOKEN_KEY)
             .execute(&mut connection)
             .await
             .unwrap();
@@ -399,24 +399,9 @@ mod tests {
 
         inject_if_missing_at(&path).await.unwrap();
 
-        let mut connection = SqliteConnection::connect(&format!("sqlite:{}", path.display()))
-            .await
-            .unwrap();
-        let membership_type: String =
-            sqlx::query_scalar("SELECT CAST(value AS TEXT) FROM ItemTable WHERE key = ?")
-                .bind("cursorAuth/stripeMembershipType")
-                .fetch_one(&mut connection)
-                .await
-                .unwrap();
-        let membership_auth_id: String =
-            sqlx::query_scalar("SELECT CAST(value AS TEXT) FROM ItemTable WHERE key = ?")
-                .bind("cursorAuth/stripeMembershipAuthId")
-                .fetch_one(&mut connection)
-                .await
-                .unwrap();
-
-        assert_eq!(membership_type, MEMBERSHIP_TYPE);
-        assert_eq!(membership_auth_id, SUBJECT);
+        let snapshot = read_snapshot_at(&path).await.unwrap().unwrap();
+        assert_eq!(snapshot.membership_type().as_deref(), Some(MEMBERSHIP_TYPE));
+        assert!(snapshot.access_token().is_some());
     }
 
     #[test]

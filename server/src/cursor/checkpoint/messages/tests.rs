@@ -180,6 +180,7 @@ fn cursor_user_image_uses_image_field() {
             if parts[1] == ContentPart::Image {
                 mime_type: "image/png".into(),
                 data: vec![1, 2, 3],
+                path: String::new(),
             }
     ));
 
@@ -187,6 +188,36 @@ fn cursor_user_image_uses_image_field() {
     let encoded = wire_message(&projected[0], "model", None).unwrap();
     assert_eq!(encoded["content"][1]["image"], "AQID");
     assert!(encoded["content"][1].get("data").is_none());
+}
+
+#[test]
+fn cursor_user_image_path_survives_checkpoint_round_trip() {
+    let wire = json!({
+        "role": "user",
+        "id": "user-image-path",
+        "content": [
+            {"type":"text", "text":"look"},
+            {"type":"image", "image":"AQID", "mimeType":"image/png", "path":"/tmp/a.png"},
+        ],
+    });
+    let message = decode(
+        serde_json::to_vec(&wire).unwrap().as_slice(),
+        "cursor-root:user-image-path".into(),
+    )
+    .unwrap();
+    assert!(matches!(
+        &message.content,
+        MessageContent::Parts { parts }
+            if parts[1] == ContentPart::Image {
+                mime_type: "image/png".into(),
+                data: vec![1, 2, 3],
+                path: "/tmp/a.png".into(),
+            }
+    ));
+
+    let projected = project_messages(&[message]).unwrap();
+    let encoded = wire_message(&projected[0], "model", None).unwrap();
+    assert_eq!(encoded["content"][1]["path"], "/tmp/a.png");
 }
 
 #[test]

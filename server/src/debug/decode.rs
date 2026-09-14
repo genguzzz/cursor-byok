@@ -570,7 +570,7 @@ pub fn finish_payload(
         && (decode_err.is_some() || decoded_json.is_empty())
     {
         let unwrapped = maybe_unwrap_connect_unary(&decoded_body, codec);
-        if unwrapped.len() > 0 && unwrapped.len() != decoded_body.len() {
+        if !unwrapped.is_empty() && unwrapped.len() != decoded_body.len() {
             let alt = if response_side {
                 decode_unary_response(path, &unwrapped)
                     .map(|(json, kind)| (json, kind, String::new()))

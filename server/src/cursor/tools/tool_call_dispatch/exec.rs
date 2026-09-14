@@ -1,7 +1,7 @@
 //! Dispatches command execution Tool calls.
 //! Direct Exec and dynamic MCP dispatch.
 
-use crate::{cursor::protocol::proto::agent::v1 as pb, model::ToolCall, Error, Result};
+use crate::{cursor::protocol::proto::agent::v1 as pb, model::ToolCall, Result};
 
 use super::{normalized, ToolStart};
 use crate::cursor::tools::{

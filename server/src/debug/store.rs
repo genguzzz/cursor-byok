@@ -210,6 +210,7 @@ impl ExchangeStore {
     ///
     /// Writes raw hex, size, decoded JSON, kind, request id, and backfills
     /// offline/synthetic frames when the streaming path did not populate them.
+    #[allow(clippy::too_many_arguments)]
     pub fn finish_side(
         &self,
         id: &str,

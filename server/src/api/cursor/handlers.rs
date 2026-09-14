@@ -22,8 +22,7 @@ use crate::{
         },
         services::{
             account, analytics, commit_message, compatibility, entitlement::FreeEntitlementCache,
-            knowledge, model_catalog, observability::CursorTraceRecorder, server_config,
-            startup_metadata, tab,
+            knowledge, model_catalog, server_config, startup_metadata, tab,
         },
         transport::{TransportParent, TransportRegistry},
     },

@@ -266,10 +266,10 @@ impl ConversationOutput {
                     worker.abort();
                     if self.superseded.is_cancelled() {
                         self.abort_execs().await;
-                        return Ok(());
+                        return Ok(RunFinish::Transport(TransportFinish::Cancelled));
                     }
                     if self.wait_for_run_ended().await {
-                        return Ok(());
+                        return Ok(RunFinish::TurnCompleted);
                     }
                     return Err(Error::Protocol("core event channel closed".into()));
                 }

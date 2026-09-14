@@ -814,7 +814,9 @@ fn spawn_run_request(
                 ) {
                     match engine_join {
                         Ok(RunOutcome::Completed) => RunFinish::Transport(TransportFinish::Success),
-                        Ok(RunOutcome::Cancelled) => RunFinish::Transport(TransportFinish::Cancelled),
+                        Ok(RunOutcome::Cancelled) => {
+                            RunFinish::Transport(TransportFinish::Cancelled)
+                        }
                         Ok(RunOutcome::Failed(failure)) => {
                             tracing::error!(
                                 request_id = handle.request_id(),

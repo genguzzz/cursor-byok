@@ -881,6 +881,7 @@ async fn one_run_can_auto_compact_again_after_more_tool_output() {
             custom_headers: json!({}),
             anthropic_extra_params_enabled: false,
             anthropic_extra_params: json!({}),
+            claude_code_compat: false,
             context_window_tokens: Some(25_000),
             max_completion_tokens: None,
             anthropic_max_tokens: None,

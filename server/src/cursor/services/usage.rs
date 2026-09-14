@@ -279,7 +279,7 @@ fn estimate_text_tokens(text: &str) -> u64 {
         return 0;
     }
     let newlines = trimmed.matches('\n').count() as u64;
-    ((rune_count + 3) / 4 + newlines).max(1)
+    (rune_count.div_ceil(4) + newlines).max(1)
 }
 
 #[cfg(test)]

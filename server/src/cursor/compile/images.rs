@@ -1,4 +1,6 @@
 //! Resolves and persists images and blobs referenced by Cursor inputs.
+use std::collections::HashSet;
+
 use crate::{
     cursor::{protocol::proto::agent::v1 as pb, services::blob_sync::BlobSynchronizer},
     model::ContentPart,
@@ -6,21 +8,74 @@ use crate::{
     Error, Result,
 };
 
+const SELECTED_IMAGES_READ_HINT: &str = "If image bytes are not available inline, call the Read tool on each path above before answering about the image.";
+
 pub async fn parts(
     message: &pb::UserMessage,
     text: String,
     blobs: &BlobSynchronizer,
 ) -> Result<Vec<ContentPart>> {
-    let mut parts = vec![ContentPart::Text { text }];
+    let mut parts = vec![ContentPart::Text {
+        text: with_selected_images_section(text, message),
+    }];
     if let Some(context) = &message.selected_context {
         for image in &context.selected_images {
             parts.push(ContentPart::Image {
                 mime_type: image_mime_type(image)?,
                 data: image_data(image, blobs).await?,
+                path: image.path.trim().to_string(),
             });
         }
     }
     Ok(parts)
+}
+
+/// Keep local image paths in the runtime text so a provider that drops user
+/// `image_url` parts can still call Read. Matches the go-legacy replay shape.
+fn with_selected_images_section(text: String, message: &pb::UserMessage) -> String {
+    let Some(section) = selected_images_section(message) else {
+        return text;
+    };
+    if text.contains("<selected_images>") {
+        return text;
+    }
+    if text.trim().is_empty() {
+        section
+    } else {
+        format!("{}\n\n{section}", text.trim_end())
+    }
+}
+
+fn selected_images_section(message: &pb::UserMessage) -> Option<String> {
+    let context = message.selected_context.as_ref()?;
+    let mut entries = Vec::new();
+    let mut seen = HashSet::new();
+    for image in &context.selected_images {
+        let path = image.path.trim();
+        if path.is_empty() || !seen.insert(path) {
+            continue;
+        }
+        let mut attrs = format!("path=\"{}\"", escape_attr(path));
+        let mime = image.mime_type.trim();
+        if !mime.is_empty() {
+            attrs.push_str(&format!(" mime_type=\"{}\"", escape_attr(mime)));
+        }
+        entries.push(format!("<image {attrs} />"));
+    }
+    if entries.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "<selected_images>\n{}\n</selected_images>\n{SELECTED_IMAGES_READ_HINT}",
+        entries.join("\n")
+    ))
+}
+
+fn escape_attr(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('"', "&quot;")
+        .replace('<', "&lt;")
 }
 
 fn image_mime_type(image: &pb::SelectedImage) -> Result<String> {
@@ -72,4 +127,71 @@ async fn image_data(image: &pb::SelectedImage, blobs: &BlobSynchronizer) -> Resu
         return Err(Error::Protocol("selected image data is empty".into()));
     }
     Ok(data)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn message_with_image(path: &str, mime_type: &str) -> pb::UserMessage {
+        pb::UserMessage {
+            selected_context: Some(pb::SelectedContext {
+                selected_images: vec![pb::SelectedImage {
+                    path: path.into(),
+                    mime_type: mime_type.into(),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn selected_images_section_includes_path_and_read_hint() {
+        let message = message_with_image("/tmp/a.png", "image/png");
+        let section = selected_images_section(&message).unwrap();
+        assert!(section.contains("<image path=\"/tmp/a.png\" mime_type=\"image/png\" />"));
+        assert!(section.contains("call the Read tool on each path above"));
+    }
+
+    #[test]
+    fn selected_images_section_is_appended_once() {
+        let message = message_with_image("/tmp/a.png", "image/png");
+        let first = with_selected_images_section("look at this".into(), &message);
+        let again = with_selected_images_section(first.clone(), &message);
+        assert_eq!(first.matches("<selected_images>").count(), 1);
+        assert_eq!(again, first);
+        assert!(first.starts_with("look at this"));
+    }
+
+    #[test]
+    fn selected_images_section_skips_empty_and_duplicate_paths() {
+        let message = pb::UserMessage {
+            selected_context: Some(pb::SelectedContext {
+                selected_images: vec![
+                    pb::SelectedImage {
+                        path: String::new(),
+                        mime_type: "image/png".into(),
+                        ..Default::default()
+                    },
+                    pb::SelectedImage {
+                        path: "/tmp/a.png".into(),
+                        mime_type: "image/png".into(),
+                        ..Default::default()
+                    },
+                    pb::SelectedImage {
+                        path: "/tmp/a.png".into(),
+                        mime_type: "image/jpeg".into(),
+                        ..Default::default()
+                    },
+                ],
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let section = selected_images_section(&message).unwrap();
+        assert_eq!(section.matches("/tmp/a.png").count(), 1);
+        assert!(!section.contains("image/jpeg"));
+    }
 }

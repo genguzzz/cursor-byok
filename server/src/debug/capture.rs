@@ -21,6 +21,10 @@ use super::{
     store::ExchangeStore,
 };
 
+type ChunkCallback = Arc<dyn Fn(&[u8]) + Send + Sync>;
+type CaptureDoneCallback = Arc<dyn Fn(&[u8], usize, bool, Option<String>) + Send + Sync>;
+type BodyDoneCallback = Arc<dyn Fn(Vec<u8>, usize, bool, Option<String>) + Send + Sync>;
+
 static STORE: RwLock<Option<Arc<ExchangeStore>>> = RwLock::new(None);
 
 /// Installs (or, with `None`, clears) the process-wide capture store.
@@ -322,8 +326,8 @@ pub struct CaptureStream<S> {
     total: usize,
     truncated: bool,
     done: bool,
-    on_chunk: Option<Arc<dyn Fn(&[u8]) + Send + Sync>>,
-    on_done: Option<Arc<dyn Fn(&[u8], usize, bool, Option<String>) + Send + Sync>>,
+    on_chunk: Option<ChunkCallback>,
+    on_done: Option<CaptureDoneCallback>,
 }
 
 impl<S> CaptureStream<S> {
@@ -408,7 +412,7 @@ pub struct BodyTee<S, E> {
     total: usize,
     truncated: bool,
     done: bool,
-    on_done: Option<Arc<dyn Fn(Vec<u8>, usize, bool, Option<String>) + Send + Sync>>,
+    on_done: Option<BodyDoneCallback>,
     marker: std::marker::PhantomData<fn() -> E>,
 }
 

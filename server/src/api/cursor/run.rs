@@ -36,9 +36,13 @@ pub async fn run(
     let mut decoder = FrameDecoder::default();
     let first = loop {
         let Some(chunk) = incoming.next().await else {
-            return Err(Error::Protocol("Cursor Agent Run stream ended before its first message".into()));
+            return Err(Error::Protocol(
+                "Cursor Agent Run stream ended before its first message".into(),
+            ));
         };
-        let chunk = chunk.map_err(|error| Error::Protocol(format!("cannot read Cursor Agent Run stream: {error}")))?;
+        let chunk = chunk.map_err(|error| {
+            Error::Protocol(format!("cannot read Cursor Agent Run stream: {error}"))
+        })?;
         consumed.extend_from_slice(&chunk);
         decoder.push(chunk);
         if let Some(payload) = decoder.next()? {
@@ -87,7 +91,8 @@ pub async fn run(
 }
 
 fn direct_model_id(message: &agent::AgentClientMessage) -> Option<&str> {
-    let agent::agent_client_message::Message::RunRequest(request) = message.message.as_ref()? else {
+    let agent::agent_client_message::Message::RunRequest(request) = message.message.as_ref()?
+    else {
         return None;
     };
     request
@@ -95,11 +100,19 @@ fn direct_model_id(message: &agent::AgentClientMessage) -> Option<&str> {
         .as_ref()
         .map(|model| model.model_id.as_str())
         .filter(|model| !model.is_empty())
-        .or_else(|| request.model_details.as_ref().map(|model| model.model_id.as_str()))
+        .or_else(|| {
+            request
+                .model_details
+                .as_ref()
+                .map(|model| model.model_id.as_str())
+        })
         .filter(|model| !model.is_empty())
 }
 
-async fn is_local(registry: &TransportRegistry, message: &agent::AgentClientMessage) -> Result<bool> {
+async fn is_local(
+    registry: &TransportRegistry,
+    message: &agent::AgentClientMessage,
+) -> Result<bool> {
     let Some(model_id) = direct_model_id(message) else {
         return Ok(false);
     };
@@ -116,7 +129,11 @@ async fn append(
 ) -> Result<()> {
     bidi::append(
         registry,
-        DecodedAppend { request_id: request_id.into(), seqno, message },
+        DecodedAppend {
+            request_id: request_id.into(),
+            seqno,
+            message,
+        },
         parent,
     )
     .await?;
@@ -144,13 +161,18 @@ where
         let Some(chunk) = incoming.next().await else {
             return decoder.finish();
         };
-        decoder.push(chunk.map_err(|error| Error::Protocol(format!("cannot read Cursor Agent Run stream: {error}")))?);
+        decoder.push(chunk.map_err(|error| {
+            Error::Protocol(format!("cannot read Cursor Agent Run stream: {error}"))
+        })?);
     }
 }
 
 fn replay_body<S>(initial: Bytes, mut incoming: S) -> Body
 where
-    S: tokio_stream::Stream<Item = std::result::Result<Bytes, axum::Error>> + Send + Unpin + 'static,
+    S: tokio_stream::Stream<Item = std::result::Result<Bytes, axum::Error>>
+        + Send
+        + Unpin
+        + 'static,
 {
     Body::from_stream(async_stream::stream! {
         yield Ok::<Bytes, axum::Error>(initial);
@@ -175,7 +197,8 @@ impl FrameDecoder {
             return Ok(None);
         }
         let flags = self.buffered[0];
-        let length = u32::from_be_bytes(self.buffered[1..5].try_into().expect("frame prefix")) as usize;
+        let length =
+            u32::from_be_bytes(self.buffered[1..5].try_into().expect("frame prefix")) as usize;
         if self.buffered.len() < 5 + length {
             return Ok(None);
         }
@@ -185,7 +208,9 @@ impl FrameDecoder {
             return Ok(None);
         }
         if flags & !0x01 != 0 {
-            return Err(Error::Protocol(format!("unsupported Cursor Agent Run frame flags: {flags}")));
+            return Err(Error::Protocol(format!(
+                "unsupported Cursor Agent Run frame flags: {flags}"
+            )));
         }
         if flags & 0x01 == 0 {
             return Ok(Some(payload));
@@ -193,7 +218,9 @@ impl FrameDecoder {
         let mut output = Vec::new();
         flate2::read::GzDecoder::new(payload.as_ref())
             .read_to_end(&mut output)
-            .map_err(|error| Error::Protocol(format!("cannot decompress Cursor Agent Run frame: {error}")))?;
+            .map_err(|error| {
+                Error::Protocol(format!("cannot decompress Cursor Agent Run frame: {error}"))
+            })?;
         Ok(Some(Bytes::from(output)))
     }
 
@@ -205,7 +232,9 @@ impl FrameDecoder {
         if self.buffered.is_empty() {
             Ok(())
         } else {
-            Err(Error::Protocol("truncated Cursor Agent Run Connect frame".into()))
+            Err(Error::Protocol(
+                "truncated Cursor Agent Run Connect frame".into(),
+            ))
         }
     }
 }
@@ -219,7 +248,9 @@ fn parent_headers(headers: &axum::http::HeaderMap) -> Result<Option<TransportPar
             request_id: request_id.into(),
             tool_call_id: tool_call_id.into(),
         })),
-        _ => Err(Error::Protocol("Cursor subagent request must include both parent headers".into())),
+        _ => Err(Error::Protocol(
+            "Cursor subagent request must include both parent headers".into(),
+        )),
     }
 }
 
@@ -243,7 +274,10 @@ mod tests {
         decoder.push(frame.slice(..3));
         assert!(decoder.next().expect("partial frame").is_none());
         decoder.push(frame.slice(3..));
-        let payload = decoder.next().expect("complete frame").expect("message payload");
+        let payload = decoder
+            .next()
+            .expect("complete frame")
+            .expect("message payload");
         assert_eq!(payload, Bytes::new());
         decoder.finish().expect("fully consumed frame");
     }

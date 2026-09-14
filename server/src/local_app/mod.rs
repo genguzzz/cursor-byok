@@ -38,7 +38,6 @@ pub(crate) fn local_cursor_authorization() -> String {
     format!("Bearer {}", account::local_token().unwrap())
 }
 
-
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CaState {
@@ -192,7 +191,7 @@ impl CursorHarness {
             }
         } else {
             ProxySettingsInput {
-                mode: ProxyMode::System,
+                mode: ProxyMode::Default,
                 address: String::new(),
                 auth_enabled: false,
                 username: String::new(),
@@ -241,8 +240,10 @@ impl CursorHarness {
         };
         let mut debug = self.inner.debug.lock().await;
         if debug.is_none() {
-            let mut config = DebugServerConfig::default();
-            config.proxy_addr = main_proxy_url;
+            let config = DebugServerConfig {
+                proxy_addr: main_proxy_url,
+                ..Default::default()
+            };
             let controller = DebugServer::new(config).build().map_err(Error::Config)?;
             controller.install_store();
             *debug = Some(controller);

@@ -560,7 +560,9 @@ fn anthropic_parts(role: &Role, parts: &[ContentPart]) -> Result<Vec<Value>> {
         .filter_map(|part| match part {
             ContentPart::Text { text } if text.is_empty() => None,
             ContentPart::Text { text } => Some(Ok(json!({"type":"text", "text":text}))),
-            ContentPart::Image { mime_type, data } if *role == Role::User => Some(Ok(json!({
+            ContentPart::Image {
+                mime_type, data, ..
+            } if *role == Role::User => Some(Ok(json!({
                 "type":"image",
                 "source":{
                     "type":"base64",

@@ -43,10 +43,9 @@ async fn stream_with_content_type(
     let body_stream = local_body_stream(receiver, handle, trace);
     let mut response = Response::new(Body::from_stream(body_stream));
     *response.status_mut() = StatusCode::OK;
-    response.headers_mut().insert(
-        header::CONTENT_TYPE,
-        HeaderValue::from_static(content_type),
-    );
+    response
+        .headers_mut()
+        .insert(header::CONTENT_TYPE, HeaderValue::from_static(content_type));
     response
         .headers_mut()
         .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-cache"));

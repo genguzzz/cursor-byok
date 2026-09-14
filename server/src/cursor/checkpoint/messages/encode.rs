@@ -200,11 +200,21 @@ fn wire_content(content: &ProjectedContent, model: &str) -> Result<Value> {
                 .iter()
                 .map(|part| match part {
                     ContentPart::Text { text } => json!({"type":"text", "text":text}),
-                    ContentPart::Image { mime_type, data } => json!({
-                        "type":"image",
-                        "image": STANDARD.encode(data),
-                        "mimeType": mime_type,
-                    }),
+                    ContentPart::Image {
+                        mime_type,
+                        data,
+                        path,
+                    } => {
+                        let mut value = json!({
+                            "type":"image",
+                            "image": STANDARD.encode(data),
+                            "mimeType": mime_type,
+                        });
+                        if !path.is_empty() {
+                            value["path"] = json!(path);
+                        }
+                        value
+                    }
                 })
                 .collect(),
         ),

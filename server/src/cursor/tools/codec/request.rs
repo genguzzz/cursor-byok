@@ -613,6 +613,7 @@ mod tests {
             name: "SearchConversations".into(),
             arguments_text: String::new(),
             arguments: json!({ "query": "byok tools", "limit": 10 }),
+            argument_error: None,
         };
         let message = request(1, &call, &ExecContext::default()).unwrap();
         let Some(pb::agent_server_message::Message::ExecServerMessage(exec)) = message.message
@@ -637,6 +638,7 @@ mod tests {
             name: "ListMcpResources".into(),
             arguments_text: String::new(),
             arguments: json!({ "server": "user-obsidian" }),
+            argument_error: None,
         };
         let message = request(1, &call, &ExecContext::default()).unwrap();
         let Some(pb::agent_server_message::Message::ExecServerMessage(exec)) = message.message
@@ -659,6 +661,7 @@ mod tests {
             name: "WriteShellStdin".into(),
             arguments_text: String::new(),
             arguments: json!({ "shell_id": 7, "chars": "y\n" }),
+            argument_error: None,
         };
         let message = request(1, &call, &ExecContext::default()).unwrap();
         let Some(pb::agent_server_message::Message::ExecServerMessage(exec)) = message.message

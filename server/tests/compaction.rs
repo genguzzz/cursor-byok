@@ -175,21 +175,28 @@ async fn summarize_replaces_model_history_and_preserves_cursor_history() {
         .prompt
         .instructions
         .contains("compacting conversation history"));
-    assert_eq!(requests[1].history.len(), 3);
+    assert_eq!(requests[1].history.len(), 4);
     assert_eq!(
-        requests[1].history[2].message_id, "compaction:instruction",
+        requests[1].history[3].message_id, "compaction:instruction",
         "an assistant-terminated history gets the summarize instruction as its user tail"
     );
-    assert_eq!(requests[2].history.len(), 2);
-    let ProjectedContent::Parts(summary_parts) = &requests[2].history[0].content else {
-        panic!("first post-compaction message must be the summary")
-    };
+    assert_eq!(requests[2].history.len(), 3);
     assert!(
-        matches!(summary_parts.as_slice(), [ContentPart::Text { text }]
-        if text.contains("Durable summary"))
+        requests[2]
+            .history
+            .iter()
+            .any(|message| match &message.content {
+                ProjectedContent::Parts(parts) => parts.iter().any(|part| match part {
+                    ContentPart::Text { text } => text.contains("Durable summary"),
+                    _ => false,
+                }),
+                _ => false,
+            }),
+        "post-compaction history must include the summary"
     );
-    let ProjectedContent::Parts(new_user_parts) = &requests[2].history[1].content else {
-        panic!("second post-compaction message must be the new runtime user")
+    let ProjectedContent::Parts(new_user_parts) = &requests[2].history.last().unwrap().content
+    else {
+        panic!("last post-compaction message must be the new runtime user")
     };
     assert!(
         matches!(new_user_parts.as_slice(), [ContentPart::Text { text }]
@@ -219,6 +226,7 @@ async fn automatic_compaction_preflights_provider_input_and_records_rebuilt_toke
             custom_headers: serde_json::json!({}),
             anthropic_extra_params_enabled: false,
             anthropic_extra_params: serde_json::json!({}),
+            claude_code_compat: false,
             context_window_tokens: Some(100_000),
             max_completion_tokens: None,
             anthropic_max_tokens: None,
@@ -277,10 +285,10 @@ async fn automatic_compaction_preflights_provider_input_and_records_rebuilt_toke
         &[
             "token_delta:0",
             "summary_started",
+            "token_delta:20",
             "summary_completed",
-            "token_delta:0",
         ],
-        "automatic compaction must publish estimated usage before summarizing and zero usage after"
+        "automatic compaction publishes the preflight snapshot, then the summary call usage"
     );
     let compacted_tokens = second
         .checkpoints
@@ -334,6 +342,7 @@ async fn incremental_preflight_uses_conversation_anchor_across_model_switch() {
             custom_headers: serde_json::json!({}),
             anthropic_extra_params_enabled: false,
             anthropic_extra_params: serde_json::json!({}),
+            claude_code_compat: false,
             context_window_tokens: None,
             max_completion_tokens: None,
             anthropic_max_tokens: None,
@@ -361,6 +370,7 @@ async fn incremental_preflight_uses_conversation_anchor_across_model_switch() {
             custom_headers: serde_json::json!({}),
             anthropic_extra_params_enabled: false,
             anthropic_extra_params: serde_json::json!({}),
+            claude_code_compat: false,
             context_window_tokens: Some(200_000),
             max_completion_tokens: None,
             anthropic_max_tokens: None,
@@ -436,6 +446,7 @@ async fn irreducibly_oversized_current_input_fails_before_provider_dispatch() {
             custom_headers: serde_json::json!({}),
             anthropic_extra_params_enabled: false,
             anthropic_extra_params: serde_json::json!({}),
+            claude_code_compat: false,
             context_window_tokens: Some(100_000),
             max_completion_tokens: None,
             anthropic_max_tokens: None,
@@ -494,6 +505,7 @@ fn windowed_model(model_id: &str, context_window_tokens: Option<u64>) -> ModelCo
         custom_headers: serde_json::json!({}),
         anthropic_extra_params_enabled: false,
         anthropic_extra_params: serde_json::json!({}),
+        claude_code_compat: false,
         context_window_tokens,
         max_completion_tokens: None,
         anthropic_max_tokens: None,

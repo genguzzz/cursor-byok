@@ -5,7 +5,7 @@ use std::collections::HashSet;
 use crate::{
     model::{
         estimate_context_tokens, estimate_projected_messages_tokens, CanonicalMessage, ContentPart,
-        MessageContent, PreparedRun, ProjectedContent, ProjectedMessage, Role,
+        MessageContent, Origin, PreparedRun, ProjectedContent, ProjectedMessage, Role,
     },
     store::ContextUsageAnchor,
 };
@@ -23,7 +23,6 @@ const FALLBACK_CHARS: usize = 12_000;
 /// the model: a 200K window keeps 20K free and a 1M window keeps 100K.
 const CONTEXT_RESERVE_DIVISOR: u64 = 10;
 pub(super) const OUTPUT_TOKENS: u64 = 4_096;
-pub(super) const AUTO_RESERVE_TOKENS: u64 = 10_000;
 pub(super) const PREFERRED_TAIL_TURNS: usize = 4;
 pub(super) const PREFERRED_TAIL_MESSAGES: usize = 32;
 pub(super) const INSTRUCTIONS: &str = include_str!("../../prompt/cursor/compaction/prompt.md");
@@ -240,7 +239,7 @@ fn partition_with_tail_turns(
         .enumerate()
         .filter(|(index, message)| {
             *index >= tail_start
-                && latest_request_context.map_or(true, |ctx_idx| *index != ctx_idx)
+                && latest_request_context != Some(*index)
                 && !is_conversation_summary(message)
         })
         .map(|(_, message)| message.clone())
@@ -250,7 +249,7 @@ fn partition_with_tail_turns(
         .enumerate()
         .filter(|(index, message)| {
             *index < tail_start
-                && latest_request_context.map_or(true, |ctx_idx| *index != ctx_idx)
+                && latest_request_context != Some(*index)
                 && !is_conversation_summary(message)
         })
         .map(|(_, message)| message.clone())
@@ -358,15 +357,6 @@ fn is_runtime_turn_start(message: &CanonicalMessage) -> bool {
         && message.origin == Origin::Runtime
         && message.message_id.starts_with("runtime:")
         && !is_conversation_summary(message)
-}
-
-fn estimate_serialized_tokens(serialized: &str) -> u64 {
-    serialized
-        .chars()
-        .fold(0_u64, |units, character| {
-            units.saturating_add(if character.is_ascii() { 273 } else { 550 })
-        })
-        .div_ceil(1_000)
 }
 
 #[cfg(test)]

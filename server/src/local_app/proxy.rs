@@ -414,8 +414,6 @@ fn is_local_path(path: &str) -> bool {
             | "/aiserver.v1.AiService/GetDefaultModelNudgeData"
             | "/aiserver.v1.DashboardService/GetManagedSkills"
             | "/aiserver.v1.DashboardService/GetTeamAdminSettingsOrEmptyIfNotInTeam"
-            | "/aiserver.v1.DashboardService/GetEffectiveUserPlugins"
-            | "/aiserver.v1.DashboardService/GetUserPrivacyMode"
             | "/aiserver.v1.AnalyticsService/TrackEvents"
             | "/aiserver.v1.AuthService/GetEmail"
             | "/aiserver.v1.AuthService/GetUserMeta"

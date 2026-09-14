@@ -206,6 +206,8 @@ fn verbosity(effort: Option<&str>) -> Option<&'static str> {
     }
 }
 
+const SELECTED_IMAGES_READ_HINT: &str = "If image bytes are not available inline, call the Read tool on each path in <selected_images> before answering about the image content. Do not claim image input is unsupported when a local path is listed.";
+
 /// Replace user-role inline images with their paths.
 ///
 /// The gateway silently drops `image_url` parts on user-role messages, so a
@@ -225,6 +227,8 @@ pub fn strip_user_inline_images(messages: &mut [Value]) {
         };
         let mut text = String::new();
         let mut paths = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        let mut stripped = false;
         for part in parts {
             match part.get("type").and_then(Value::as_str) {
                 Some("text") => {
@@ -232,31 +236,62 @@ pub fn strip_user_inline_images(messages: &mut [Value]) {
                         text.push_str(value);
                     }
                 }
-                Some("image_url") => paths.push(image_path(part)),
+                Some("image_url") => {
+                    stripped = true;
+                    if let Some(path) = image_path(part) {
+                        if seen.insert(path.clone()) {
+                            paths.push(path);
+                        }
+                    }
+                }
                 _ => {}
             }
         }
-        if paths.is_empty() {
+        if !stripped {
             continue;
         }
-        let mut rewritten = text;
-        rewritten.push_str("\n<selected_images>");
-        for path in &paths {
-            rewritten.push_str(&format!("\n  <image path=\"{path}\" />"));
+        let mut rewritten = ensure_selected_images_path_section(text.trim(), &paths);
+        if !rewritten.contains("call the Read tool on each path") {
+            rewritten = format!("{}\n\n{SELECTED_IMAGES_READ_HINT}", rewritten.trim());
         }
-        rewritten.push_str(
-            "\n</selected_images>\nThe image bytes were not forwarded. Use the Read tool on each \
-             path above to view an image.",
-        );
         object.insert("content".into(), Value::String(rewritten));
     }
 }
 
-fn image_path(part: &Value) -> String {
+fn image_path(part: &Value) -> Option<String> {
     part.pointer("/image_url/path")
         .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|path| !path.is_empty())
         .map(str::to_string)
-        .unwrap_or_else(|| "(unknown path)".into())
+}
+
+fn ensure_selected_images_path_section(content: &str, paths: &[String]) -> String {
+    if paths.is_empty() {
+        return content.trim().to_string();
+    }
+    let trimmed = content.trim();
+    let missing: Vec<&str> = paths
+        .iter()
+        .map(String::as_str)
+        .filter(|path| !path.is_empty() && !trimmed.contains(*path))
+        .collect();
+    if missing.is_empty() {
+        return trimmed.to_string();
+    }
+    let entries: Vec<String> = missing
+        .into_iter()
+        .map(|path| format!(r#"<image path="{path}" />"#))
+        .collect();
+    let section = format!(
+        "<selected_images>\n{}\n</selected_images>",
+        entries.join("\n")
+    );
+    if trimmed.is_empty() {
+        section
+    } else {
+        format!("{trimmed}\n\n{section}")
+    }
 }
 
 /// Gzip the request body.  Paired with suppressing `Accept-Encoding`, this
@@ -442,8 +477,62 @@ mod tests {
         let content = messages[0]["content"].as_str().unwrap();
         assert!(content.contains("look at this"));
         assert!(content.contains("<image path=\"/tmp/a.png\" />"));
-        assert!(content.contains("Read tool"));
+        assert!(content.contains("call the Read tool on each path"));
         assert!(!content.contains("base64"));
+        assert!(!content.contains("(unknown path)"));
+    }
+
+    #[test]
+    fn existing_selected_images_section_is_not_duplicated() {
+        let mut messages = vec![serde_json::json!({
+            "role": "user",
+            "content": [
+                {
+                    "type": "text",
+                    "text": "look\n\n<selected_images>\n<image path=\"/tmp/a.png\" mime_type=\"image/png\" />\n</selected_images>\nIf image bytes are not available inline, call the Read tool on each path above before answering about the image."
+                },
+                {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAA", "path": "/tmp/a.png"}},
+            ],
+        })];
+
+        strip_user_inline_images(&mut messages);
+
+        let content = messages[0]["content"].as_str().unwrap();
+        assert_eq!(content.matches("<selected_images>").count(), 1);
+        assert_eq!(content.matches("/tmp/a.png").count(), 1);
+        assert!(content.contains("call the Read tool on each path"));
+    }
+
+    #[test]
+    fn missing_image_path_still_strips_bytes_and_adds_a_read_hint() {
+        let mut messages = vec![serde_json::json!({
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "look at this"},
+                {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAA"}},
+            ],
+        })];
+
+        strip_user_inline_images(&mut messages);
+
+        let content = messages[0]["content"].as_str().unwrap();
+        assert!(content.contains("look at this"));
+        assert!(content.contains("call the Read tool on each path"));
+        assert!(!content.contains("base64"));
+        assert!(!content.contains("(unknown path)"));
+    }
+
+    #[test]
+    fn user_text_without_images_is_left_alone() {
+        let original = serde_json::json!({
+            "role": "user",
+            "content": "hello",
+        });
+        let mut messages = vec![original.clone()];
+
+        strip_user_inline_images(&mut messages);
+
+        assert_eq!(messages[0], original);
     }
 
     #[test]

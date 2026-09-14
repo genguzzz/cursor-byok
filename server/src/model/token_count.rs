@@ -203,6 +203,7 @@ mod tests {
                 provider_parts: vec![ContentPart::Image {
                     mime_type: "image/png".into(),
                     data: vec![0; 32],
+                    path: String::new(),
                 }],
             }),
         };

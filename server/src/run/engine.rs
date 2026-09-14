@@ -1005,6 +1005,7 @@ async fn hydrate_tool_images(
             ContentPart::Image {
                 mime_type: image.mime_type.clone(),
                 data,
+                path: image.path.clone(),
             },
         ];
     }

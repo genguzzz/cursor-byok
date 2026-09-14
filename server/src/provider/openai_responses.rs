@@ -504,7 +504,9 @@ fn responses_content(parts: &[ContentPart], text_type: &str) -> Result<Vec<Value
         .filter_map(|part| match part {
             ContentPart::Text { text } if text.is_empty() => None,
             ContentPart::Text { text } => Some(Ok(json!({"type":text_type, "text":text}))),
-            ContentPart::Image { mime_type, data } => Some(Ok(json!({
+            ContentPart::Image {
+                mime_type, data, ..
+            } => Some(Ok(json!({
                 "type":"input_image",
                 "detail":"auto",
                 "image_url":format!("data:{mime_type};base64,{}", STANDARD.encode(data)),

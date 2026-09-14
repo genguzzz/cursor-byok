@@ -154,6 +154,12 @@ fn decode_text(value: &Value) -> Result<MessageContent> {
                     data: STANDARD.decode(encoded).map_err(|error| {
                         Error::Protocol(format!("invalid Cursor image base64: {error}"))
                     })?,
+                    path: part
+                        .get("path")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .trim()
+                        .to_string(),
                 })
             }
             Some(kind) => Err(Error::Protocol(format!(

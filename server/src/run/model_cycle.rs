@@ -319,16 +319,6 @@ pub async fn consume_model_cycle(
             usage,
         ));
     }
-    if let Some(usage) = usage {
-        if send(client, RunEvent::Usage(usage)).await.is_err() {
-            return Err(failure(
-                RunFailure::Client("client event channel closed".into()),
-                text,
-                reasoning,
-                Some(usage),
-            ));
-        }
-    }
     let model_call_id = model_call_id.ok_or_else(|| {
         failure(
             RunFailure::Protocol("provider completed without Start".into()),
@@ -451,7 +441,7 @@ mod tests {
             Ok(ModelEvent::Done(FinishReason::ToolUse)),
         ];
         let stream = Box::pin(tokio_stream::iter(events));
-        let (event_tx, mut event_rx) = tokio::sync::mpsc::channel(4);
+        let (event_tx, mut event_rx) = tokio::sync::mpsc::unbounded_channel();
 
         let result = consume_model_cycle(stream, &event_tx, &CancellationToken::new())
             .await
@@ -468,7 +458,7 @@ mod tests {
     async fn usage_is_forwarded_before_the_provider_call_finishes() {
         let (provider_tx, provider_rx) = tokio::sync::mpsc::channel(4);
         let stream = Box::pin(ReceiverStream::new(provider_rx));
-        let (event_tx, mut event_rx) = tokio::sync::mpsc::channel(4);
+        let (event_tx, mut event_rx) = tokio::sync::mpsc::unbounded_channel();
         let cancellation = CancellationToken::new();
         let cycle_cancellation = cancellation.clone();
         let cycle = tokio::spawn(async move {

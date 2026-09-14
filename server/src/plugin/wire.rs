@@ -94,7 +94,9 @@ fn wire_parts(parts: &[ContentPart]) -> Vec<serde_json::Value> {
         .iter()
         .map(|part| match part {
             ContentPart::Text { text } => serde_json::json!({ "type": "text", "text": text }),
-            ContentPart::Image { mime_type, data } => serde_json::json!({
+            ContentPart::Image {
+                mime_type, data, ..
+            } => serde_json::json!({
                 "type": "image",
                 "mediaType": mime_type,
                 "dataBase64": STANDARD.encode(data),

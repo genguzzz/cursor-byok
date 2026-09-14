@@ -110,6 +110,7 @@ mod tests {
             name: "AwaitShell".into(),
             arguments_text: arguments.to_string(),
             arguments,
+            argument_error: None,
         }
     }
 

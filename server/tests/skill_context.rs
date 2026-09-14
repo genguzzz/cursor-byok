@@ -1,7 +1,4 @@
-use cursor_server::cursor::{
-    compile::compile_context,
-    protocol::proto::agent::v1 as pb,
-};
+use cursor_server::cursor::{compile::compile_context, protocol::proto::agent::v1 as pb};
 
 #[test]
 fn cli_skill_descriptors_are_projected_as_available_skills() {
