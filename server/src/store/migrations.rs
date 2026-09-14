@@ -399,6 +399,16 @@ mod tests {
             hex::encode(crlf_initial.checksum.as_ref()),
             "7c5995693dbd5f9d50880fc874784cb67c499762abcee4a562b54c9afd8239bae125074696b78f90aca0fc136b802a2b"
         );
+
+        for (version, checksum) in [
+            (9, "adc36234d88898eddd84f00f286768e0696b966d6c16653c3eed1794789b1dbead0a797d2dc491142bafa3694bde021f"),
+            (10, "ca61e7022a2bdba84b14c6fc96e46fa66560a8f8f9e227fc54ae7d4668f49e9aaed05fc83057c22863ccec236dcfc924"),
+            (11, "6b41fd6723056fc7f502e16fa0fdd02e55ba6866a384165b789ee7ba2692b0b325190d8728fb43e3234fbbe038fc11b7"),
+            (12, "c594b0535c25770ca5a81314c64f42e482cf2d0f487345b1997312ce7911d89eee5eb32c60e219b5f4f9467ff3496d03"),
+        ] {
+            let migration = lf.iter().find(|migration| migration.version == version).unwrap();
+            assert_eq!(hex::encode(migration.checksum.as_ref()), checksum);
+        }
     }
 
     #[tokio::test]

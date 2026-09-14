@@ -127,14 +127,6 @@ fn router_with_proxy(
             post(startup_metadata::optional),
         )
         .route(
-            "/aiserver.v1.DashboardService/GetEffectiveUserPlugins",
-            post(startup_metadata::optional),
-        )
-        .route(
-            "/aiserver.v1.DashboardService/GetUserPrivacyMode",
-            post(startup_metadata::optional),
-        )
-        .route(
             "/aiserver.v1.AnalyticsService/TrackEvents",
             post(startup_metadata::optional),
         )
