@@ -8,8 +8,6 @@ use crate::{
     Error, Result,
 };
 
-const SELECTED_IMAGES_READ_HINT: &str = "If image bytes are not available inline, call the Read tool on each path above before answering about the image.";
-
 pub async fn parts(
     message: &pb::UserMessage,
     text: String,
@@ -30,8 +28,7 @@ pub async fn parts(
     Ok(parts)
 }
 
-/// Keep local image paths in the runtime text so a provider that drops user
-/// `image_url` parts can still call Read. Matches the go-legacy replay shape.
+/// Keep the local path alongside the image bytes in the user message.
 fn with_selected_images_section(text: String, message: &pb::UserMessage) -> String {
     let Some(section) = selected_images_section(message) else {
         return text;
@@ -66,7 +63,7 @@ fn selected_images_section(message: &pb::UserMessage) -> Option<String> {
         return None;
     }
     Some(format!(
-        "<selected_images>\n{}\n</selected_images>\n{SELECTED_IMAGES_READ_HINT}",
+        "<selected_images>\n{}\n</selected_images>",
         entries.join("\n")
     ))
 }
@@ -148,11 +145,11 @@ mod tests {
     }
 
     #[test]
-    fn selected_images_section_includes_path_and_read_hint() {
+    fn selected_images_section_includes_path_without_read_hint() {
         let message = message_with_image("/tmp/a.png", "image/png");
         let section = selected_images_section(&message).unwrap();
         assert!(section.contains("<image path=\"/tmp/a.png\" mime_type=\"image/png\" />"));
-        assert!(section.contains("call the Read tool on each path above"));
+        assert!(!section.contains("call the Read tool"));
     }
 
     #[test]

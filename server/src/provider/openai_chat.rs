@@ -82,12 +82,7 @@ impl Provider for OpenAiChatProvider {
                 codebuddy,
                 "OpenAI Chat provider stream started"
             );
-            let mut messages = openai_chat_messages(&request.prompt.instructions, &request.history)?;
-            if codebuddy {
-                // The gateway drops user-role image parts, so surface the paths
-                // instead of losing the attachment silently.
-                super::codebuddy::strip_user_inline_images(&mut messages);
-            }
+            let messages = openai_chat_messages(&request.prompt.instructions, &request.history)?;
             let mut body = json!({
                 "model": request.model.model_id,
                 "messages": messages,
@@ -668,6 +663,111 @@ fn trailing_partial_tag(s: &str, tags: &[&str]) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{
+        config::ProviderKind,
+        model::{ModelRequest, ModelSpec, PromptSpec},
+    };
+    use std::{io::Read, sync::Arc, time::Duration};
+
+    #[tokio::test]
+    async fn codebuddy_request_keeps_user_image_and_local_path() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let (sender, receiver) = tokio::sync::oneshot::channel();
+        let sender = Arc::new(tokio::sync::Mutex::new(Some(sender)));
+        let app = axum::Router::new().route(
+            "/chat/completions",
+            axum::routing::post(move |body: axum::body::Bytes| {
+                let sender = sender.clone();
+                async move {
+                    let mut decoded = String::new();
+                    flate2::read::GzDecoder::new(body.as_ref())
+                        .read_to_string(&mut decoded)
+                        .unwrap();
+                    sender
+                        .lock()
+                        .await
+                        .take()
+                        .unwrap()
+                        .send(serde_json::from_str::<Value>(&decoded).unwrap())
+                        .unwrap();
+                    (
+                        [("content-type", "text/event-stream")],
+                        "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n",
+                    )
+                }
+            }),
+        );
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let provider = OpenAiChatProvider::new(
+            reqwest::Client::new(),
+            ProviderConfig {
+                kind: ProviderKind::CodeBuddy,
+                request_url: format!("http://{address}/chat/completions"),
+                api_key: "test-key".into(),
+                custom_headers: Default::default(),
+                max_output_tokens: None,
+                claude_code_compat: false,
+                request_timeout: Duration::from_secs(5),
+                allowed_body_fields: None,
+            },
+        )
+        .as_codebuddy();
+        let invocation = ModelInvocation {
+            call_id: "call-1".into(),
+            run_id: "run-1".into(),
+            conversation_id: "conversation-1".into(),
+            provider_call_index: 0,
+            request: ModelRequest {
+                prompt: PromptSpec {
+                    instructions: String::new(),
+                    tools: vec![],
+                },
+                model: ModelSpec::new("deepseek-v4-flash-ioa"),
+                history: vec![ProjectedMessage {
+                    message_id: "runtime:1".into(),
+                    role: Role::User,
+                    content: ProjectedContent::Parts(vec![
+                        ContentPart::Text {
+                            text: "look <selected_images><image path=\"/tmp/a.png\" /></selected_images>".into(),
+                        },
+                        ContentPart::Image {
+                            mime_type: "image/png".into(),
+                            data: vec![1, 2, 3],
+                            path: "/tmp/a.png".into(),
+                        },
+                    ]),
+                }],
+            },
+        };
+        let stream = provider.stream(invocation, tokio_util::sync::CancellationToken::new());
+        tokio::pin!(stream);
+        let body = tokio::time::timeout(Duration::from_secs(5), async {
+            let (request, ()) = tokio::join!(receiver, async {
+                while let Some(event) = stream.next().await {
+                    event.unwrap();
+                }
+            });
+            request.unwrap()
+        })
+        .await
+        .unwrap();
+        server.abort();
+
+        assert!(body["messages"][0]["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("/tmp/a.png"));
+        assert_eq!(body["messages"][0]["content"][1]["type"], "image_url");
+        assert_eq!(
+            body["messages"][0]["content"][1]["image_url"]["path"],
+            "/tmp/a.png"
+        );
+        assert_eq!(
+            body["messages"][0]["content"][1]["image_url"]["url"],
+            "data:image/png;base64,AQID"
+        );
+    }
 
     #[test]
     fn observed_tool_calls_outrank_ordinary_stop_reasons() {
