@@ -15,6 +15,36 @@ use crate::{
 
 use super::server_interaction;
 
+pub(crate) fn shell_partial(
+    call: &ToolCall,
+    command: &str,
+    description: &str,
+    working_directory: &str,
+) -> pb::AgentServerMessage {
+    server_interaction(pb::interaction_update::Message::PartialToolCall(
+        pb::PartialToolCallUpdate {
+            call_id: call.call_id.clone(),
+            tool_call: Some(pb::ToolCall {
+                tool_call_id: Some(call.call_id.clone()),
+                tool: Some(pb::tool_call::Tool::ShellToolCall(pb::ShellToolCall {
+                    args: Some(pb::ShellArgs {
+                        command: command.into(),
+                        working_directory: working_directory.into(),
+                        description: (!description.is_empty()).then(|| description.into()),
+                        tool_call_id: call.call_id.clone(),
+                        ..Default::default()
+                    }),
+                    description: (!description.is_empty()).then(|| description.into()),
+                    ..Default::default()
+                })),
+                ..Default::default()
+            }),
+            args_text_delta: String::new(),
+            model_call_id: call.model_call_id.clone(),
+        },
+    ))
+}
+
 pub(crate) fn edit_path_partial(call: &ToolCall, path: &str) -> pb::AgentServerMessage {
     server_interaction(pb::interaction_update::Message::PartialToolCall(
         pb::PartialToolCallUpdate {

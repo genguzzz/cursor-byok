@@ -19,6 +19,7 @@ pub struct ToolCallStream {
 enum Presentation {
     Plain,
     DynamicMcp(pb::McpToolDefinition),
+    Shell(ShellProjection),
     Edit(EditProjection),
     CreatePlan(CreatePlanProjection),
     Task(TaskProjection),
@@ -30,6 +31,14 @@ struct EditProjection {
     content_field: &'static str,
     path: String,
     content: NewlineStream,
+}
+
+#[derive(Default)]
+struct ShellProjection {
+    fields: JsonStringFields,
+    command: String,
+    description: String,
+    working_directory: String,
 }
 
 #[derive(Default)]
@@ -58,6 +67,7 @@ impl ToolCallStream {
         let presentation = match dynamic_mcp {
             Some(definition) => Presentation::DynamicMcp(definition.clone()),
             None => match normalized_name.as_str() {
+                "shell" | "bash" => Presentation::Shell(ShellProjection::default()),
                 "write" => Presentation::Edit(EditProjection::new("path", "contents")),
                 "strreplace" => Presentation::Edit(EditProjection::new("path", "new_string")),
                 "editnotebook" => {
@@ -85,6 +95,7 @@ impl ToolCallStream {
     ) -> Result<Vec<pb::AgentServerMessage>> {
         match &mut self.presentation {
             Presentation::Plain => Ok(vec![interaction::arguments_delta(call, raw_delta)?]),
+            Presentation::Shell(shell) => shell.project(call, raw_delta),
             Presentation::DynamicMcp(definition) => {
                 Ok(vec![interaction::dynamic_mcp_arguments_delta(
                     call, raw_delta, definition,
@@ -98,6 +109,34 @@ impl ToolCallStream {
             Presentation::CreatePlan(plan) => plan.project(call, raw_delta),
             Presentation::Task(task) => task.project(call, raw_delta),
         }
+    }
+}
+
+impl ShellProjection {
+    fn project(&mut self, call: &ToolCall, raw_delta: &str) -> Result<Vec<pb::AgentServerMessage>> {
+        let mut changed = false;
+        for event in self.fields.push(raw_delta)? {
+            if let StringFieldEvent::Delta { name, text } = event {
+                match name.as_str() {
+                    "command" => self.command.push_str(&text),
+                    "description" => self.description.push_str(&text),
+                    "working_directory" => self.working_directory.push_str(&text),
+                    _ => continue,
+                }
+                changed = true;
+            }
+        }
+        Ok((changed && !self.command.trim().is_empty())
+            .then(|| {
+                interaction::shell_partial(
+                    call,
+                    &self.command,
+                    &self.description,
+                    &self.working_directory,
+                )
+            })
+            .into_iter()
+            .collect())
     }
 }
 
@@ -267,6 +306,96 @@ mod tests {
         let stream = ToolCallStream::new("Shell", None);
 
         assert!(!stream.emits_initial_placeholder());
+    }
+
+    #[test]
+    fn shell_only_creates_a_card_with_visible_command_content() {
+        for name in ["Shell", "Bash"] {
+            let mut stream = ToolCallStream::new(name, None);
+            let prefix = r#"{"description":"Check files","command":""#;
+            assert!(stream
+                .arguments_delta(&task_call(prefix), prefix)
+                .unwrap()
+                .is_empty());
+
+            let first = "rg";
+            let messages = stream
+                .arguments_delta(&task_call(&format!("{prefix}{first}")), first)
+                .unwrap();
+            assert_eq!(messages.len(), 1);
+            let Some(pb::agent_server_message::Message::InteractionUpdate(update)) =
+                messages[0].message.as_ref()
+            else {
+                panic!("expected interaction update")
+            };
+            let Some(pb::interaction_update::Message::PartialToolCall(partial)) =
+                update.message.as_ref()
+            else {
+                panic!("expected partial tool call")
+            };
+            let Some(pb::tool_call::Tool::ShellToolCall(shell)) = partial
+                .tool_call
+                .as_ref()
+                .and_then(|call| call.tool.as_ref())
+            else {
+                panic!("expected Shell tool call")
+            };
+            assert_eq!(shell.args.as_ref().unwrap().command, "rg");
+            assert!(partial.args_text_delta.is_empty());
+
+            let next = " --files";
+            let messages = stream
+                .arguments_delta(&task_call(&format!("{prefix}{first}{next}")), next)
+                .unwrap();
+            let Some(pb::agent_server_message::Message::InteractionUpdate(update)) =
+                messages[0].message.as_ref()
+            else {
+                panic!("expected interaction update")
+            };
+            let Some(pb::interaction_update::Message::PartialToolCall(partial)) =
+                update.message.as_ref()
+            else {
+                panic!("expected partial tool call")
+            };
+            let Some(pb::tool_call::Tool::ShellToolCall(shell)) = partial
+                .tool_call
+                .as_ref()
+                .and_then(|call| call.tool.as_ref())
+            else {
+                panic!("expected Shell tool call")
+            };
+            assert_eq!(shell.args.as_ref().unwrap().command, "rg --files");
+        }
+    }
+
+    #[test]
+    fn shell_skips_whitespace_and_decodes_escaped_command_across_chunks() {
+        let mut stream = ToolCallStream::new("Shell", None);
+        for delta in [r#"{"comm"#, r#"and":" "#, r#"\n"#] {
+            assert!(stream
+                .arguments_delta(&task_call(delta), delta)
+                .unwrap()
+                .is_empty());
+        }
+        let messages = stream.arguments_delta(&task_call("pwd"), "pwd").unwrap();
+        let Some(pb::agent_server_message::Message::InteractionUpdate(update)) =
+            messages[0].message.as_ref()
+        else {
+            panic!("expected interaction update")
+        };
+        let Some(pb::interaction_update::Message::PartialToolCall(partial)) =
+            update.message.as_ref()
+        else {
+            panic!("expected partial tool call")
+        };
+        let Some(pb::tool_call::Tool::ShellToolCall(shell)) = partial
+            .tool_call
+            .as_ref()
+            .and_then(|call| call.tool.as_ref())
+        else {
+            panic!("expected Shell tool call")
+        };
+        assert_eq!(shell.args.as_ref().unwrap().command, " \npwd");
     }
 
     #[test]
